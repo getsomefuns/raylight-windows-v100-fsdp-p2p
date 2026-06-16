@@ -9,6 +9,8 @@ Raylight. Using Ray Worker to manage multi GPU sampler setup. With XDiT-XFuser a
 
 <details><summary><strong>Click to expand changelog</strong></summary>
 
+- Add Bernini R support
+- Add Comfy Aimdo support, can be disable with `--disable-dynamic-vram`
 - [BETA] Add LTXV Custom nodes expansion with Raylight compatibility
 - DP Latent Noise List, FSDP, and DP improvement, added by avtc
 - Add WanT2V Causal
@@ -178,6 +180,7 @@ This is experimental mode where all type of parallel group can work at a sime ti
   enable also the FSDP CPU Offload.
 - FSDP CPU Offload is intended for systems with very low VRAM, though it will come with a performance hit work akin to
   DisTorch from MultiGPU.
+- From `1.6.0` version Raylight will piggy back on ComfyUI Aimdo for non FSDP workload. To disable Aimdo add cli `--disable-dynamic-vram`
 
 ## GPU Architectures
 
@@ -211,6 +214,10 @@ This is experimental mode where all type of parallel group can work at a sime ti
 | Wan2.1 1.3B AR    | ✅  | ❌   | ✅  |
 | Wan2.2 5B TI2V    | ✅  | ✅   | ✅  |
 | Wan2.1 Vace       | ✅  | ❌   | ✅  |
+| Wan2.1 Bernini R  | ✅  | ❌   | ✅  |
+| Wan2.2 I2V Hi-Lo  | ✅  | ✅   | ✅  |
+| Wan2.2 T2V Hi-Lo  | ✅  | ✅   | ✅  |
+| Wan2.2 SVI        | ✅  | ✅   | ✅  |
 
 
 **Flux**
@@ -297,7 +304,7 @@ This is experimental mode where all type of parallel group can work at a sime ti
 - V = Video
 
 **Notes:**
-- Non standard Wan variant (Phantom, S2V, etc...) is not tested
+- Non standard Wan variant (Phantom, etc...) is not tested
 - CFG parallel for Flux, Hunyuan, is technically supported by Raylight,
   but since these models do not support conditional batches (CFG = 1), enabling it has no effect.
 - Chroma and Hunyuan Video ControlNet support is implemented in the USP/FSDP code paths
