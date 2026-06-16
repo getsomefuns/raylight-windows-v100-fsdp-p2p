@@ -77,26 +77,38 @@ def patch_enable_comfy_kitchen_fsdp(fn):
 def _apply_worker_comfy_cli_args_from_env():
     raw_args = os.environ.get("RAYLIGHT_COMFY_CLI_ARGS_JSON")
     if not raw_args:
-        return
+        return {}
 
     try:
         worker_cli_args = json.loads(raw_args)
     except Exception as exc:
         logging.warning(f"Failed to parse RAYLIGHT_COMFY_CLI_ARGS_JSON: {exc}")
-        return
+        return {}
 
     try:
         import comfy.cli_args
-        import comfy.model_management as comfy_model_management
-        import comfy.utils as comfy_utils
     except Exception as exc:
         logging.warning(f"Failed to import Comfy modules for worker CLI arg sync: {exc}")
-        return
+        return worker_cli_args
 
     comfy_args = comfy.cli_args.args
     for key, value in worker_cli_args.items():
         if hasattr(comfy_args, key):
             setattr(comfy_args, key, value)
+
+    return worker_cli_args
+
+
+def _apply_worker_late_comfy_cli_args(worker_cli_args):
+    if not worker_cli_args:
+        return
+
+    try:
+        import comfy.model_management as comfy_model_management
+        import comfy.utils as comfy_utils
+    except Exception as exc:
+        logging.warning(f"Failed to import Comfy modules for worker late CLI arg sync: {exc}")
+        return
 
     if "disable_mmap" in worker_cli_args:
         comfy_utils.DISABLE_MMAP = bool(worker_cli_args["disable_mmap"])
@@ -125,42 +137,36 @@ def _apply_worker_comfy_cli_args_from_env():
         comfy_model_management.unpin_memory = _unpin_memory_disabled
 
 
-def _enable_worker_dynamic_vram():
+def _reload_worker_aimdo_modules():
+    import importlib
+
+    modules = []
+    for module_name in ("comfy_aimdo.host_buffer", "comfy_aimdo.vram_buffer", "comfy_aimdo.model_vbar"):
+        try:
+            module = importlib.import_module(module_name)
+            module = importlib.reload(module)
+            modules.append(module)
+        except Exception as exc:
+            logging.warning(f"[Raylight][AIMDO] Failed to reload {module_name}: {exc}")
+    return modules
+
+
+def _enable_worker_dynamic_vram(worker_cli_args=None):
     global _WORKER_AIMDO_INIT_ATTEMPTED
     if _WORKER_AIMDO_INIT_ATTEMPTED:
         return
     _WORKER_AIMDO_INIT_ATTEMPTED = True
+    worker_cli_args = worker_cli_args or {}
 
     try:
         import comfy.cli_args
         from comfy.cli_args import enables_dynamic_vram
-        import comfy.memory_management as comfy_memory_management
-        import comfy.model_management as comfy_model_management
-        import comfy.model_patcher as comfy_model_patcher
         import comfy_aimdo.control
     except Exception as exc:
         logging.warning(f"[Raylight][AIMDO] DynamicVRAM unavailable in worker: {exc}")
         return
 
     comfy_args = comfy.cli_args.args
-    should_enable = bool(getattr(comfy_args, "enable_dynamic_vram", False)) or (
-        enables_dynamic_vram()
-        and comfy_model_management.is_nvidia()
-        and not comfy_model_management.is_wsl()
-    )
-    if not should_enable:
-        return
-
-    if (
-        not getattr(comfy_args, "enable_dynamic_vram", False)
-        and getattr(comfy_model_management, "torch_version_numeric", (0, 0)) < (2, 8)
-    ):
-        logging.warning(
-            "[Raylight][AIMDO] DynamicVRAM requires PyTorch 2.8 or later; "
-            "worker is falling back to legacy ModelPatcher."
-        )
-        return
-
     headroom_bytes = int(float(getattr(comfy_args, "vram_headroom", 0) or 0) * 1024 ** 3)
     reserve_vram = getattr(comfy_args, "reserve_vram", None)
     try:
@@ -171,6 +177,30 @@ def _enable_worker_dynamic_vram():
         except TypeError:
             # comfy-aimdo 0.4.9 protocol.
             comfy_aimdo.control.init()
+
+        aimdo_modules = _reload_worker_aimdo_modules()
+
+        import comfy.memory_management as comfy_memory_management
+        import comfy.model_management as comfy_model_management
+        import comfy.model_patcher as comfy_model_patcher
+
+        should_enable = bool(getattr(comfy_args, "enable_dynamic_vram", False)) or (
+            enables_dynamic_vram()
+            and comfy_model_management.is_nvidia()
+            and not comfy_model_management.is_wsl()
+        )
+        if not should_enable:
+            return
+
+        if (
+            not getattr(comfy_args, "enable_dynamic_vram", False)
+            and getattr(comfy_model_management, "torch_version_numeric", (0, 0)) < (2, 8)
+        ):
+            logging.warning(
+                "[Raylight][AIMDO] DynamicVRAM requires PyTorch 2.8 or later; "
+                "worker is falling back to legacy ModelPatcher."
+            )
+            return
 
         devices = comfy_model_management.get_all_torch_devices()
         try:
@@ -185,6 +215,18 @@ def _enable_worker_dynamic_vram():
     if not aimdo_initialized:
         logging.warning(
             "[Raylight][AIMDO] No working comfy-aimdo install detected in worker. "
+            "DynamicVRAM disabled for Raylight worker."
+        )
+        return
+
+    host_buffer_lib_ok = True
+    for module in aimdo_modules:
+        if module.__name__.endswith(".host_buffer"):
+            host_buffer_lib_ok = getattr(module, "lib", None) is not None
+            break
+    if not host_buffer_lib_ok:
+        logging.warning(
+            "[Raylight][AIMDO] comfy_aimdo.host_buffer.lib is None after init; "
             "DynamicVRAM disabled for Raylight worker."
         )
         return
@@ -205,7 +247,11 @@ def _enable_worker_dynamic_vram():
     comfy_memory_management.aimdo_enabled = True
     print(
         "[Raylight][AIMDO] DynamicVRAM enabled in worker "
-        f"devices={[str(d) for d in devices]} vram_headroom_gb={float(getattr(comfy_args, 'vram_headroom', 0) or 0)}"
+        f"devices={[str(d) for d in devices]} "
+        f"vram_headroom_gb={float(getattr(comfy_args, 'vram_headroom', 0) or 0)} "
+        f"python={sys.executable} "
+        f"control={getattr(comfy_aimdo.control, '__file__', None)} "
+        f"host_buffer_lib={host_buffer_lib_ok}"
     )
 
 
@@ -324,10 +370,7 @@ def _build_ray_guider(model, guider_spec):
 
 class RayWorker:
     def __init__(self, local_rank, device_id, parallel_dict):
-        from raylight.comfy_dist import patch_base_getattr
-
-        _apply_worker_comfy_cli_args_from_env()
-        patch_base_getattr()
+        worker_cli_args = _apply_worker_comfy_cli_args_from_env()
         self.model = None
         self.vae_model = None
         self.model_type = None
@@ -361,7 +404,12 @@ class RayWorker:
         os.environ["NCCL_DEBUG"] = "WARN"
         os.environ["CUDA_VISIBLE_DEVICES"] = str(self.device_id)
         # torch.cuda was already initialized above under Ray's assigned GPU visibility.
-        _enable_worker_dynamic_vram()
+        _enable_worker_dynamic_vram(worker_cli_args)
+        _apply_worker_late_comfy_cli_args(worker_cli_args)
+
+        from raylight.comfy_dist import patch_base_getattr
+
+        patch_base_getattr()
 
         if self.parallel_dict.get("use_group_process_group") and self.parallel_dict.get("shard_size") is not None:
             nccl_world_size = self.parallel_dict["shard_size"]
