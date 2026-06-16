@@ -63,10 +63,12 @@ def patch_ray_tqdm(fn):
         if rank == 0:
             def ray_tqdm_absorb_disable(*a, **k):
                 k.pop("disable", None)
+                k.pop("smoothing", None)
                 return ray_tqdm(*a, **k)
 
             def ray_trange_absorb_disable(*a, **k):
                 k.pop("disable", None)
+                k.pop("smoothing", None)
                 return ray_tqdm(range(*a), **k)
 
             tqdm_auto.tqdm = ray_tqdm_absorb_disable
