@@ -141,8 +141,10 @@ def _worker_cli_args_env_json() -> str:
         "disable_async_offload": bool(comfy_args.disable_async_offload),
         "disable_dynamic_vram": bool(comfy_args.disable_dynamic_vram),
         "enable_dynamic_vram": bool(comfy_args.enable_dynamic_vram),
+        "vram_headroom": comfy_args.vram_headroom,
         "force_non_blocking": bool(comfy_args.force_non_blocking),
         "deterministic": bool(comfy_args.deterministic),
+        "verbose": comfy_args.verbose,
         "reserve_vram": comfy_args.reserve_vram,
     }
     return json.dumps(worker_cli_args, sort_keys=True)

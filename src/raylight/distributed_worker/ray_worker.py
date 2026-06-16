@@ -49,6 +49,9 @@ from raylight.comfy_dist.quant_ops import patch_temp_fix_ck_ops
 from ray.exceptions import RayActorError
 
 
+_WORKER_AIMDO_INIT_ATTEMPTED = False
+
+
 # Developer reminder, Checking model parameter outside ray actor is very expensive (e.g Comfy main thread)
 # the model need to be serialized, send to object store and can cause OOM !, so setter and getter is the pattern !
 
@@ -120,6 +123,90 @@ def _apply_worker_comfy_cli_args_from_env():
 
         comfy_model_management.pin_memory = _pin_memory_disabled
         comfy_model_management.unpin_memory = _unpin_memory_disabled
+
+
+def _enable_worker_dynamic_vram():
+    global _WORKER_AIMDO_INIT_ATTEMPTED
+    if _WORKER_AIMDO_INIT_ATTEMPTED:
+        return
+    _WORKER_AIMDO_INIT_ATTEMPTED = True
+
+    try:
+        import comfy.cli_args
+        from comfy.cli_args import enables_dynamic_vram
+        import comfy.memory_management as comfy_memory_management
+        import comfy.model_management as comfy_model_management
+        import comfy.model_patcher as comfy_model_patcher
+        import comfy_aimdo.control
+    except Exception as exc:
+        logging.warning(f"[Raylight][AIMDO] DynamicVRAM unavailable in worker: {exc}")
+        return
+
+    comfy_args = comfy.cli_args.args
+    should_enable = bool(getattr(comfy_args, "enable_dynamic_vram", False)) or (
+        enables_dynamic_vram()
+        and comfy_model_management.is_nvidia()
+        and not comfy_model_management.is_wsl()
+    )
+    if not should_enable:
+        return
+
+    if (
+        not getattr(comfy_args, "enable_dynamic_vram", False)
+        and getattr(comfy_model_management, "torch_version_numeric", (0, 0)) < (2, 8)
+    ):
+        logging.warning(
+            "[Raylight][AIMDO] DynamicVRAM requires PyTorch 2.8 or later; "
+            "worker is falling back to legacy ModelPatcher."
+        )
+        return
+
+    headroom_bytes = int(float(getattr(comfy_args, "vram_headroom", 0) or 0) * 1024 ** 3)
+    reserve_vram = getattr(comfy_args, "reserve_vram", None)
+    try:
+        try:
+            comfy_aimdo.control.init(
+                simple_vram_headroom=None if reserve_vram is None else int(float(reserve_vram) * 1024 ** 3)
+            )
+        except TypeError:
+            # comfy-aimdo 0.4.9 protocol.
+            comfy_aimdo.control.init()
+
+        devices = comfy_model_management.get_all_torch_devices()
+        try:
+            aimdo_initialized = comfy_aimdo.control.init_devices((d.index, headroom_bytes) for d in devices)
+        except TypeError:
+            # comfy-aimdo 0.4.9 protocol.
+            aimdo_initialized = comfy_aimdo.control.init_devices(d.index for d in devices)
+    except Exception as exc:
+        logging.warning(f"[Raylight][AIMDO] DynamicVRAM init failed in worker: {exc}")
+        return
+
+    if not aimdo_initialized:
+        logging.warning(
+            "[Raylight][AIMDO] No working comfy-aimdo install detected in worker. "
+            "DynamicVRAM disabled for Raylight worker."
+        )
+        return
+
+    verbose = getattr(comfy_args, "verbose", "INFO")
+    if verbose == "DEBUG":
+        comfy_aimdo.control.set_log_debug()
+    elif verbose == "CRITICAL":
+        comfy_aimdo.control.set_log_critical()
+    elif verbose == "ERROR":
+        comfy_aimdo.control.set_log_error()
+    elif verbose == "WARNING":
+        comfy_aimdo.control.set_log_warning()
+    else:
+        comfy_aimdo.control.set_log_info()
+
+    comfy_model_patcher.CoreModelPatcher = comfy_model_patcher.ModelPatcherDynamic
+    comfy_memory_management.aimdo_enabled = True
+    print(
+        "[Raylight][AIMDO] DynamicVRAM enabled in worker "
+        f"devices={[str(d) for d in devices]} vram_headroom_gb={float(getattr(comfy_args, 'vram_headroom', 0) or 0)}"
+    )
 
 
 def _get_guider_conditionings(guider_spec):
@@ -273,6 +360,8 @@ class RayWorker:
         os.environ["XDIT_LOGGING_LEVEL"] = "WARN"
         os.environ["NCCL_DEBUG"] = "WARN"
         os.environ["CUDA_VISIBLE_DEVICES"] = str(self.device_id)
+        # torch.cuda was already initialized above under Ray's assigned GPU visibility.
+        _enable_worker_dynamic_vram()
 
         if self.parallel_dict.get("use_group_process_group") and self.parallel_dict.get("shard_size") is not None:
             nccl_world_size = self.parallel_dict["shard_size"]
