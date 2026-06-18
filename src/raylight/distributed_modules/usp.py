@@ -468,6 +468,27 @@ if hasattr(model_base, "Lumina2"):
         model._forward = types.MethodType(usp_dit_forward, model)
 
 
+if hasattr(model_base, "Boogu"):
+
+    @USPInjectRegistry.register(model_base.Boogu)
+    def _inject_boogu(model_patcher, base_model, *args):
+        from ..diffusion_models.boogu.xdit_context_parallel import (
+            usp_dit_forward,
+            usp_img_self_attention_forward,
+            usp_joint_attention_forward,
+        )
+
+        model = base_model.diffusion_model
+        for block_group_name in ("context_refiner", "noise_refiner", "ref_image_refiner", "single_stream_layers"):
+            for block in getattr(model, block_group_name, []):
+                if hasattr(block, "attn"):
+                    block.attn.forward = types.MethodType(usp_img_self_attention_forward, block.attn)
+        for block in model.double_stream_layers:
+            block.img_instruct_attn.forward = types.MethodType(usp_joint_attention_forward, block.img_instruct_attn)
+            block.img_self_attn.forward = types.MethodType(usp_img_self_attention_forward, block.img_self_attn)
+        model.forward = types.MethodType(usp_dit_forward, model)
+
+
 if hasattr(model_base, "Omnigen2"):
 
     @USPInjectRegistry.register(model_base.Omnigen2)
