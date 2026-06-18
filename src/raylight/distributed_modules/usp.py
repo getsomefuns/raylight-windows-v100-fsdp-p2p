@@ -468,6 +468,19 @@ if hasattr(model_base, "Lumina2"):
         model._forward = types.MethodType(usp_dit_forward, model)
 
 
+if hasattr(model_base, "Omnigen2"):
+
+    @USPInjectRegistry.register(model_base.Omnigen2)
+    def _inject_omnigen2(model_patcher, base_model, *args):
+        from ..diffusion_models.omnigen.xdit_context_parallel import usp_attention_forward, usp_dit_forward
+
+        model = base_model.diffusion_model
+        for block_group_name in ("context_refiner", "noise_refiner", "ref_image_refiner", "layers", "single_stream_layers"):
+            for block in getattr(model, block_group_name, []):
+                block.attn.forward = types.MethodType(usp_attention_forward, block.attn)
+        model.forward = types.MethodType(usp_dit_forward, model)
+
+
 if hasattr(model_base, "HiDreamO1"):
 
     @USPInjectRegistry.register(model_base.HiDreamO1)
