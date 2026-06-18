@@ -474,6 +474,7 @@ if hasattr(model_base, "Boogu"):
     def _inject_boogu(model_patcher, base_model, *args):
         from ..diffusion_models.boogu.xdit_context_parallel import (
             usp_dit_forward,
+            usp_double_stream_forward,
             usp_img_self_attention_forward,
             usp_joint_attention_forward,
         )
@@ -484,6 +485,7 @@ if hasattr(model_base, "Boogu"):
                 if hasattr(block, "attn"):
                     block.attn.forward = types.MethodType(usp_img_self_attention_forward, block.attn)
         for block in model.double_stream_layers:
+            block.forward = types.MethodType(usp_double_stream_forward, block)
             block.img_instruct_attn.forward = types.MethodType(usp_joint_attention_forward, block.img_instruct_attn)
             block.img_self_attn.forward = types.MethodType(usp_img_self_attention_forward, block.img_self_attn)
         model.forward = types.MethodType(usp_dit_forward, model)

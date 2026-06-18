@@ -210,4 +210,56 @@ def usp_joint_attention_forward(
     return self.to_out[0](hidden_states)
 
 
+def usp_double_stream_forward(
+    self,
+    img_hidden_states,
+    instruct_hidden_states,
+    joint_rotary_emb,
+    img_rotary_emb,
+    temb,
+    joint_attention_mask=None,
+    img_attention_mask=None,
+    transformer_options={},
+):
+    instruct_size = instruct_hidden_states.shape[1]
+
+    img_norm1_out, img_gate_msa, img_scale_mlp, img_gate_mlp = self.img_norm1(img_hidden_states, temb)
+    img_norm2_out, img_shift_mlp, _, _ = self.img_norm2(img_hidden_states, temb)
+    img_norm3_out, img_gate_self, _, _ = self.img_norm3(img_hidden_states, temb)
+
+    instruct_norm1_out, instruct_gate_msa, instruct_scale_mlp, instruct_gate_mlp = self.instruct_norm1(instruct_hidden_states, temb)
+    instruct_norm2_out, instruct_shift_mlp, _, _ = self.instruct_norm2(instruct_hidden_states, temb)
+
+    joint_attn_out = self.img_instruct_attn(
+        img_norm1_out,
+        instruct_norm1_out,
+        joint_rotary_emb,
+        joint_attention_mask,
+        transformer_options=transformer_options,
+    )
+    instruct_attn_out = joint_attn_out[:, :instruct_size]
+    img_attn_out = joint_attn_out[:, instruct_size:]
+
+    img_self_attn_out = self.img_self_attn(
+        img_norm3_out,
+        img_norm3_out,
+        img_attention_mask,
+        img_rotary_emb,
+        transformer_options=transformer_options,
+    )
+
+    img_hidden_states = img_hidden_states + img_gate_msa.unsqueeze(1).tanh() * self.img_attn_norm(img_attn_out)
+    img_hidden_states = img_hidden_states + img_gate_self.unsqueeze(1).tanh() * self.img_self_attn_norm(img_self_attn_out)
+    img_mlp_input = (1 + img_scale_mlp.unsqueeze(1)) * img_norm2_out + img_shift_mlp.unsqueeze(1)
+    img_mlp_out = self.img_feed_forward(self.img_ffn_norm1(img_mlp_input))
+    img_hidden_states = img_hidden_states + img_gate_mlp.unsqueeze(1).tanh() * self.img_ffn_norm2(img_mlp_out)
+
+    instruct_hidden_states = instruct_hidden_states + instruct_gate_msa.unsqueeze(1).tanh() * self.instruct_attn_norm(instruct_attn_out)
+    instruct_mlp_input = (1 + instruct_scale_mlp.unsqueeze(1)) * instruct_norm2_out + instruct_shift_mlp.unsqueeze(1)
+    instruct_mlp_out = self.instruct_feed_forward(self.instruct_ffn_norm1(instruct_mlp_input))
+    instruct_hidden_states = instruct_hidden_states + instruct_gate_mlp.unsqueeze(1).tanh() * self.instruct_ffn_norm2(instruct_mlp_out)
+
+    return img_hidden_states, instruct_hidden_states
+
+
 usp_img_self_attention_forward = usp_attention_forward

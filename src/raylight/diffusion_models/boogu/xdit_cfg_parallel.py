@@ -13,5 +13,6 @@ def cfg_parallel_forward_wrapper(executor, *args, **kwargs):
             "attention_mask",
             "ref_latents",
         ),
+        auto_chunk_extra_kwargs=True,
         **kwargs,
     )
