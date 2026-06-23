@@ -517,6 +517,20 @@ if hasattr(model_base, "HiDreamO1"):
         model._forward = types.MethodType(usp_dit_forward, model)
 
 
+if hasattr(model_base, "Krea2"):
+
+    @USPInjectRegistry.register(model_base.Krea2)
+    def _inject_krea2(model_patcher, base_model, *args):
+        from ..diffusion_models.krea2.xdit_context_parallel import usp_attention_forward, usp_dit_forward
+
+        model = base_model.diffusion_model
+        for block in model.txtfusion.refiner_blocks:
+            block.attn.forward = types.MethodType(usp_attention_forward, block.attn)
+        for block in model.blocks:
+            block.attn.forward = types.MethodType(usp_attention_forward, block.attn)
+        model._forward = types.MethodType(usp_dit_forward, model)
+
+
 if hasattr(model_base, "Kandinsky5"):
 
     @USPInjectRegistry.register(model_base.Kandinsky5)

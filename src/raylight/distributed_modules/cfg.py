@@ -231,6 +231,15 @@ if hasattr(model_base, "Omnigen2"):
         return cfg_parallel_forward_wrapper
 
 
+if hasattr(model_base, "Krea2"):
+
+    @CFGParallelInjectRegistry.register(model_base.Krea2)
+    def _inject_krea2():
+        from ..diffusion_models.krea2.xdit_cfg_parallel import cfg_parallel_forward_wrapper
+
+        return cfg_parallel_forward_wrapper
+
+
 if hasattr(model_base, "Kandinsky5"):
 
     @CFGParallelInjectRegistry.register(model_base.Kandinsky5)
