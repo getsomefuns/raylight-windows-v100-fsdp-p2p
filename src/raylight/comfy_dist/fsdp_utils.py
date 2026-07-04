@@ -490,7 +490,7 @@ def _build_quantized_tensor(
     full_q = full_sd.get(param_name)
     if isinstance(full_q, QuantizedTensor):
         qt = cast(Any, full_q)
-        local_qdata = _shard_tensor(qt._qdata.to(device=device), sharded_meta_param, device, pad_to_local_meta=False)
+        local_qdata = _shard_tensor(qt._qdata, sharded_meta_param, device, pad_to_local_meta=False)
         local_params = replace(
             qt._params, orig_shape=_local_orig_shape(qt._layout_cls, local_qdata, getattr(qt._params, "orig_shape", None))
         )
@@ -522,7 +522,7 @@ def _build_quantized_tensor(
     if full_qdata is None:
         raise ValueError(f"Missing quantized weight for {param_name}")
 
-    qdata = full_qdata.to(device=device, dtype=qconfig["storage_t"])
+    qdata = full_qdata.to(dtype=qconfig["storage_t"])
     qdata = _shard_tensor(qdata, sharded_meta_param, device, pad_to_local_meta=False)
 
     params_kwargs: dict[str, Any] = {"orig_shape": tuple(qdata.shape)}
@@ -558,7 +558,7 @@ def _build_quantized_tensor(
         if tensor_scale is None or block_scale is None:
             raise ValueError(f"Missing NVFP4 scales for {param_name}")
         tensor_scale = tensor_scale.to(device=device)
-        block_scale = block_scale.view(dtype=torch.float8_e4m3fn).to(device=device)
+        block_scale = block_scale.view(dtype=torch.float8_e4m3fn)
         block_scale = _shard_tensor(block_scale, sharded_meta_param, device, pad_to_local_meta=False)
         params_kwargs["scale"] = tensor_scale
         params_kwargs["block_scale"] = block_scale
@@ -670,16 +670,16 @@ def load_from_full_model_state_dict(
             continue
         if not hasattr(sharded_meta_param, "device_mesh"):
             full_tensor = _maybe_collapse_replicated_leading_dim(full_tensor, sharded_meta_param.shape)
-        full_tensor = full_tensor.to(sharded_meta_param.dtype).to(device)
-        if hasattr(sharded_meta_param, "device_mesh"):
+            full_tensor = full_tensor.to(sharded_meta_param.dtype).to(device)
+            sharded_tensor = full_tensor
+        else:
+            full_tensor = full_tensor.to(sharded_meta_param.dtype)
             local_dense = _shard_tensor(full_tensor, sharded_meta_param, device)
             sharded_tensor = DTensor.from_local(
                 local_dense,
                 device_mesh=sharded_meta_param.device_mesh,
                 placements=sharded_meta_param.placements,
             )
-        else:
-            sharded_tensor = full_tensor
         if cpu_offload:
             sharded_tensor = sharded_tensor.cpu()
         sharded_sd[param_name] = torch.nn.Parameter(sharded_tensor)
