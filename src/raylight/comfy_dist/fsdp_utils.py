@@ -490,6 +490,11 @@ def _build_quantized_tensor(
     full_q = full_sd.get(param_name)
     if isinstance(full_q, QuantizedTensor):
         qt = cast(Any, full_q)
+        if qt._layout_cls not in ("TensorCoreFP8Layout", "TensorCoreFP8E4M3Layout", "TensorCoreFP8E5M2Layout"):
+            raise NotImplementedError(
+                f"Raylight FSDP direct QuantizedTensor loading only supports FP8 layouts, got {qt._layout_cls} for {param_name}. "
+                "Use a comfy_quant state dict payload for supported formats or disable Raylight FSDP quant loading."
+            )
         local_qdata = _shard_tensor(qt._qdata, sharded_meta_param, device, pad_to_local_meta=False)
         local_params = replace(
             qt._params, orig_shape=_local_orig_shape(qt._layout_cls, local_qdata, getattr(qt._params, "orig_shape", None))
@@ -511,7 +516,6 @@ def _build_quantized_tensor(
             "Raylight FSDP does not support MXFP8 quantized weights yet. "
             "Use FP8/NVFP4 weights or disable Raylight FSDP quant loading."
         )
-
     qconfig = QUANT_ALGOS[quant_format]
     layout_name = qconfig["comfy_tensor_layout"]
     layout_cls = get_layout_class(layout_name)
@@ -562,6 +566,21 @@ def _build_quantized_tensor(
         block_scale = _shard_tensor(block_scale, sharded_meta_param, device, pad_to_local_meta=False)
         params_kwargs["scale"] = tensor_scale
         params_kwargs["block_scale"] = block_scale
+    elif quant_format == "int8_tensorwise":
+        scale = full_sd.get(f"{prefix}weight_scale")
+        if scale is None:
+            raise ValueError(f"Missing INT8 weight scale for {param_name}")
+        if isinstance(scale, torch.Tensor) and scale.dim() > 0 and scale.numel() > 1:
+            scale = _shard_tensor(scale, sharded_meta_param, device, pad_to_local_meta=False)
+        elif isinstance(scale, torch.Tensor):
+            scale = scale.to(device=device)
+        params_kwargs["scale"] = scale
+        params_conf = conf.get("params", {})
+        if not isinstance(params_conf, dict):
+            params_conf = {}
+        if conf.get("convrot", params_conf.get("convrot", False)):
+            params_kwargs["convrot"] = True
+            params_kwargs["convrot_groupsize"] = int(conf.get("convrot_groupsize", params_conf.get("convrot_groupsize", 256)))
     elif quant_format == "gguf":
         n_blocks_per_superblock = conf.get("n_blocks_per_superblock", 8)
         super_block_scale_scale = full_sd.get(f"{prefix}super_block_scale_scale")
