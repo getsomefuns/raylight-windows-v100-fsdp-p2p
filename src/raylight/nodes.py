@@ -146,6 +146,11 @@ def _worker_cli_args_env_json() -> str:
         "deterministic": bool(comfy_args.deterministic),
         "verbose": comfy_args.verbose,
         "reserve_vram": comfy_args.reserve_vram,
+        "fp16_intermediates": bool(comfy_args.fp16_intermediates),
+        "force_channels_last": bool(comfy_args.force_channels_last),
+        "supports_fp8_compute": bool(comfy_args.supports_fp8_compute),
+        "enable_triton_backend": bool(comfy_args.enable_triton_backend),
+        "fast": sorted(feature.value for feature in comfy_args.fast),
     }
     return json.dumps(worker_cli_args, sort_keys=True)
 

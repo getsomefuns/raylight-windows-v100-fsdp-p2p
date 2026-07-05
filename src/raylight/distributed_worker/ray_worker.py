@@ -87,9 +87,13 @@ def _apply_worker_comfy_cli_args_from_env():
 
     try:
         import comfy.cli_args
+        from comfy.cli_args import PerformanceFeature
     except Exception as exc:
         logging.warning(f"Failed to import Comfy modules for worker CLI arg sync: {exc}")
         return worker_cli_args
+
+    if "fast" in worker_cli_args:
+        worker_cli_args["fast"] = {PerformanceFeature(feature) for feature in worker_cli_args["fast"]}
 
     comfy_args = comfy.cli_args.args
     for key, value in worker_cli_args.items():
