@@ -29,7 +29,7 @@ def install_int8_patches() -> None:
     if _PATCHED:
         return
 
-    from comfy_kitchen.tensor.base import QuantizedTensor, dequantize_args, register_layout_op
+    from comfy_kitchen.tensor.base import QuantizedTensor, register_layout_op
     from comfy_kitchen.tensor.int8 import TensorWiseINT8Layout as KitchenTensorWiseINT8Layout
 
     try:
@@ -70,6 +70,23 @@ def install_int8_patches() -> None:
         row_slice = [slice(None)] * scale.dim()
         row_slice[0] = slice(start, end, step)
         return scale[tuple(row_slice)]
+
+    def _is_flatten_to_1d(args, kwargs) -> bool:
+        shape = None
+        if len(args) > 1:
+            shape = args[1:] if len(args) > 2 else args[1]
+        else:
+            shape = kwargs.get("shape", kwargs.get("size", None))
+        if isinstance(shape, int):
+            return shape == -1
+        if isinstance(shape, torch.Size):
+            shape = tuple(shape)
+        if isinstance(shape, (list, tuple)) and len(shape) == 1:
+            try:
+                return int(shape[0]) == -1
+            except TypeError:
+                return False
+        return False
 
     def pre_all_gather(qtensor: QuantizedTensor, mesh):
         qdata = qtensor._qdata.contiguous()
@@ -239,7 +256,13 @@ def install_int8_patches() -> None:
         new_qdata = op(input_tensor._qdata, *args[1:], **kwargs)
         scale = input_tensor._params.scale
         if _is_row_scale(scale, input_tensor._qdata) and (new_qdata.dim() == 0 or int(new_qdata.shape[0]) != int(scale.shape[0])):
-            return op(*dequantize_args(args), **dequantize_args(kwargs))
+            if _is_flatten_to_1d(args, kwargs):
+                return _wrap_int8_tensor(input_tensor, new_qdata, scale=scale)
+            raise RuntimeError(
+                "INT8 rowwise/ConvRot QuantizedTensor cannot be reshaped without invalidating scale metadata. "
+                f"qdata_shape={tuple(input_tensor._qdata.shape)}, new_qdata_shape={tuple(new_qdata.shape)}, "
+                f"scale_shape={tuple(scale.shape)}"
+            )
         return _wrap_int8_tensor(input_tensor, new_qdata)
 
     @maybe_register(op_view)
