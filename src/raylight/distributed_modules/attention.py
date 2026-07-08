@@ -97,6 +97,7 @@ def make_xfuser_attention(attn_type, sync_ulysses):
                 joint_tensor_query=join_q.transpose(1, 2),
                 joint_tensor_key=join_k.transpose(1, 2),
                 joint_tensor_value=join_v.transpose(1, 2),
+                softmax_scale=kwargs.get("scale", None),
             ).transpose(1, 2)
         else:
             out = xfuser_attn(
@@ -104,6 +105,7 @@ def make_xfuser_attention(attn_type, sync_ulysses):
                 query,
                 key,
                 value,
+                softmax_scale=kwargs.get("scale", None),
             ).transpose(1, 2)
         if not skip_output_reshape:
             out = (
