@@ -997,6 +997,7 @@ class RayWorker:
     def load_lora(
         self,
     ):
+        import comfy.memory_management as comfy_memory_management
         import comfy.sd as comfy_sd
         import comfy.utils as comfy_utils
 
@@ -1011,11 +1012,14 @@ class RayWorker:
                     load_lora_for_models_quantized as ray_load_lora_for_models_quantized,
                 )
 
-                if self.parallel_dict["is_quant"] is True:
+                dynamic_sidecar = comfy_memory_management.aimdo_enabled
+                if self.parallel_dict["is_quant"] is True or dynamic_sidecar:
                     self.model = ray_load_lora_for_models_quantized(
                         self.model,
                         lora_model,
                         strength_model,
+                        dynamic_sidecar=dynamic_sidecar,
+                        fallback_to_patches=not self.parallel_dict["is_quant"],
                     )
                 else:
                     self.model = ray_load_lora_for_models(

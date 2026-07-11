@@ -455,7 +455,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
 
         return n
 
-    def _load_list(self, prio_comfy_cast_weights=False):
+    def _load_list(self, for_dynamic=False, default_device=None):
         loading = []
         for n, m in self.model.named_modules():
             params = []
@@ -467,8 +467,8 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
                     skip = True  # skip random weights in non leaf modules
                     break
             if not skip and (hasattr(m, "comfy_cast_weights") or len(params) > 0):
-                prepend = (not hasattr(m, "comfy_cast_weights"),) if prio_comfy_cast_weights else ()
-                loading.append(prepend + (comfy.model_management.module_size(m), n, m, params))
+                module_mem = comfy.model_management.module_size(m)
+                loading.append((module_mem, module_mem, n, m, params))
         return loading
 
     def load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
@@ -483,7 +483,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
 
             loading.sort(reverse=True)
             for x in loading:
-                module_mem, n, m, params = x
+                _, module_mem, n, m, params = x
 
                 weight_key = "{}.weight".format(n)
                 bias_key = "{}.bias".format(n)

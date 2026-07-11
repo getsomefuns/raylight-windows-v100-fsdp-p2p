@@ -15,6 +15,9 @@ from comfy import model_detection, model_management
 import comfy
 
 
+FSDP_LORA_SIDECAR_ATTACHMENT = "fsdp_lora_sidecar_groups"
+
+
 # I dont really want to implement this, 0.2s / step in Chroma TensorCoreFP8 FSDP
 # The correct way maybe custom sharded lora and then share it
 class OffsetBypassAdapter(comfy.weight_adapter.WeightAdapterBase):
@@ -48,6 +51,10 @@ class OffsetBypassAdapter(comfy.weight_adapter.WeightAdapterBase):
             offset = item["offset"]
             strength = item["strength"]
             base_key = item["key"]
+
+            for name in ("is_conv", "conv_dim", "kernel_size", "in_channels", "out_channels", "kw_dict"):
+                if hasattr(self, name):
+                    setattr(adapter, name, getattr(self, name))
 
             prev_multiplier = getattr(adapter, "multiplier", 1.0)
             adapter.multiplier = strength
@@ -413,7 +420,7 @@ def load_lora_for_models(model, lora, strength_model):
     return new_modelpatcher
 
 
-def load_lora_for_models_quantized(model, lora, strength_model):
+def load_lora_for_models_quantized(model, lora, strength_model, dynamic_sidecar=False, fallback_to_patches=False):
     raw_lora_key_count = len(lora)
     key_map = {}
     if model is not None:
@@ -569,7 +576,7 @@ def load_lora_for_models_quantized(model, lora, strength_model):
             adapter = DirectDiffBypassAdapter(group.get("weight"), group.get("bias"), key=module_key)
         else:
             direct_diff_counts["param"] += len(group["handled_keys"])
-            if module_key in grouped_adapters:
+            if dynamic_sidecar or module_key in grouped_adapters:
                 unsupported_keys.extend(group["handled_keys"])
                 continue
             adapter = ParamDiffBypassAdapter(group.get("weight"), group.get("bias"), key=module_key)
@@ -606,12 +613,18 @@ def load_lora_for_models_quantized(model, lora, strength_model):
         merged_weight_patch_count += len(weight_patches)
         merged_bias_patch_count += len(bias_patches)
 
+    previous_groups = new_modelpatcher.get_attachment(FSDP_LORA_SIDECAR_ATTACHMENT) or {}
+    sidecar_groups = {key: entries[:] for key, entries in previous_groups.items()}
+    for key, entries in grouped_adapters.items():
+        sidecar_groups.setdefault(key, []).extend(entries)
+    new_modelpatcher.set_attachments(FSDP_LORA_SIDECAR_ATTACHMENT, sidecar_groups)
+
     manager = comfy.weight_adapter.BypassInjectionManager()
     loaded_keys = set()
-    for key, entries in grouped_adapters.items():
+    for key, entries in sidecar_groups.items():
         for item in entries:
             loaded_keys.update(item.get("handled_keys", {item["key"]}))
-        if len(entries) == 1 and entries[0]["offset"] is None:
+        if not dynamic_sidecar and len(entries) == 1 and entries[0]["offset"] is None:
             manager.add_adapter(key, entries[0]["adapter"], strength=entries[0]["strength"])
             continue
 
@@ -634,8 +647,10 @@ def load_lora_for_models_quantized(model, lora, strength_model):
     else:
         hook_count = len(getattr(manager, "hooks", ()))
 
+    mode = "dynamic-sidecar" if dynamic_sidecar else "quant-bypass"
     logging.warning(
-        "[Raylight LoRA][quant-bypass] keys raw=%d converted=%d key_map=%d loaded=%d strength=%s",
+        "[Raylight LoRA][%s] keys raw=%d converted=%d key_map=%d loaded=%d strength=%s",
+        mode,
         raw_lora_key_count,
         converted_lora_key_count,
         len(key_map),
@@ -643,7 +658,8 @@ def load_lora_for_models_quantized(model, lora, strength_model):
         strength_model,
     )
     logging.warning(
-        "[Raylight LoRA][quant-bypass] adapters=%s direct_diff=%s other=%s sidecar_lora=%d grouped=%d unsupported=%d hooks=%d",
+        "[Raylight LoRA][%s] adapters=%s direct_diff=%s other=%s sidecar_lora=%d grouped=%d unsupported=%d hooks=%d",
+        mode,
         adapter_counts,
         direct_diff_counts,
         other_patch_counts,
@@ -672,26 +688,34 @@ def load_lora_for_models_quantized(model, lora, strength_model):
         )
     if offset_keys:
         logging.warning(
-            "[Raylight LoRA][quant-bypass] offset LoRA entries present: count=%d sample=%s",
+            "[Raylight LoRA][%s] offset LoRA entries present: count=%d sample=%s",
+            mode,
             len(offset_keys),
             _sample_keys(offset_keys),
         )
     if function_keys:
         logging.warning(
-            "[Raylight LoRA][quant-bypass] function LoRA entries are unsupported in quantized bypass: count=%d sample=%s",
+            "[Raylight LoRA][%s] function LoRA entries cannot use bypass: count=%d sample=%s",
+            mode,
             len(function_keys),
             _sample_keys(function_keys),
         )
-    if len(loaded) > 0 and hook_count == 0:
-        logging.warning("[Raylight LoRA][quant-bypass] loaded patches are nonzero but created bypass hooks=0")
+    if len(loaded) > 0 and hook_count == 0 and not fallback_to_patches:
+        logging.warning("[Raylight LoRA][%s] loaded patches are nonzero but created bypass hooks=0", mode)
 
     new_modelpatcher.set_injections("quantized_lora_bypass", injections)
+
+    fallback_keys = set()
+    if fallback_to_patches and unsupported_keys:
+        fallback = {key: loaded[key] for key in unsupported_keys}
+        fallback_keys.update(new_modelpatcher.add_patches(fallback, strength_model))
 
     reported_keys = set()
     for key in unsupported_keys:
         normalized_key = key[0] if isinstance(key, tuple) else key
         reported_keys.add(normalized_key)
-        logging.warning("SKIP LORA KEY IN QUANTIZED BYPASS MODE {}".format(key))
+        if key not in fallback_keys:
+            logging.warning("SKIP LORA KEY IN {} MODE {}".format(mode.upper(), key))
     for key, patch_data in loaded.items():
         normalized_key = key[0] if isinstance(key, tuple) else key
         if normalized_key not in loaded_keys and normalized_key not in reported_keys:
