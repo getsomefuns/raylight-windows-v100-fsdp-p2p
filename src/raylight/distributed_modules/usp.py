@@ -601,3 +601,15 @@ if hasattr(model_base, "ErnieImage"):
             block.self_attention.forward = types.MethodType(usp_attention_forward, block.self_attention)
         model._forward = types.MethodType(usp_dit_forward, model)
         model.forward = types.MethodType(usp_forward, model)
+
+
+if hasattr(model_base, "LingBotVideo"):
+
+    @USPInjectRegistry.register(model_base.LingBotVideo)
+    def _inject_lingbot_video(model_patcher, base_model, *args):
+        from ..diffusion_models.lingbot_video.xdit_context_parallel import usp_attention_forward, usp_dit_forward
+
+        model = base_model.diffusion_model
+        for block in model.blocks:
+            block.attn.forward = types.MethodType(usp_attention_forward, block.attn)
+        model.forward = types.MethodType(usp_dit_forward, model)

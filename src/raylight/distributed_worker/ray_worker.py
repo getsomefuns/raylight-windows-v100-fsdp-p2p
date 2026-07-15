@@ -732,7 +732,10 @@ class RayWorker:
         return self.is_model_loaded
 
     def patch_cfg(self):
-        self.model.add_wrapper(pe.WrappersMP.DIFFUSION_MODEL, CFGParallelInjectRegistry.inject(self.model))
+        if CFGParallelInjectRegistry.has_direct_handler(self.model):
+            self.model.add_callback(pe.CallbacksMP.ON_LOAD, CFGParallelInjectRegistry.inject_direct)
+        else:
+            self.model.add_wrapper(pe.WrappersMP.DIFFUSION_MODEL, CFGParallelInjectRegistry.inject(self.model))
 
     def patch_usp(self):
         self.model.add_callback(

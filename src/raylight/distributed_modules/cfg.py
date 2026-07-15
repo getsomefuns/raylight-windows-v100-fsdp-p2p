@@ -5,6 +5,7 @@ class CFGParallelInjectRegistry:
     """Registry for registering and applying CFG context parallelism injections."""
 
     _REGISTRY = {}
+    _DIRECT_REGISTRY = {}
 
     @classmethod
     def register(cls, model_class):
@@ -30,6 +31,35 @@ class CFGParallelInjectRegistry:
                 print(f"[CFG] Initializing CFG Parallel for {registered_cls.__name__}")
                 return inject_func()
         raise ValueError(f"Model: {type(base_model).__name__} is not yet supported for CFG Parallelism")
+
+    @classmethod
+    def register_direct(cls, model_class):
+        def decorator(inject_func):
+            cls._DIRECT_REGISTRY[model_class] = inject_func
+            return inject_func
+
+        return decorator
+
+    @classmethod
+    def has_direct_handler(cls, model_patcher):
+        return any(isinstance(model_patcher.model, registered_cls) for registered_cls in cls._DIRECT_REGISTRY)
+
+    @classmethod
+    def inject_direct(cls, model_patcher, *args):
+        base_model = model_patcher.model
+        for registered_cls, inject_func in cls._DIRECT_REGISTRY.items():
+            if isinstance(base_model, registered_cls):
+                print(f"[CFG] Initializing CFG Parallel for {registered_cls.__name__}")
+                return inject_func(model_patcher, base_model, *args)
+
+
+if hasattr(model_base, "LingBotVideo"):
+
+    @CFGParallelInjectRegistry.register_direct(model_base.LingBotVideo)
+    def _inject_lingbot_video(model_patcher, base_model, *args):
+        from ..diffusion_models.lingbot_video.xdit_cfg_parallel import patch_cfg_forward
+
+        patch_cfg_forward(base_model.diffusion_model)
 
 
 if hasattr(model_base, "WAN22_WanDancer"):
