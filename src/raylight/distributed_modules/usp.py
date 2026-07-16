@@ -371,6 +371,18 @@ if hasattr(model_base, "QwenImage"):
         model._forward = types.MethodType(usp_dit_forward, model)
 
 
+if hasattr(model_base, "JoyImage"):
+
+    @USPInjectRegistry.register(model_base.JoyImage)
+    def _inject_joyimage(model_patcher, base_model, *args):
+        from ..diffusion_models.joyimage.xdit_context_parallel import usp_attention_forward, usp_dit_forward
+
+        model = base_model.diffusion_model
+        for block in model.double_blocks:
+            block.attn.forward = types.MethodType(usp_attention_forward, block.attn)
+        model._forward = types.MethodType(usp_dit_forward, model)
+
+
 if hasattr(model_base, "Lens"):
 
     @USPInjectRegistry.register(model_base.Lens)

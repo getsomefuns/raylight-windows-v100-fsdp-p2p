@@ -89,6 +89,15 @@ if hasattr(model_base, "QwenImage"):
         return cfg_parallel_forward_wrapper
 
 
+if hasattr(model_base, "JoyImage"):
+
+    @CFGParallelInjectRegistry.register(model_base.JoyImage)
+    def _inject_joyimage():
+        from ..diffusion_models.joyimage.xdit_cfg_parallel import cfg_parallel_forward_wrapper
+
+        return cfg_parallel_forward_wrapper
+
+
 if hasattr(model_base, "Lens"):
 
     @CFGParallelInjectRegistry.register(model_base.Lens)
