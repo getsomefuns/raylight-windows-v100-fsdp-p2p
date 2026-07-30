@@ -24,6 +24,7 @@ from .distributed_worker.ray_worker import (
     ensure_fresh_actors,
     ray_nccl_tester,
 )
+from .distributed_worker.ray_worker_vae import combine_dist_vae_partials, combine_seedvr2_vae_partials
 
 
 class AnyType(str):
@@ -850,6 +851,10 @@ class RayUNETLoader:
             model_options["fp8_optimizations"] = True
         elif weight_dtype == "fp8_e5m2":
             model_options["dtype"] = torch.float8_e5m2
+        elif weight_dtype == "bf16":
+            model_options["dtype"] = torch.bfloat16
+        elif weight_dtype == "fp16":
+            model_options["dtype"] = torch.float16
 
         try:
             unet_path = folder_paths.get_full_path_or_raise("diffusion_models", unet_name)
@@ -1722,7 +1727,7 @@ class RayVAEDecodeDistributed:
                         "min": 8,
                         "max": 4096,
                         "step": 4,
-                        "tooltip": "Only used for video VAEs: Amount of frames to decode at a time.",
+                        "tooltip": "Retained for workflow compatibility. Distributed video decoding always keeps the complete temporal sequence on one worker; this value is not used for tiling.",
                     },
                 ),
                 "temporal_overlap": (
@@ -1732,7 +1737,7 @@ class RayVAEDecodeDistributed:
                         "min": 4,
                         "max": 4096,
                         "step": 4,
-                        "tooltip": "Only used for video VAEs: Amount of frames to overlap.",
+                        "tooltip": "Retained for workflow compatibility. Distributed video decoding always keeps the complete temporal sequence on one worker; this value is not used for tiling.",
                     },
                 ),
             }
@@ -1747,6 +1752,8 @@ class RayVAEDecodeDistributed:
     # By default VAE on comfy already "Parallelized" through tiling, so just distributed the tiling to other rank
     def ray_decode(self, ray_actors, vae_name, samples, tile_size, overlap=64, temporal_size=64, temporal_overlap=8):
         gpu_actors = ray_actors["workers"]
+        if not gpu_actors:
+            raise ValueError("Distributed VAE (Ray) requires at least one Ray worker.")
         vae_path = folder_paths.get_full_path_or_raise("vae", vae_name)
 
         for actor in gpu_actors:
@@ -1766,21 +1773,59 @@ class RayVAEDecodeDistributed:
         ]
 
         worker_partials = ray.get(futures)
-        decoded_passes = []
-        for pass_index in range(len(worker_partials[0])):
-            out = None
-            out_div = None
-            for partials in worker_partials:
-                partial_out, partial_div = partials[pass_index]
-                out = partial_out if out is None else out + partial_out
-                out_div = partial_div if out_div is None else out_div + partial_div
-            decoded_passes.append(out / out_div.clamp_min(1e-6))
-
-        decoded = decoded_passes[0]
-        if len(decoded_passes) > 1:
-            decoded = sum(decoded_passes) / len(decoded_passes)
-
+        decoded = combine_dist_vae_partials(worker_partials)
         image = ray.get(gpu_actors[0].ray_vae_decode_finalize.remote(decoded.cpu()))
+        return (image,)
+
+
+class RaySeedVR2VAEDecodeDistributed:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "ray_actors": ("RAY_ACTORS", {"tooltip": "Ray Actor to submit the model into"}),
+                "samples": ("LATENT", {"tooltip": "SeedVR2 latent samples to decode."}),
+                "vae_name": (folder_paths.get_filename_list("vae"), {"tooltip": "Name of the SeedVR2 VAE model."}),
+                "tile_size": (
+                    "INT",
+                    {
+                        "default": 512,
+                        "min": 64,
+                        "max": 4096,
+                        "step": 32,
+                        "tooltip": "Spatial tile size in output pixels. The complete temporal sequence stays on one worker.",
+                    },
+                ),
+                "overlap": (
+                    "INT",
+                    {"default": 64, "min": 0, "max": 4096, "step": 32, "tooltip": "Spatial overlap in output pixels."},
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "ray_decode"
+    CATEGORY = "Raylight"
+
+    def ray_decode(self, ray_actors, vae_name, samples, tile_size, overlap=64):
+        gpu_actors = ray_actors["workers"]
+        if not gpu_actors:
+            raise ValueError("SeedVR2 distributed decode requires at least one Ray worker.")
+        vae_path = folder_paths.get_full_path_or_raise("vae", vae_name)
+        ray.get([actor.ray_vae_loader.remote(vae_path) for actor in gpu_actors])
+
+        worker_partials = ray.get([
+            actor.ray_seedvr2_vae_decode_partial.remote(
+                samples,
+                tile_size,
+                overlap=overlap,
+                job_rank=i,
+                job_world_size=len(gpu_actors),
+            )
+            for i, actor in enumerate(gpu_actors)
+        ])
+        decoded = combine_seedvr2_vae_partials(worker_partials)
+        image = ray.get(gpu_actors[0].ray_vae_decode_finalize.remote(decoded))
         return (image,)
 
 
@@ -1801,6 +1846,7 @@ NODE_CLASS_MAPPINGS = {
     "DPConditioningList": DPConditioningList,
     "DPLatentList": DPLatentList,
     "RayVAEDecodeDistributed": RayVAEDecodeDistributed,
+    "RaySeedVR2VAEDecodeDistributed": RaySeedVR2VAEDecodeDistributed,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1820,4 +1866,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "DPConditioningList": "Data Parallel Conditioning List",
     "DPLatentList": "Data Parallel Latent List",
     "RayVAEDecodeDistributed": "Distributed VAE (Ray)",
+    "RaySeedVR2VAEDecodeDistributed": "SeedVR2 VAE Decode Distributed (Ray)",
 }

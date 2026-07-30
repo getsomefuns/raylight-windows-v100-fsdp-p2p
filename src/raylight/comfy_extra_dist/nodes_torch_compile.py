@@ -2,6 +2,10 @@ from comfy_api.torch_helpers import set_torch_compile_wrapper
 from .ray_patch_decorator import ray_patch
 
 
+def skip_torch_compile_dict(guard_entries):
+    return [("transformer_options" not in entry.name) for entry in guard_entries]
+
+
 class RayTorchCompileModel:
     @classmethod
     def INPUT_TYPES(s):
@@ -20,8 +24,8 @@ class RayTorchCompileModel:
     @ray_patch
     def patch(self, model, backend):
         print(f"Compiler {backend} registered")
-        m = model.clone()
-        set_torch_compile_wrapper(model=m, backend=backend)
+        m = model.clone(disable_dynamic=True)
+        set_torch_compile_wrapper(model=m, backend=backend, options={"guard_filter_fn": skip_torch_compile_dict})
         return m
 
 

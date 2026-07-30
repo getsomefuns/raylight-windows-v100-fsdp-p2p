@@ -858,7 +858,7 @@ class RayAddNoise:
     @ray_patch_with_return
     def add_noise(self, model, noise_seed, force_empty_noise, sigmas, latent_image):
         if len(sigmas) == 0:
-            return latent_image
+            return (latent_image,)
 
         latent = latent_image
         latent_image = latent["samples"]

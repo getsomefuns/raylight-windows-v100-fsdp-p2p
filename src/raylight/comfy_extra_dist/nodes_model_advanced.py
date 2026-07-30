@@ -168,8 +168,11 @@ class RayModelSamplingSD3:
         class ModelSamplingAdvanced(sampling_base, sampling_type):
             pass
 
+        original = m.get_model_object("model_sampling")
         model_sampling = ModelSamplingAdvanced(model.model.model_config)
         model_sampling.set_parameters(shift=shift, multiplier=multiplier)
+        if hasattr(original, "noise_scale"):
+            model_sampling.set_noise_scale(original.noise_scale)
         m.add_object_patch("model_sampling", model_sampling)
         return m
 
@@ -204,6 +207,32 @@ class RayModelSamplingAuraFlow:
 
         model_sampling = ModelSamplingAdvanced(model.model.model_config)
         model_sampling.set_parameters(shift=shift, multiplier=multiplier)
+        m.add_object_patch("model_sampling", model_sampling)
+        return m
+
+
+class RayModelNoiseScale:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "ray_actors": ("RAY_ACTORS",),
+                "noise_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 64.0, "step": 0.01}),
+            }
+        }
+
+    RETURN_TYPES = ("RAY_ACTORS",)
+    RETURN_NAMES = ("ray_actors",)
+    FUNCTION = "patch"
+    CATEGORY = "Raylight/extra"
+
+    @ray_patch
+    def patch(self, model, noise_scale):
+        m = model.clone()
+        original = m.get_model_object("model_sampling")
+        model_sampling = type(original)(m.model.model_config)
+        model_sampling.set_parameters(shift=original.shift, multiplier=original.multiplier)
+        model_sampling.set_noise_scale(noise_scale)
         m.add_object_patch("model_sampling", model_sampling)
         return m
 
@@ -477,6 +506,7 @@ NODE_CLASS_MAPPINGS = {
     "RayModelSamplingStableCascade": RayModelSamplingStableCascade,
     "RayModelSamplingSD3": RayModelSamplingSD3,
     "RayModelSamplingAuraFlow": RayModelSamplingAuraFlow,
+    "RayModelNoiseScale": RayModelNoiseScale,
     "RayModelSamplingFlux": RayModelSamplingFlux,
     "RayRescaleCFG": RayRescaleCFG,
     "RayModelComputeDtype": RayModelComputeDtype,
@@ -489,6 +519,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "RayModelSamplingStableCascade": "ModelSamplingStableCascade (Ray)",
     "RayModelSamplingSD3": "ModelSamplingSD3 (Ray)",
     "RayModelSamplingAuraFlow": "ModelSamplingAuraFlow (Ray)",
+    "RayModelNoiseScale": "ModelNoiseScale (Ray)",
     "RayModelSamplingFlux": "ModelSamplingFlux (Ray)",
     "RayRescaleCFG": "RescaleCFG (Ray)",
     "RayModelComputeDtype": "ModelComputeDtype (Ray)",

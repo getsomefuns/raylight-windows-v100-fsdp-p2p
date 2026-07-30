@@ -41,25 +41,14 @@ def pad_group_to_world_size(group, dim):
 
 
 def pad_and_split_pe(pe, dim, sp_world_size, sp_rank):
-    out = []
-
-    for group in pe:  # pe[i]
-        new_group = []
-
-        for cos, sin, flag in group:  # pe[i][j]
-            # Pad
-            cos, _ = pad_to_world_size(cos, dim=dim)
-            sin, _ = pad_to_world_size(sin, dim=dim)
-
-            # Split (sequence parallel)
-            cos = torch.chunk(cos, sp_world_size, dim=dim)[sp_rank]
-            sin = torch.chunk(sin, sp_world_size, dim=dim)[sp_rank]
-
-            new_group.append((cos, sin, flag))
-
-        out.append(tuple(new_group))
-
-    return out
+    if torch.is_tensor(pe):
+        pe, _ = pad_to_world_size(pe, dim=dim)
+        return torch.chunk(pe, sp_world_size, dim=dim)[sp_rank]
+    if isinstance(pe, tuple) and len(pe) == 2 and torch.is_tensor(pe[0]) and isinstance(pe[1], bool):
+        return (pad_and_split_pe(pe[0], dim, sp_world_size, sp_rank), pe[1])
+    if isinstance(pe, (list, tuple)):
+        return type(pe)(pad_and_split_pe(item, dim, sp_world_size, sp_rank) for item in pe)
+    return pe
 
 
 def sp_chunk_group(group, sp_world_size, sp_rank, dim):
@@ -186,7 +175,7 @@ def usp_dit_forward(
     # ======================== ADD SEQUENCE PARALLEL ========================= #
     x, x_orig = pad_group_to_world_size(x, dim=1)
     context, _ = pad_group_to_world_size(context, dim=1)
-    pe = pad_and_split_pe(pe, dim=2, sp_world_size=sp_world_size, sp_rank=sp_rank)
+    pe = pad_and_split_pe(pe, dim=1, sp_world_size=sp_world_size, sp_rank=sp_rank)
 
     x = sp_chunk_group(x, sp_world_size, sp_rank, dim=1)
     context = sp_chunk_group(context, sp_world_size, sp_rank, dim=1)

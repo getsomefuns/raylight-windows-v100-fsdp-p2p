@@ -13,7 +13,6 @@ from xfuser.core.distributed import (
 _DEFAULT_SKIP_EXTRA_KWARGS = frozenset(
     {
         "transformer_options",
-        "control",
         "disable_time_r",
         "data_type",
     }
@@ -90,6 +89,16 @@ def _chunk_extra_kwargs(extra_kwargs, cfg_world_size, cfg_rank, skip_names):
     return chunked
 
 
+def _gather_value(value):
+    if isinstance(value, torch.Tensor):
+        return get_cfg_group().all_gather(value, dim=0)
+    if isinstance(value, list):
+        return [_gather_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_gather_value(item) for item in value)
+    return value
+
+
 def cfg_parallel_forward(
     executor,
     *args,
@@ -116,6 +125,9 @@ def cfg_parallel_forward(
             continue
         bound.arguments[arg_name] = _chunk_value(bound.arguments[arg_name], cfg_world_size, cfg_rank)
 
+    if "control" in bound.arguments:
+        bound.arguments["control"] = _chunk_value(bound.arguments["control"], cfg_world_size, cfg_rank)
+
     if auto_chunk_extra_kwargs:
         var_keyword_name = next(
             (param.name for param in signature.parameters.values() if param.kind == inspect.Parameter.VAR_KEYWORD),
@@ -131,4 +143,4 @@ def cfg_parallel_forward(
             )
 
     result = executor(*bound.args, **bound.kwargs)
-    return get_cfg_group().all_gather(result, dim=0)
+    return _gather_value(result)
