@@ -9,6 +9,8 @@ Raylight. Using Ray Worker to manage multi GPU sampler setup. With XDiT-XFuser a
 
 <details><summary><strong>Click to expand changelog</strong></summary>
 
+- Fix Dist VAE
+- Add More ComfyUI - Raylight model model helper parity
 - Add Bernini R support
 - Add Comfy Aimdo support, can be disable with `--disable-dynamic-vram`
 - [BETA] Add LTXV Custom nodes expansion with Raylight compatibility
