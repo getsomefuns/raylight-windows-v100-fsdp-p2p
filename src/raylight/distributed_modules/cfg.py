@@ -89,6 +89,15 @@ if hasattr(model_base, "QwenImage"):
         return cfg_parallel_forward_wrapper
 
 
+if hasattr(model_base, "MiniMaxH3"):
+
+    @CFGParallelInjectRegistry.register(model_base.MiniMaxH3)
+    def _inject_minimax_h3():
+        from ..diffusion_models.minimax.xdit_cfg_parallel import cfg_parallel_forward_wrapper
+
+        return cfg_parallel_forward_wrapper
+
+
 if hasattr(model_base, "JoyImage"):
 
     @CFGParallelInjectRegistry.register(model_base.JoyImage)

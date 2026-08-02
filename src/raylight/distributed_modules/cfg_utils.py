@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 
 import torch
+from comfy.nested_tensor import NestedTensor
 from xfuser.core.distributed import (
     get_cfg_group,
     get_classifier_free_guidance_rank,
@@ -22,6 +23,11 @@ _DEFAULT_SKIP_EXTRA_KWARGS = frozenset(
 def _find_batch_tensor(value):
     if isinstance(value, torch.Tensor):
         return value
+    if isinstance(value, NestedTensor):
+        for item in value.unbind():
+            tensor = _find_batch_tensor(item)
+            if tensor is not None:
+                return tensor
     if isinstance(value, dict):
         for item in value.values():
             tensor = _find_batch_tensor(item)
@@ -55,6 +61,8 @@ def _chunk_value(value, cfg_world_size, cfg_rank):
         return None
     if isinstance(value, torch.Tensor):
         return _chunk_tensor(value, cfg_world_size, cfg_rank)
+    if isinstance(value, NestedTensor):
+        return NestedTensor(_chunk_value(item, cfg_world_size, cfg_rank) for item in value.unbind())
     if isinstance(value, dict):
         return {key: _chunk_value(item, cfg_world_size, cfg_rank) for key, item in value.items()}
     if isinstance(value, list):
@@ -92,6 +100,8 @@ def _chunk_extra_kwargs(extra_kwargs, cfg_world_size, cfg_rank, skip_names):
 def _gather_value(value):
     if isinstance(value, torch.Tensor):
         return get_cfg_group().all_gather(value, dim=0)
+    if isinstance(value, NestedTensor):
+        return NestedTensor(get_cfg_group().all_gather(item, dim=0) for item in value.unbind())
     if isinstance(value, list):
         return [_gather_value(item) for item in value]
     if isinstance(value, tuple):

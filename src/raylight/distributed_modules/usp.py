@@ -371,6 +371,18 @@ if hasattr(model_base, "QwenImage"):
         model._forward = types.MethodType(usp_dit_forward, model)
 
 
+if hasattr(model_base, "MiniMaxH3"):
+
+    @USPInjectRegistry.register(model_base.MiniMaxH3)
+    def _inject_minimax_h3(model_patcher, base_model, *args):
+        from ..diffusion_models.minimax.xdit_context_parallel import usp_attn_forward, usp_dit_forward
+
+        model = base_model.diffusion_model
+        for block in model.blocks:
+            block.attn.forward = types.MethodType(usp_attn_forward, block.attn)
+        model._forward = types.MethodType(usp_dit_forward, model)
+
+
 if hasattr(model_base, "JoyImage"):
 
     @USPInjectRegistry.register(model_base.JoyImage)
