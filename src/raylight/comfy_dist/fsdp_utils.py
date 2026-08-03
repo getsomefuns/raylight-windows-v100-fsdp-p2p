@@ -649,9 +649,11 @@ def load_from_full_model_state_dict(
     release_sd=True,
 ):
     meta_sharded_sd = model.state_dict()
-    sharded_sd: dict[str, torch.nn.Parameter] = {}
+    sharded_sd: dict[str, torch.Tensor] = {}
     for param_name, sharded_meta_param in meta_sharded_sd.items():
-        if _should_materialize_unsharded_param(param_name, sharded_meta_param, full_sd):
+        parent_module, leaf_name = _get_parent_module_and_name(model, param_name)
+        is_buffer = leaf_name in parent_module._buffers
+        if not is_buffer and _should_materialize_unsharded_param(param_name, sharded_meta_param, full_sd):
             full_tensor = full_sd.get(param_name)
             if full_tensor is None:
                 if strict:
@@ -662,7 +664,7 @@ def load_from_full_model_state_dict(
                 full_sd[param_name] = None
             continue
 
-        if _is_quant_param(param_name, full_sd, sharded_meta_param):
+        if not is_buffer and _is_quant_param(param_name, full_sd, sharded_meta_param):
             quant_tensor = _build_quantized_tensor(param_name, full_sd, sharded_meta_param, device)
             if quant_tensor is None:
                 raise ValueError(
@@ -701,7 +703,7 @@ def load_from_full_model_state_dict(
             )
         if cpu_offload:
             sharded_tensor = sharded_tensor.cpu()
-        sharded_sd[param_name] = torch.nn.Parameter(sharded_tensor)
+        sharded_sd[param_name] = sharded_tensor if is_buffer else torch.nn.Parameter(sharded_tensor)
         if release_sd:
             full_sd[param_name] = None
     out = model.load_state_dict(sharded_sd, strict=strict, assign=True)

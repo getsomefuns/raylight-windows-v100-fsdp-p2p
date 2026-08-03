@@ -8,6 +8,7 @@ from datetime import timedelta
 
 import torch
 import torch.distributed as dist
+from torch.distributed.fsdp import FSDPModule
 import ray
 
 import comfy.patcher_extension as pe
@@ -583,7 +584,21 @@ class RayWorker:
         same model + lora + options, we can skip the full reload.
         """
         active_key = self._active_model_key(unet_path, model_options)
-        return self.model is not None and self.active_request_key == active_key
+        return self.model is not None and self.active_request_key == active_key and not self._fsdp_init_failed()
+
+    def _fsdp_init_failed(self):
+        if self.model is None or getattr(self.model, "fsdp_state_dict", None) is None:
+            return False
+        base_model = getattr(self.model, "model", self.model)
+        return isinstance(base_model.diffusion_model, FSDPModule)
+
+    def _patch_fsdp_for_sampling(self):
+        try:
+            self.model.patch_fsdp()
+        except Exception:
+            self.active_request_key = None
+            self.is_model_loaded = False
+            raise
 
     def _normalize_model_options(self, model_options):
         if not model_options:
@@ -820,7 +835,7 @@ class RayWorker:
             active_key = self._active_model_key(unet_path, model_options)
 
             # Fast path: same base model + same LoRA — reuse FSDP-wrapped model
-            if self.model is not None and self.active_request_key == active_key:
+            if self.model is not None and self.active_request_key == active_key and not self._fsdp_init_failed():
                 base_model = getattr(self.model, "model", self.model)
                 self.overwrite_cast_dtype = getattr(base_model, "manual_cast_dtype", None)
                 self.is_model_loaded = True
@@ -1112,7 +1127,7 @@ class RayWorker:
             noise_mask = latent["noise_mask"]
 
         if self.parallel_dict["is_fsdp"] is True:
-            self.model.patch_fsdp()
+            self._patch_fsdp_for_sampling()
             del self.state_dict
             self.state_dict = None
             torch.cuda.synchronize()
@@ -1209,7 +1224,7 @@ class RayWorker:
         _prepare_control_models(positive, negative)
 
         if self.parallel_dict["is_fsdp"] is True:
-            self.model.patch_fsdp()
+            self._patch_fsdp_for_sampling()
             del self.state_dict
             self.state_dict = None
             torch.cuda.synchronize()
@@ -1336,7 +1351,7 @@ class RayWorker:
         latent_image = comfy_sample.fix_empty_latent_channels(self.model, latent_image)
 
         if self.parallel_dict["is_fsdp"] is True:
-            self.model.patch_fsdp()
+            self._patch_fsdp_for_sampling()
 
         if disable_noise:
             noise = torch.zeros(

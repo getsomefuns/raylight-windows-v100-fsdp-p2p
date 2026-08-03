@@ -236,6 +236,8 @@ def patch_fsdp(self):
     print(f"[Rank {self.rank}] Applying FSDP to {type(self.model.diffusion_model).__name__}")
 
     if isinstance(self.model.diffusion_model, FSDPModule):
+        if self.fsdp_state_dict is not None:
+            raise RuntimeError("FSDP initialization previously failed; reload the Raylight model before sampling again")
         print("FSDP already registered, skip wrapping...")
         return self.model
 
@@ -302,9 +304,8 @@ def patch_fsdp(self):
         if count > 0:
             print(f"[Rank {self.rank}] Materialized {count} excluded ControlNet-shared params on {target_device}")
 
-    self.fsdp_state_dict = None
-
     _pre_init_fsdp(diffusion_model)
+    self.fsdp_state_dict = None
 
     print("FSDP registered successfully.")
     return self.model
