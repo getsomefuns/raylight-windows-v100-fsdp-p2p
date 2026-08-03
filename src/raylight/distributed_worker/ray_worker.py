@@ -1146,10 +1146,11 @@ class RayWorker:
             out["samples"] = samples
 
             if "x0" in x0_output:
-                x0_out = guider.model_patcher.model.process_latent_out(x0_output["x0"].cpu())
-                if samples.is_nested:
+                x0 = x0_output["x0"]
+                if samples.is_nested and not x0.is_nested:
                     latent_shapes = [x.shape for x in samples.unbind()]
-                    x0_out = comfy_nested_tensor.NestedTensor(comfy_utils.unpack_latents(x0_out, latent_shapes))
+                    x0 = comfy_nested_tensor.NestedTensor(comfy_utils.unpack_latents(x0, latent_shapes))
+                x0_out = guider.model_patcher.model.process_latent_out(x0.cpu())
                 out_denoised = latent.copy()
                 out_denoised["samples"] = x0_out
             else:
