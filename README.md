@@ -293,7 +293,8 @@ This is experimental mode where all type of parallel group can work at a sime ti
 **Minimax**
 | Model              | USP | FSDP | CFG |
 |--------------------|-----|------|-----|
-| H3 Ref2VA          | ✅  | ❌   | ❌  |
+| H3 Ref2VA          | ✅  | ✅   | ❌  |
+| H3 FL2VA           | ✅  | ✅   | ❌  |
 
 
 **UNet**

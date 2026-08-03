@@ -91,4 +91,4 @@ __all__ = [
 
 __author__ = """Micko Lesmana"""
 __email__ = "mickolesmana@gmail.com"
-__version__ = "1.7.1"
+__version__ = "1.7.2"
