@@ -27,7 +27,7 @@ def usp_dit_forward(self, x, timestep, context, y, freqs, freqs_text, transforme
     context = self.text_embeddings(context)
     time_embed = self.time_embeddings(timestep, x.dtype) + self.pooled_text_embeddings(y)
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     context, context_orig_size = pad_to_world_size(context, dim=1)
     freqs_text, _ = pad_to_world_size(freqs_text, dim=1)
     context = torch.chunk(context, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
@@ -36,15 +36,15 @@ def usp_dit_forward(self, x, timestep, context, y, freqs, freqs_text, transforme
     for block in self.text_transformer_blocks:
         context = block(context, time_embed, freqs_text, transformer_options=transformer_options)
 
+    # ===================== SP GATHER ===================== #
     context = get_sp_group().all_gather(context.contiguous(), dim=1)
     context = context[:, :context_orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     visual_embed = self.visual_embeddings(x)
     visual_shape = visual_embed.shape[:-1]
     visual_embed = visual_embed.flatten(1, -2)
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     visual_embed, visual_embed_orig_size = pad_to_world_size(visual_embed, dim=1)
     freqs, _ = pad_to_world_size(freqs, dim=1)
 
@@ -81,6 +81,7 @@ def usp_dit_forward(self, x, timestep, context, y, freqs, freqs_text, transforme
         else:
             visual_embed = block(visual_embed, context, time_embed, freqs=freqs, transformer_options=transformer_options)
 
+    # ===================== SP GATHER ===================== #
     visual_embed = get_sp_group().all_gather(visual_embed.contiguous(), dim=1)
     visual_embed = visual_embed[:, :visual_embed_orig_size, :]
     visual_embed = visual_embed.reshape(*visual_shape, -1)

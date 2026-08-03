@@ -53,6 +53,7 @@ def usp_dit_forward(self, x, timesteps, context, attention_mask=None, transforme
     sp_rank = get_sequence_parallel_rank()
     sp_world_size = get_sequence_parallel_world_size()
 
+    # ===================== SP SPLIT ====================== #
     context = torch.chunk(context, sp_world_size, dim=1)[sp_rank]
     txtpos = torch.chunk(txtpos, sp_world_size, dim=1)[sp_rank]
     img = torch.chunk(img, sp_world_size, dim=1)[sp_rank]
@@ -72,6 +73,7 @@ def usp_dit_forward(self, x, timesteps, context, attention_mask=None, transforme
     final = self.last(combined, t)
     out = final[:, txtlen:txtlen + imglen, :]
 
+    # ===================== SP GATHER ===================== #
     out = get_sp_group().all_gather(out.contiguous(), dim=1)
     out = out[:, :img_orig_size, :]
 

@@ -73,13 +73,12 @@ def usp_dit_forward(
     )
 
     freqs_cis = freqs_cis.to(img.device)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     img, img_orig_size = pad_to_world_size(img, dim=1)
     freqs_cis, _ = pad_to_world_size(freqs_cis, dim=1)
 
     img = torch.chunk(img, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
     freqs_cis = torch.chunk(freqs_cis, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     transformer_options["total_blocks"] = len(self.layers)
     transformer_options["block_type"] = "double"
@@ -109,12 +108,11 @@ def usp_dit_forward(
                 if "txt" in out:
                     img[:, :cap_size[0]] = out["txt"]
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
 
     img = get_sp_group().all_gather(img.contiguous(), dim=1)
     img = img[:, :img_orig_size, :]
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     img = self.final_layer(img, adaln_input, timestep_zero_index=timestep_zero_index)
     img = self.unpatchify(img, img_size, cap_size, return_tensor=x_is_tensor)[:, :, :h, :w]
     return -img

@@ -144,6 +144,7 @@ def usp_pixdit_forward(self, x, timesteps, context=None, attention_mask=None, tr
     pos_txt = self._fetch_text_pos(Ltxt, x.device, x.dtype) if self.use_text_rope else None
 
     s = self.s_embedder(x_patches)
+    # ===================== SP SPLIT ====================== #
     s, s_orig_size = _pad_and_chunk(s, dim=1)
     y_emb, _ = _pad_and_chunk(y_emb, dim=1)
     pos_img, _ = _pad_and_chunk_pos(pos_img)
@@ -165,6 +166,7 @@ def usp_pixdit_forward(self, x, timesteps, context=None, attention_mask=None, tr
     x_pixels = self.pixel_embedder(x, patch_size=self.patch_size)
     P2 = x_pixels.shape[1]
     x_pixels = x_pixels.view(B, L, P2, self.pixel_hidden_size)
+    # ===================== SP SPLIT ====================== #
     x_pixels, _ = _pad_and_chunk(x_pixels, dim=1)
     local_l = x_pixels.shape[1]
     x_pixels = x_pixels.reshape(B * local_l, P2, self.pixel_hidden_size)
@@ -183,6 +185,7 @@ def usp_pixdit_forward(self, x, timesteps, context=None, attention_mask=None, tr
     x_pixels = self.final_layer(x_pixels)
     C_out = self.out_channels
     x_pixels = x_pixels.view(B, local_l, P2, C_out)
+    # ===================== SP GATHER ===================== #
     x_pixels = get_sp_group().all_gather(x_pixels.contiguous(), dim=1)
     x_pixels = x_pixels[:, :s_orig_size, :, :]
     x_pixels = x_pixels.permute(0, 3, 2, 1).reshape(B, C_out * P2, L)

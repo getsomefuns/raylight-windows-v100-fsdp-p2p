@@ -106,6 +106,7 @@ def usp_dit_forward(self, x, timesteps, context, **kwargs):
     hidden_states, hidden_states_orig_size = pad_to_world_size(hidden_states, dim=1)
     rotary_pos_emb, _ = pad_to_world_size(rotary_pos_emb, dim=2)
 
+    # ===================== SP SPLIT ====================== #
     hidden_states = torch.chunk(hidden_states, sp_world_size, dim=1)[sp_rank]
     rotary_pos_emb = torch.chunk(rotary_pos_emb, sp_world_size, dim=2)[sp_rank]
 
@@ -113,6 +114,7 @@ def usp_dit_forward(self, x, timesteps, context, **kwargs):
     for layer in self.layers:
         hidden_states = layer(hidden_states, rotary_pos_emb, temb)
 
+    # ===================== SP GATHER ===================== #
     hidden_states = get_sp_group().all_gather(hidden_states.contiguous(), dim=1)
     hidden_states = hidden_states[:, :hidden_states_orig_size, :]
 

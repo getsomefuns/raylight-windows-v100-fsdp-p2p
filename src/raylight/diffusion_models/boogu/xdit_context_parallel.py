@@ -63,15 +63,18 @@ def usp_dit_forward(
         device,
     )
 
+    # ===================== SP SPLIT ====================== #
     text_hidden_states = _run_refiner_layers(
         text_hidden_states,
         context_rotary_emb,
         self.context_refiner,
         transformer_options=transformer_options,
     )
+    # ===================== SP GATHER ===================== #
 
     img_len = hidden_states.shape[1]
     hidden_states = self.x_embedder(hidden_states)
+    # ===================== SP SPLIT ====================== #
     hidden_states = _run_refiner_layers(
         hidden_states,
         noise_rotary_emb,
@@ -79,6 +82,7 @@ def usp_dit_forward(
         temb,
         transformer_options=transformer_options,
     )
+    # ===================== SP GATHER ===================== #
 
     if ref_image_hidden_states is not None:
         ref_image_hidden_states = self.ref_image_patch_embedder(ref_image_hidden_states)
@@ -94,6 +98,7 @@ def usp_dit_forward(
                 ref_image_hidden_states[i, shift:shift + ref_img_len] += image_index_embedding[j]
                 shift += ref_img_len
 
+        # ===================== SP SPLIT ====================== #
         ref_image_hidden_states = _run_refiner_layers(
             ref_image_hidden_states,
             ref_img_rotary_emb,
@@ -101,6 +106,7 @@ def usp_dit_forward(
             temb,
             transformer_options=transformer_options,
         )
+        # ===================== SP GATHER ===================== #
         hidden_states = torch.cat([ref_image_hidden_states, hidden_states], dim=1)
 
     combined_img_hidden_states = hidden_states
@@ -108,6 +114,7 @@ def usp_dit_forward(
     combined_img_rotary_emb = rotary_emb[:, instruct_size:]
     instruct_rotary_emb = rotary_emb[:, :instruct_size]
 
+    # ===================== SP SPLIT ====================== #
     text_hidden_states, text_orig_size = _split_sequence(text_hidden_states)
     combined_img_hidden_states, img_orig_size = _split_sequence(combined_img_hidden_states)
     instruct_rotary_emb, _ = _split_sequence(instruct_rotary_emb)
@@ -126,16 +133,19 @@ def usp_dit_forward(
             transformer_options=transformer_options,
         )
 
+    # ===================== SP GATHER ===================== #
     text_hidden_states = _gather_sequence(text_hidden_states, text_orig_size)
     combined_img_hidden_states = _gather_sequence(combined_img_hidden_states, img_orig_size)
 
     hidden_states = torch.cat([text_hidden_states, combined_img_hidden_states], dim=1)
+    # ===================== SP SPLIT ====================== #
     hidden_states, hidden_states_orig_size = _split_sequence(hidden_states)
     rotary_emb, _ = _split_sequence(rotary_emb)
 
     for layer in self.single_stream_layers:
         hidden_states = layer(hidden_states, None, rotary_emb, temb, transformer_options=transformer_options)
 
+    # ===================== SP GATHER ===================== #
     hidden_states = _gather_sequence(hidden_states, hidden_states_orig_size)
     hidden_states = self.norm_out(hidden_states, temb)
 

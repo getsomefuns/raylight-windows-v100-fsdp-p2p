@@ -166,7 +166,7 @@ def usp_dit_forward(
         attn_mask[:, 0, img_len:] = txt_mask
     else:
         attn_mask = None
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     img, img_orig_size = pad_to_world_size(img, dim=1)
     img_ids, _ = pad_to_world_size(img_ids, dim=1)
     txt, txt_orig_size = pad_to_world_size(txt, dim=1)
@@ -181,7 +181,6 @@ def usp_dit_forward(
 
     img = torch.chunk(img, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
     txt = torch.chunk(txt, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     blocks_replace = patches_replace.get("dit", {})
     transformer_options["total_blocks"] = len(self.double_blocks)
     transformer_options["block_type"] = "double"
@@ -232,16 +231,16 @@ def usp_dit_forward(
                     add = torch.chunk(add, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
                     img += add
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     img = get_sp_group().all_gather(img.contiguous(), dim=1)
     txt = get_sp_group().all_gather(txt.contiguous(), dim=1)
     img = img[:, :img_orig_size, :]
     txt = txt[:, :txt_orig_size, :]
 
     img = torch.cat((txt, img), 1)
+    # ===================== SP SPLIT ====================== #
     img, img_orig_size = pad_to_world_size(img, dim=1)
     img = torch.chunk(img, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     transformer_options["total_blocks"] = len(self.single_blocks)
     transformer_options["block_type"] = "single"
     transformer_options["img_slice"] = [txt.shape[1], img.shape[1]]
@@ -289,10 +288,9 @@ def usp_dit_forward(
                     full_add, _ = pad_to_world_size(full_add, dim=1)
                     img += torch.chunk(full_add, sp_ws, dim=1)[sp_r]
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     img = get_sp_group().all_gather(img.contiguous(), dim=1)
     img = img[:, :img_orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     img = img[:, txt.shape[1]: img_len + txt.shape[1]]
     if ref_latent is not None:
         img = img[:, ref_latent.shape[1]:]

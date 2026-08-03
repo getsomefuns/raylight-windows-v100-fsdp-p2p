@@ -119,6 +119,7 @@ def usp_lens_forward(
     freqs_img = freqs_cis[:, :img_len]
     freqs_txt = freqs_cis[:, img_len:]
 
+    # ===================== SP SPLIT ====================== #
     hidden_states, hidden_states_orig_size = _pad_and_chunk(hidden_states, dim=1)
     encoder_hidden_states, _ = _pad_and_chunk(encoder_hidden_states, dim=1)
     freqs_img, _ = _pad_and_chunk(freqs_img, dim=1)
@@ -186,9 +187,11 @@ def usp_lens_forward(
                 add = control_i[i]
                 if add is not None:
                     add, _ = pad_to_world_size(add, dim=1)
+                    # ===================== SP SPLIT ====================== #
                     add = torch.chunk(add, sp_world_size, dim=1)[sp_rank]
                     hidden_states[:, :add.shape[1]] += add
 
+    # ===================== SP GATHER ===================== #
     hidden_states = get_sp_group().all_gather(hidden_states.contiguous(), dim=1)
     hidden_states = hidden_states[:, :hidden_states_orig_size, :]
 

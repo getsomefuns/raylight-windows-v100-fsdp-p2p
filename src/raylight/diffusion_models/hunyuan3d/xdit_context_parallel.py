@@ -54,7 +54,7 @@ def usp_dit_forward(self, x, timestep, context, guidance=None, transformer_optio
     pe = None
     attn_mask = None
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     img, img_orig_size = pad_to_world_size(img, dim=1)
     txt, txt_orig_size = pad_to_world_size(txt, dim=1)
     sp_world = get_sequence_parallel_world_size()
@@ -62,7 +62,6 @@ def usp_dit_forward(self, x, timestep, context, guidance=None, transformer_optio
 
     img = torch.chunk(img, sp_world, dim=1)[sp_rank]
     txt = torch.chunk(txt, sp_world, dim=1)[sp_rank]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     patches_replace = transformer_options.get("patches_replace", {})
     blocks_replace = patches_replace.get("dit", {})
@@ -90,17 +89,17 @@ def usp_dit_forward(self, x, timestep, context, guidance=None, transformer_optio
         else:
             img, txt = block(img=img, txt=txt, vec=vec, pe=pe, attn_mask=attn_mask, transformer_options=transformer_options)
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     img = get_sp_group().all_gather(img, dim=1)
     txt = get_sp_group().all_gather(txt, dim=1)
     img = img[:, :img_orig_size, ...]
     txt = txt[:, :txt_orig_size, ...]
 
     img = torch.cat((txt, img), 1)
+    # ===================== SP SPLIT ====================== #
 
     img, joint_orig_size = pad_to_world_size(img, dim=1)
     img = torch.chunk(img, sp_world, dim=1)[sp_rank]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     for i, block in enumerate(self.single_blocks):
         if ("single_block", i) in blocks_replace:
@@ -123,10 +122,9 @@ def usp_dit_forward(self, x, timestep, context, guidance=None, transformer_optio
             img = out["img"]
         else:
             img = block(img, vec=vec, pe=pe, attn_mask=attn_mask, transformer_options=transformer_options)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     img = get_sp_group().all_gather(img, dim=1)
     img = img[:, :joint_orig_size, ...]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     img = img[:, txt_orig_size:, ...]
     img = self.final_layer(img, vec)
     return img.movedim(-2, -1) * (-1.0)

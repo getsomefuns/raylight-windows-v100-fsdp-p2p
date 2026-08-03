@@ -125,6 +125,7 @@ def usp_dit_forward(self, x, timesteps, context=None, transformer_options={}, in
     freqs_cis = tuple(t.to(x.dtype) for t in freqs_cis)
 
     prefix_len = int(ar_len.item() if torch.is_tensor(ar_len) else (ar_len or 0))
+    # ===================== SP SPLIT ====================== #
     inputs_embeds, gen_orig_size = _split_suffix(inputs_embeds, prefix_len, dim=1)
     freqs_cis, _ = _split_freqs_suffix(freqs_cis, prefix_len)
 
@@ -160,6 +161,7 @@ def usp_dit_forward(self, x, timesteps, context=None, transformer_options={}, in
                 past_key_value=None,
             )
 
+    # ===================== SP GATHER ===================== #
     full_gen = get_sp_group().all_gather(hidden_states[:, prefix_len:].contiguous(), dim=1)[:, :gen_orig_size]
     hidden_states = torch.cat([hidden_states[:, :prefix_len], full_gen], dim=1)
 

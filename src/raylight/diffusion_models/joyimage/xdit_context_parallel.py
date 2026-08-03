@@ -86,6 +86,7 @@ def usp_dit_forward(
 
     sp_world_size = get_sequence_parallel_world_size()
     sp_rank = get_sequence_parallel_rank()
+    # ===================== SP SPLIT ====================== #
     img = torch.chunk(img, sp_world_size, dim=1)[sp_rank]
     txt = torch.chunk(txt, sp_world_size, dim=1)[sp_rank]
     image_rotary_emb = torch.chunk(image_rotary_emb, sp_world_size, dim=1)[sp_rank]
@@ -129,6 +130,7 @@ def usp_dit_forward(
                 transformer_options=transformer_options,
             )
 
+    # ===================== SP GATHER ===================== #
     img = get_sp_group().all_gather(img.contiguous(), dim=1)
     img = img[:, :img_orig_size, :]
 

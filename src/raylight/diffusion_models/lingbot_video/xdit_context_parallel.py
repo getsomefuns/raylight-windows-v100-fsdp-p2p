@@ -95,6 +95,7 @@ def usp_dit_forward(
 
     sp_world_size = get_sequence_parallel_world_size()
     sp_rank = get_sequence_parallel_rank()
+    # ===================== SP SPLIT ====================== #
     joint = torch.chunk(joint, sp_world_size, dim=1)[sp_rank]
     rotary = torch.chunk(rotary, sp_world_size, dim=1)[sp_rank]
     local_temb_input = torch.chunk(local_temb_input, sp_world_size, dim=1)[sp_rank]
@@ -111,6 +112,7 @@ def usp_dit_forward(
             transformer_options=transformer_options,
         )
 
+    # ===================== SP GATHER ===================== #
     joint = get_sp_group().all_gather(joint.contiguous(), dim=1)
     joint = joint[:, :joint_orig_size, :]
 

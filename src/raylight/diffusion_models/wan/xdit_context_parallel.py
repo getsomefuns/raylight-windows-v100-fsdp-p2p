@@ -128,6 +128,7 @@ def usp_causal_ar_forward_block(
 
     freqs = self.rope_encode(t, h, w, t_start=start_frame, device=x.device, dtype=x.dtype)
 
+    # ===================== SP SPLIT ====================== #
     x, _ = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
 
@@ -170,6 +171,7 @@ def usp_causal_ar_forward_block(
                 transformer_options=transformer_options,
             )
 
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x.contiguous(), dim=1)
     x = x[:, :orig_size, :]
 
@@ -303,13 +305,12 @@ def usp_dit_forward(
             cl = self.patch_embedding(lat.float().to(x.device)).to(x.dtype).flatten(2).transpose(1, 2)
             x = torch.cat([x, cl], dim=1)
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     sp_world = get_sequence_parallel_world_size()
     sp_rank = get_sequence_parallel_rank()
 
+    # ===================== SP SPLIT ====================== #
     x, orig_size = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     # context
     context = self.text_embedding(context)
@@ -350,10 +351,9 @@ def usp_dit_forward(
             x = block(x, e=e0, freqs=freqs, context=context, context_img_len=context_img_len, transformer_options=transformer_options)
 
     torch._dynamo.graph_break()
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x.contiguous(), dim=1)
     x = x[:, :orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     torch._dynamo.graph_break()
 
     x = self.head(x, e)
@@ -406,11 +406,10 @@ def usp_vace_dit_forward(
     c = c.flatten(2).transpose(1, 2)
     c = list(c.split(orig_shape[0], dim=0))
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     x, orig_size = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
     c = [_pad_and_split_for_sp(item, dim=1)[0] for item in c]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     x_orig = x
 
     patches_replace = transformer_options.get("patches_replace", {})
@@ -456,10 +455,9 @@ def usp_vace_dit_forward(
                 x += c_skip * vace_strength[iii]
             del c_skip
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x, dim=1)
     x = x[:, :orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     x = self.head(x, e)
 
     # unpatchify
@@ -500,10 +498,9 @@ def usp_camera_dit_forward(
             context = torch.concat([context_clip, context], dim=1)
         context_img_len = clip_fea.shape[-2]
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     x, orig_size = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     patches_replace = transformer_options.get("patches_replace", {})
     blocks_replace = patches_replace.get("dit", {})
@@ -533,10 +530,9 @@ def usp_camera_dit_forward(
         else:
             x = block(x, e=e0, freqs=freqs, context=context, context_img_len=context_img_len, transformer_options=transformer_options)
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x, dim=1)
     x = x[:, :orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     # head
     x = self.head(x, e)
@@ -594,10 +590,9 @@ def usp_humo_dit_forward(
     else:
         audio = None
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     x, orig_size = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     patches_replace = transformer_options.get("patches_replace", {})
     blocks_replace = patches_replace.get("dit", {})
@@ -630,10 +625,9 @@ def usp_humo_dit_forward(
                 x, e=e0, freqs=freqs, context=context, context_img_len=context_img_len, audio=audio, transformer_options=transformer_options
             )
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x, dim=1)
     x = x[:, :orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     x = self.head(x, e)
 
     # unpatchify
@@ -715,10 +709,9 @@ def usp_s2v_dit_forward(
     # context
     context = self.text_embedding(context)
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     x, orig_size = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     patches_replace = transformer_options.get("patches_replace", {})
     blocks_replace = patches_replace.get("dit", {})
     transformer_options["total_blocks"] = len(self.blocks)
@@ -744,10 +737,9 @@ def usp_s2v_dit_forward(
         if audio_emb is not None:
             x = self.audio_injector(x, i, audio_emb, audio_emb_global, seq_len)
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x, dim=1)
     x = x[:, :orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     x = self.head(x, e)
 
     # unpatchify
@@ -813,6 +805,7 @@ def usp_wandancer_dit_forward(
             full_ref_seq_len = full_ref.shape[1]
             x = torch.concat((full_ref, x), dim=1)
 
+    # ===================== SP SPLIT ====================== #
     x, orig_size = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
 
@@ -826,12 +819,14 @@ def usp_wandancer_dit_forward(
         music_ids = torch.arange(music_seq_len, device=music_feature.device, dtype=music_feature.dtype).reshape(1, -1, 1)
         music_freqs = self.music_rope_embedder(music_ids).movedim(1, 2)
 
+        # ===================== SP SPLIT ====================== #
         music_feature, music_orig_size = _pad_and_split_for_sp(music_feature, dim=1)
         music_freqs, _ = _pad_and_split_for_sp(music_freqs, dim=1)
 
         for layer in self.music_encoder:
             music_feature = layer(music_feature, music_freqs)
 
+        # ===================== SP GATHER ===================== #
         music_feature = get_sp_group().all_gather(music_feature.contiguous(), dim=1)
         music_feature = music_feature[:, :music_orig_size, :]
 
@@ -896,6 +891,7 @@ def usp_wandancer_dit_forward(
                 scale=audio_inject_scale,
             )
 
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x.contiguous(), dim=1)
     x = x[:, :orig_size, :]
 
@@ -1051,10 +1047,9 @@ def usp_scail_dit_forward(
         x = torch.cat([x, scail_x], dim=1)
         del scail_x
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     x, orig_size = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t.flatten()).to(dtype=x[0].dtype))
     e = e.reshape(t.shape[0], -1, e.shape[-1])
@@ -1104,10 +1099,9 @@ def usp_scail_dit_forward(
                 transformer_options=transformer_options,
             )
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x.contiguous(), dim=1)
     x = x[:, :orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     x = self.head(x, e)
 
@@ -1139,13 +1133,12 @@ def usp_multitalk_dit_forward(
     transformer_options["grid_sizes"] = grid_sizes
     x = x.flatten(2).transpose(1, 2)
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     sp_world = get_sequence_parallel_world_size()
     sp_rank = get_sequence_parallel_rank()
 
+    # ===================== SP SPLIT ====================== #
     x, orig_size = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t.flatten()).to(dtype=x[0].dtype))
     e = e.reshape(t.shape[0], -1, e.shape[-1])
@@ -1195,10 +1188,9 @@ def usp_multitalk_dit_forward(
                 transformer_options=transformer_options,
             )
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x.contiguous(), dim=1)
     x = x[:, :orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     x = self.head(x, e)
     x = self.unpatchify(x, grid_sizes)

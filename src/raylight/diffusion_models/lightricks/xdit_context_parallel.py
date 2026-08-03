@@ -172,7 +172,7 @@ def usp_dit_forward(
     # Prepare attention mask and positional embeddings
     attention_mask = self._prepare_attention_mask(attention_mask, input_dtype)
     pe = self._prepare_positional_embeddings(pixel_coords, frame_rate, input_dtype)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     x, x_orig = pad_group_to_world_size(x, dim=1)
     context, _ = pad_group_to_world_size(context, dim=1)
     pe = pad_and_split_pe(pe, dim=1, sp_world_size=sp_world_size, sp_rank=sp_rank)
@@ -182,11 +182,11 @@ def usp_dit_forward(
     timestep = process_usp_timestep(timestep, sp_rank, sp_world_size)
     if "prompt_timestep" in merged_args:
         merged_args["prompt_timestep"] = process_usp_timestep(merged_args["prompt_timestep"], sp_rank, sp_world_size)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     # Process transformer blocks
     x = self._process_transformer_blocks(x, context, attention_mask, timestep, pe, transformer_options=transformer_options, **merged_args)
 
+    # ===================== SP GATHER ===================== #
     x = sp_gather_group(x, x_orig, dim=1)
 
     # Process output

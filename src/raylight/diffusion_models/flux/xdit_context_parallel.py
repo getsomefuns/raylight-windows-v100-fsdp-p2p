@@ -98,12 +98,10 @@ def usp_dit_forward(
     if img.ndim != 3 or txt.ndim != 3:
         raise ValueError("Input img and txt tensors must have 3 dimensions.")
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     img, img_orig_size = pad_to_world_size(img, dim=1)
     img_ids, _ = pad_to_world_size(img_ids, dim=1)
     txt, txt_orig_size = pad_to_world_size(txt, dim=1)
     txt_ids, _ = pad_to_world_size(txt_ids, dim=1)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     # running on sequences img
     img = self.img_in(img)
@@ -147,7 +145,7 @@ def usp_dit_forward(
     if self.params.global_modulation:
         vec = (self.double_stream_modulation_img(vec_orig), self.double_stream_modulation_txt(txt_vec))
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     if img_ids is not None:
         ids = torch.cat((txt_ids, img_ids), dim=1)
         pe_combine = self.pe_embedder(ids)
@@ -161,7 +159,6 @@ def usp_dit_forward(
 
     img = torch.chunk(img, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
     txt = torch.chunk(txt, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     blocks_replace = patches_replace.get("dit", {})
     transformer_options["total_blocks"] = len(self.double_blocks)
@@ -208,18 +205,17 @@ def usp_dit_forward(
                     add, _ = pad_to_world_size(add, dim=1)
                     add = torch.chunk(add, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
                     img[:, :add.shape[1]] += add
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     img = get_sp_group().all_gather(img.contiguous(), dim=1)
     txt = get_sp_group().all_gather(txt.contiguous(), dim=1)
     img = img[:, :img_orig_size, :]
     txt = txt[:, :txt_orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     if img.dtype == torch.float16:
         img = torch.nan_to_num(img, nan=0.0, posinf=65504, neginf=-65504)
 
     img = torch.cat((txt, img), 1)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     img, img_orig_size = pad_to_world_size(img, dim=1)
 
     if self.params.global_modulation:
@@ -231,7 +227,6 @@ def usp_dit_forward(
             map(lambda x: (0 if x[0] == 0 else x[0] + txt.shape[1], x[1] + txt.shape[1], x[2]), modulation_dims)
         )
     img = torch.chunk(img, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     transformer_options["total_blocks"] = len(self.single_blocks)
     transformer_options["block_type"] = "single"
@@ -274,10 +269,9 @@ def usp_dit_forward(
                     full_add, _ = pad_to_world_size(full_add, dim=1)
                     img += torch.chunk(full_add, sp_ws, dim=1)[sp_r]
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     img = get_sp_group().all_gather(img.contiguous(), dim=1)
     img = img[:, :img_orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     img = img[:, txt.shape[1]:, ...]
 
     extra_kwargs = {}

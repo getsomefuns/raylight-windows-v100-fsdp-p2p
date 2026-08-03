@@ -134,6 +134,7 @@ def usp_general_dit_forward(
     if extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D is not None:
         extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D, _ = pad_to_world_size(extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D, dim=0)
 
+    # ===================== SP SPLIT ====================== #
     x = torch.chunk(x, sp_world, dim=0)[sp_rank]
     rope_emb_L_1_1_D = torch.chunk(rope_emb_L_1_1_D, sp_world, dim=0)[sp_rank]
     if extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D is not None:
@@ -157,6 +158,7 @@ def usp_general_dit_forward(
             transformer_options=transformer_options,
         )
 
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x, dim=0)
     x = x[:t_orig_size, ...]
     x_B_T_H_W_D = rearrange(x, "T H W B D -> B T H W D")
@@ -249,6 +251,7 @@ def usp_mini_train_dit_forward(
     if extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D is not None:
         extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D, _ = pad_to_world_size(extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D, dim=2)
 
+    # ===================== SP SPLIT ====================== #
     x_B_T_H_W_D = torch.chunk(x_B_T_H_W_D, sp_world, dim=2)[sp_rank]
     rope_emb_L_1_1_D = torch.chunk(rope_emb_L_1_1_D, sp_world, dim=1)[sp_rank]
     if extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D is not None:
@@ -271,6 +274,7 @@ def usp_mini_train_dit_forward(
             **block_kwargs,
         )
 
+    # ===================== SP GATHER ===================== #
     x_B_T_H_W_D = get_sp_group().all_gather(x_B_T_H_W_D, dim=2)
     x_B_T_H_W_D = x_B_T_H_W_D[:, :, :h_orig_size, :, :]
 

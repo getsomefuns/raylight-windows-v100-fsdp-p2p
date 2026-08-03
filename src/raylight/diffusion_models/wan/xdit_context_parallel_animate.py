@@ -106,10 +106,9 @@ def usp_animate_dit_forward(
             context = torch.concat([context_clip, context], dim=1)
         context_img_len = clip_fea.shape[-2]
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     x, orig_size = _pad_and_split_for_sp(x, dim=1)
     freqs, _ = _pad_and_split_for_sp(freqs, dim=1)
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     patches_replace = transformer_options.get("patches_replace", {})
     blocks_replace = patches_replace.get("dit", {})
@@ -143,10 +142,9 @@ def usp_animate_dit_forward(
             x = x + self.face_adapter.fuser_blocks[i // 5](x, motion_vec)
 
     # head
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     x = get_sp_group().all_gather(x, dim=1)
     x = x[:, :orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     x = self.head(x, e)
 
     # Context Parallel

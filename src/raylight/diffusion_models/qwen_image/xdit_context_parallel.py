@@ -109,7 +109,7 @@ def usp_dit_forward(
 
     del txt_ids, img_ids
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     hidden_states, hidden_states_orig_size = pad_to_world_size(hidden_states, dim=1)
     encoder_hidden_states, _ = pad_to_world_size(encoder_hidden_states, dim=1)
     image_rotary_emb[0], _ = pad_to_world_size(image_rotary_emb[0], dim=1)
@@ -124,7 +124,6 @@ def usp_dit_forward(
     # Modified, freq rope : List[txt, img]
     image_rotary_emb[0] = torch.chunk(image_rotary_emb[0], sp_world_size, dim=1)[sp_rank]
     image_rotary_emb[1] = torch.chunk(image_rotary_emb[1], sp_world_size, dim=1)[sp_rank]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     patches_replace = transformer_options.get("patches_replace", {})
     blocks_replace = patches_replace.get("dit", {})
@@ -186,10 +185,9 @@ def usp_dit_forward(
     if timestep_zero_index is not None:
         temb = temb.chunk(2, dim=0)[0]
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     hidden_states = get_sp_group().all_gather(hidden_states.contiguous(), dim=1)
     hidden_states = hidden_states[:, :hidden_states_orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     hidden_states = self.norm_out(hidden_states, temb)
     hidden_states = self.proj_out(hidden_states)

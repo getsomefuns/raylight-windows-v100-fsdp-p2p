@@ -106,7 +106,7 @@ def usp_dit_forward(
 
     txt = self.txt_in(txt)
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP SPLIT ====================== #
     # Seq is odd (idk how) if the w == h, so just pad 0 to the end
     img, img_orig_size = pad_to_world_size(img, dim=1)
     img_ids, _ = pad_to_world_size(img_ids, dim=1)
@@ -121,7 +121,6 @@ def usp_dit_forward(
 
     img = torch.chunk(img, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
     txt = torch.chunk(txt, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     blocks_replace = patches_replace.get("dit", {})
     for i, block in enumerate(self.double_blocks):
@@ -168,7 +167,7 @@ def usp_dit_forward(
                         add = torch.chunk(add, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
                         img += add
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     img = get_sp_group().all_gather(img.contiguous(), dim=1)
     txt = get_sp_group().all_gather(txt.contiguous(), dim=1)
 
@@ -176,9 +175,9 @@ def usp_dit_forward(
     txt = txt[:, :txt_orig_size, :]
 
     img = torch.cat((txt, img), 1)
+    # ===================== SP SPLIT ====================== #
     img, img_orig_size = pad_to_world_size(img, dim=1)
     img = torch.chunk(img, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
 
     for i, block in enumerate(self.single_blocks):
         if i not in self.skip_dit:
@@ -216,10 +215,9 @@ def usp_dit_forward(
                         full_add, _ = pad_to_world_size(full_add, dim=1)
                         img += torch.chunk(full_add, sp_ws, dim=1)[sp_r]
 
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
+    # ===================== SP GATHER ===================== #
     img = get_sp_group().all_gather(img.contiguous(), dim=1)
     img = img[:, :img_orig_size, :]
-    # ======================== ADD SEQUENCE PARALLEL ========================= #
     img = img[:, txt.shape[1]:, ...]
     if hasattr(self, "final_layer"):
         final_mod = self.get_modulations(mod_vectors, "final")
