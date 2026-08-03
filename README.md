@@ -9,6 +9,7 @@ Raylight. Using Ray Worker to manage multi GPU sampler setup. With XDiT-XFuser a
 
 <details><summary><strong>Click to expand changelog</strong></summary>
 
+- Minimax H3
 - Fix Dist VAE
 - Add More ComfyUI - Raylight model model helper parity
 - Add Bernini R support
@@ -287,6 +288,12 @@ This is experimental mode where all type of parallel group can work at a sime ti
 | Model              | USP | FSDP | CFG |
 |--------------------|-----|------|-----|
 | Anima Preview3     | ✅  | ✅   | ❌  |
+
+
+**Minimax**
+| Model              | USP | FSDP | CFG |
+|--------------------|-----|------|-----|
+| H3 Ref2VA          | ✅  | ❌   | ❌  |
 
 
 **UNet**
