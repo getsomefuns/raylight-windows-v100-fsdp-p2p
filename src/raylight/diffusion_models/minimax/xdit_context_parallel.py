@@ -29,7 +29,7 @@ def _split_packed_sequence(h, rope_freqs, mod_segments):
         segment_end = min(segment_end, end)
         if segment_start < segment_end:
             local_segments.append((segment_start - start, segment_end - start, row))
-    return h[start:end], rope_freqs[start:end], local_segments
+    return h[start:end], rope_freqs[:, start:end], local_segments
 
 
 def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
