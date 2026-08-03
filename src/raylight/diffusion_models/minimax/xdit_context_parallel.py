@@ -5,6 +5,7 @@ from comfy.ldm.minimax.model import pack_audio, patchify_video, rope_rotation_ta
 from xfuser.core.distributed import get_sequence_parallel_rank, get_sequence_parallel_world_size, get_sp_group
 
 import raylight.distributed_modules.attention as xfuser_attn
+from ..utils import pad_to_world_size
 
 
 attn_type = xfuser_attn.get_attn_type()
@@ -14,12 +15,6 @@ xfuser_optimized_attention = xfuser_attn.make_xfuser_attention(attn_type, sync_u
 
 def _split_packed_sequence(h, rope_freqs, mod_segments):
     world_size = get_sequence_parallel_world_size()
-    if h.shape[0] % world_size:
-        raise ValueError(
-            f"MiniMax H3 packed sequence length {h.shape[0]} must be divisible by the USP degree {world_size}. "
-            "H3 uses unmasked attention, so padding would change the result."
-        )
-
     local_size = h.shape[0] // world_size
     start = get_sequence_parallel_rank() * local_size
     end = start + local_size
@@ -157,6 +152,8 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     # rotation table computed once per forward, consumed by the kitchen split-half rope
     rope_freqs = rope_rotation_table(self.rope_freqs(layout.position_ids, device), dtype)
     # ===================== SP SPLIT ====================== #
+    h, h_orig_size = pad_to_world_size(h, dim=0)
+    rope_freqs, _ = pad_to_world_size(rope_freqs, dim=1)
     h, rope_freqs, mod_segments = _split_packed_sequence(h, rope_freqs, mod_segments)
 
     # blocks
@@ -180,6 +177,7 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
 
     # ===================== SP GATHER ===================== #
     h = get_sp_group().all_gather(h.contiguous(), dim=0)
+    h = h[:h_orig_size]
 
     video_seg = next((a, b, t_row[seg_t["video"]]) for a, b, k in layout.segments if k == "video")
     audio_seg = next((a, b, t_row[seg_t["audio"]]) for a, b, k in layout.segments if k == "audio")
