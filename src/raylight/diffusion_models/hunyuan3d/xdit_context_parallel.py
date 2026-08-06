@@ -39,7 +39,7 @@ def timestep_embedding(t: Tensor, dim, max_period=10000, time_factor: float = 10
     return embedding
 
 
-def usp_dit_forward(self, x, timestep, context, guidance=None, transformer_options={}, *args, **kwargs):
+def usp_dit_forward(self, x, timestep, context, guidance=None, transformer_options={}, **kwargs):
     x = x.movedim(-1, -2)
     timestep = 1.0 - timestep
     txt = context

@@ -5,6 +5,6 @@ def cfg_parallel_forward_wrapper(executor, *args, **kwargs):
     return cfg_parallel_forward(
         executor,
         *args,
-        chunk_names=("x", "timestep", "context", "guidance"),
+        chunk_names=("x", ("timestep", "t"), "context", "guidance"),
         **kwargs,
     )

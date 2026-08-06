@@ -102,6 +102,8 @@ def _gather_value(value):
         return get_cfg_group().all_gather(value, dim=0)
     if isinstance(value, NestedTensor):
         return NestedTensor(get_cfg_group().all_gather(item, dim=0) for item in value.unbind())
+    if isinstance(value, dict):
+        return {key: _gather_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_gather_value(item) for item in value]
     if isinstance(value, tuple):
@@ -114,7 +116,7 @@ def cfg_parallel_forward(
     *args,
     chunk_names=(),
     validate_name="x",
-    auto_chunk_extra_kwargs=False,
+    auto_chunk_extra_kwargs=True,
     skip_extra_kwargs=(),
     **kwargs,
 ):

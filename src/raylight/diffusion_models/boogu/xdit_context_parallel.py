@@ -220,6 +220,24 @@ def usp_joint_attention_forward(
     return self.to_out[0](hidden_states)
 
 
+def usp_img_self_attention_forward(
+    self,
+    hidden_states,
+    encoder_hidden_states,
+    attention_mask=None,
+    image_rotary_emb=None,
+    transformer_options={},
+):
+    return usp_attention_forward(
+        self,
+        hidden_states,
+        encoder_hidden_states,
+        attention_mask,
+        image_rotary_emb,
+        transformer_options,
+    )
+
+
 def usp_double_stream_forward(
     self,
     img_hidden_states,

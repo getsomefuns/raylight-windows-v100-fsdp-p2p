@@ -1019,12 +1019,11 @@ def usp_scail_dit_forward(
     context,
     clip_fea=None,
     freqs=None,
+    transformer_options={},
     pose_latents=None,
     reference_latent=None,
     ref_mask_latents=None,
     sam_latents=None,
-    transformer_options={},
-    *args,
     **kwargs,
 ):
     if reference_latent is not None:
