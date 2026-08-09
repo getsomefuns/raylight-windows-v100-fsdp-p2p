@@ -260,6 +260,30 @@ if hasattr(model_base, "WAN21_SCAIL"):
 
 if hasattr(model_base, "WAN21"):
 
+    if hasattr(model_base, "WAN_Animate2"):
+
+        @USPInjectRegistry.register(model_base.WAN_Animate2)
+        def _inject_wan_animate2(model_patcher, base_model, *args):
+            from comfy.ldm.wan.model import WanI2VCrossAttention
+            from ..diffusion_models.wan.xdit_context_parallel import (
+                usp_i2v_cross_attn_forward,
+            )
+            from ..diffusion_models.wan.xdit_context_parallel_animate2 import (
+                usp_animate2_dit_forward,
+                usp_animate2_kv_from_input,
+                usp_animate2_self_attn_forward_gen,
+                usp_animate2_self_attn_forward_pose,
+            )
+
+            model = base_model.diffusion_model
+            for block in model.blocks:
+                block.self_attn.forward_pose = types.MethodType(usp_animate2_self_attn_forward_pose, block.self_attn)
+                block.self_attn.kv = types.MethodType(usp_animate2_kv_from_input, block.self_attn)
+                block.self_attn.forward_gen = types.MethodType(usp_animate2_self_attn_forward_gen, block.self_attn)
+                if isinstance(block.cross_attn, WanI2VCrossAttention):
+                    block.cross_attn.forward = types.MethodType(usp_i2v_cross_attn_forward, block.cross_attn)
+            model.forward_orig = types.MethodType(usp_animate2_dit_forward, model)
+
     @USPInjectRegistry.register(model_base.WAN21)
     def _inject_wan21(model_patcher, base_model, *args):
         from ..diffusion_models.wan.xdit_context_parallel import (

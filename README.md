@@ -8,7 +8,7 @@ Raylight. Using Ray Worker to manage multi GPU sampler setup. With XDiT-XFuser a
 ## UPDATE
 
 <details><summary><strong>Click to expand changelog</strong></summary>
-
+- Wan Animate 2
 - Minimax H3
 - Fix Dist VAE
 - Add More ComfyUI - Raylight model model helper parity
@@ -111,19 +111,37 @@ Its job is to split the model weights among GPUs.
   Your GPUs will 100% being used at the same time. In technical sense it _combine your VRAM_.
   This enables efficient multi-GPU utilization and scales beyond single high-memory GPUs (e.g., RTX 4090/5090).
 
-
 ## RTM and Known Issues
 - Scroll further down for the installation guide.
-- Model without new ComfyUI quant usually can be sharded using FSDP.
-- If there is an error about NCCL installation, just install `pip install nvidia-nccl-cu12==2.28.9`.
-  Raylight use this NCCL lib instead of torch baked in NCCL.
-- If NCCL communication fails before running (e.g., watchdog timeout), set the following environment variables:
+- Models without new ComfyUI quantization usually can be sharded using FSDP.
+- If there is an error about NCCL installation, install `nvidia-nccl-cu12==2.28.9`:
+  ```bash
+  pip install nvidia-nccl-cu12==2.28.9
+  ```
+  Raylight uses this NCCL library instead of the NCCL bundled with PyTorch.
+- By default, Ray workers use NCCL's normal transport selection, so P2P and shared-memory
+  transports remain available when supported. Set the following variables to 1 only for
+  troubleshooting to disable those transports if NCCL initialization or watchdog failures occur:
   ```bash
   export NCCL_P2P_DISABLE=1
   export NCCL_SHM_DISABLE=1
   ```
-  But this will hurt performance, it is like a sanity check if the Raylight can work, but there is so much performance
-  left on the table.
+  Raylight can run with these settings, but they may hurt performance. Treat them as a
+  sanity check to confirm whether Raylight can run, not as recommended defaults.
+- Raylight has not been tested with InfiniBand or RoCE. If your system uses either, adjust
+  NCCL networking settings as needed. For systems without InfiniBand/RDMA, this can be used
+  for troubleshooting:
+  ```bash
+  export NCCL_IB_DISABLE=1
+  ```
+- Ray workers remove `backend:cudaMallocAsync` from their inherited
+  `PYTORCH_CUDA_ALLOC_CONF` by default. This avoids allocator-related OOMs during
+  NCCL collectives while leaving the ComfyUI host process unchanged. To preserve
+  `cudaMallocAsync` in Ray workers:
+  ```bash
+  export RAYLIGHT_KEEP_CUDA_MALLOC_ASYNC=1
+  ```
+  Other allocator options, such as `expandable_segments:True`, are preserved.
 - Example WF just open from your comfyui menu and browse templates
 - **GPU Topology** is very important, not all PCIe in your motherboard is equal.
 - VRAM leakage, when using [Ring > 1 instead of Ulysses](https://github.com/feifeibear/long-context-attention/issues/112).
