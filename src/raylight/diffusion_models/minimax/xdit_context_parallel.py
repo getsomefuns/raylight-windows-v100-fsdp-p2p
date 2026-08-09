@@ -1,7 +1,7 @@
 import torch
 
 import comfy
-from comfy.ldm.minimax.model import pack_audio, patchify_video, rope_rotation_table, time_shift_sigma, time_shift_slope, unpack_audio, unpatchify_video, PackedLayout, VISUAL_COND_TIMESTEP, AUDIO_COND_TIMESTEP
+from comfy.ldm.minimax.model import pack_audio, patchify_video, rope_rotation_table, time_shift_sigma, unpack_audio, unpatchify_video, PackedLayout, VISUAL_COND_TIMESTEP, AUDIO_COND_TIMESTEP
 from xfuser.core.distributed import get_sequence_parallel_rank, get_sequence_parallel_world_size, get_sp_group
 
 import raylight.distributed_modules.attention as xfuser_attn
@@ -187,8 +187,4 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     video_out = video_out[:, :, :orig_t, :orig_h, :orig_w]
     audio_out = unpack_audio(a)
 
-    # The sampler integrates the flat ODE dX/dsigma_v = (X - denoised)/sigma_v.
-    # Scaling the audio velocity by d(sigma_a)/d(sigma_v) makes that ODE equal
-    # to the audio stream's true ODE on its own shifted schedule.
-    slope_a = time_shift_slope(sigma_v, shift_v, shift_a).to(audio_out.dtype)
-    return [-video_out.to(video_x.dtype), (-slope_a) * audio_out.to(audio_x.dtype)]
+    return [-video_out.to(video_x.dtype), -audio_out.to(audio_x.dtype)]
