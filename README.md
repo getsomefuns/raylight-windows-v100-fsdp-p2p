@@ -8,6 +8,7 @@ Raylight. Using Ray Worker to manage multi GPU sampler setup. With XDiT-XFuser a
 ## UPDATE
 
 <details><summary><strong>Click to expand changelog</strong></summary>
+    
 - Wan Animate 2
 - Minimax H3
 - Fix Dist VAE
