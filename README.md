@@ -8,7 +8,8 @@ Raylight. Using Ray Worker to manage multi GPU sampler setup. With XDiT-XFuser a
 ## UPDATE
 
 <details><summary><strong>Click to expand changelog</strong></summary>
-    
+
+- LTX 2.5
 - Wan Animate 2
 - Minimax H3
 - Fix Dist VAE
@@ -294,6 +295,7 @@ This is experimental mode where all type of parallel group can work at a sime ti
 |----------|-----|------|-----|
 | LTX-2    | ✅  | ❓   | ❌  |
 | LTX-2.3  | ✅  | ❓   | ❌  |
+| LTX-2.5  | ✅  | ❓   | ❌  |
 
 
 **ERNIE-Image**
