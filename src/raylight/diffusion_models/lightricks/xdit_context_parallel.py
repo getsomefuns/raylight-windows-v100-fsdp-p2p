@@ -195,25 +195,27 @@ def usp_dit_forward(
 
 
 def usp_cross_attn_forward(self, x, context=None, mask=None, pe=None, k_pe=None, transformer_options={}, *args, **kwargs):
-    q = self.to_q(x)
+    self_attn = context is None
     context = x if context is None else context
-    k = self.to_k(context)
     v = self.to_v(context)
 
-    q = self.q_norm(q)
-    k = self.k_norm(k)
+    if self_attn and transformer_options.get("stg_skip_self_attn", False):
+        out = v
+    else:
+        q = self.q_norm(self.to_q(x))
+        k = self.k_norm(self.to_k(context))
 
-    if pe is not None:
-        q = apply_rotary_emb(q, pe)
-        k = apply_rotary_emb(k, pe if k_pe is None else k_pe)
+        if pe is not None:
+            q = apply_rotary_emb(q, pe)
+            k = apply_rotary_emb(k, pe if k_pe is None else k_pe)
 
-    out = xfuser_optimized_attention(
-        q,
-        k,
-        v,
-        self.heads,
-        attn_precision=self.attn_precision,
-    )
+        out = xfuser_optimized_attention(
+            q,
+            k,
+            v,
+            self.heads,
+            attn_precision=self.attn_precision,
+        )
 
     if self.to_gate_logits is not None:
         gate_logits = self.to_gate_logits(x)
