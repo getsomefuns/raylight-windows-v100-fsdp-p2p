@@ -20,6 +20,7 @@ from xfuser.core.distributed import (
     initialize_model_parallel,
 )
 from xfuser.core.distributed.utils import RankGenerator
+from raylight.distributed_worker.windows_gloo import BACKEND_NAME, is_windows
 
 
 def _normalized_degree(value: int | None) -> int:
@@ -119,7 +120,12 @@ def initialize_xfuser_parallel(local_rank: int, world_size: int, parallel_dict: 
         xfuser_attn.set_attn_type(parallel_dict["attention"])
         xfuser_attn.set_sync_ulysses(parallel_dict["sync_ulysses"])
 
-    init_distributed_environment(rank=local_rank, world_size=world_size)
+    backend = BACKEND_NAME if is_windows() else None
+    init_distributed_environment(
+        rank=local_rank,
+        world_size=world_size,
+        backend=backend,
+    )
     initialize_model_parallel(
         data_parallel_degree=config.data_parallel_degree,
         sequence_parallel_degree=config.sequence_parallel_degree,
@@ -127,6 +133,7 @@ def initialize_xfuser_parallel(local_rank: int, world_size: int, parallel_dict: 
         ring_degree=config.ring_degree,
         ulysses_degree=config.ulysses_degree,
         pipeline_parallel_degree=config.pp_degree,
+        backend=backend,
     )
 
     rank_generator = RankGenerator(
@@ -151,3 +158,4 @@ def initialize_xfuser_parallel(local_rank: int, world_size: int, parallel_dict: 
         sequence_rank=get_sequence_parallel_rank(),
         sequence_world_size=get_sequence_parallel_world_size(),
     )
+# Modified by the windows-v100-p2p fork to select the Windows Gloo control backend.

@@ -4,6 +4,7 @@ import gc
 import json
 import logging
 import functools
+import time
 from datetime import timedelta
 
 import torch
@@ -34,6 +35,7 @@ from raylight.distributed_worker.parallel_group_manager import (
     initialize_xfuser_parallel,
     requires_xfuser_parallel,
 )
+from raylight.distributed_worker.a2a_trace import create_a2a_tracer, trace_a2a_capture
 from raylight.distributed_worker.ray_worker_controlnet import (
     _prepare_control_models,
     _remap_conditioning_devices,
@@ -46,6 +48,15 @@ from raylight.distributed_worker.ray_worker_vae import (
     ray_seedvr2_vae_decode_partial_impl,
 )
 from raylight.distributed_worker.utils import Noise_EmptyNoise, Noise_RandomNoise, patch_ray_tqdm
+from raylight.distributed_worker.windows_gloo import (
+    init_windows_gloo_process_group,
+    is_windows,
+)
+from raylight.distributed_worker.windows_p2p import (
+    CudaP2PAllToAll,
+    WindowsSpinControl,
+    make_all_to_all_router,
+)
 from raylight.comfy_dist.quant_ops import patch_temp_fix_ck_ops
 from ray.exceptions import RayActorError
 
@@ -401,6 +412,8 @@ class RayWorker:
         self.pipefusion_config = PipeFusionConfig.from_parallel_dict(self.parallel_dict)
         self.pipefusion_stage = None
         self.xfuser_parallel = None
+        self._windows_p2p = None
+        self._original_all_to_all_single = None
 
         self.is_model_loaded = False
         self.is_cpu_offload = self.parallel_dict.get("fsdp_cpu_offload", False)
@@ -427,13 +440,25 @@ class RayWorker:
         base_port = int(os.environ.get("MASTER_PORT", "29500"))
         group_port = base_port + self.group_id
 
-        dist.init_process_group(
-            "nccl",
-            rank=nccl_rank,
-            world_size=nccl_world_size,
-            timeout=timedelta(minutes=1),
-            init_method=f"tcp://{master_addr}:{group_port}",
-        )
+        if is_windows():
+            gloo_host = init_windows_gloo_process_group(
+                rank=nccl_rank,
+                world_size=nccl_world_size,
+                master_addr=master_addr,
+                port=group_port,
+            )
+            print(
+                f"[Raylight] Windows Gloo init OK rank={nccl_rank}/{nccl_world_size} "
+                f"store={master_addr}:{group_port} device={gloo_host}"
+            )
+        else:
+            dist.init_process_group(
+                "nccl",
+                rank=nccl_rank,
+                world_size=nccl_world_size,
+                timeout=timedelta(minutes=1),
+                init_method=f"tcp://{master_addr}:{group_port}",
+            )
 
         if self.parallel_dict["is_xdit"] or self.parallel_dict["is_fsdp"]:
             self.device_mesh = dist.device_mesh.init_device_mesh("cuda", mesh_shape=(nccl_world_size,))
@@ -460,6 +485,77 @@ class RayWorker:
                 f"PP={self.xfuser_parallel.config.pp_degree}, "
                 f"DP={self.xfuser_parallel.config.data_parallel_degree}"
             )
+        self._a2a_tracer = create_a2a_tracer(local_rank)
+
+    def prepare_windows_p2p(self, group_name, capacity_bytes):
+        if not is_windows():
+            raise RuntimeError("Windows CUDA P2P backend is only available on Windows")
+        if self.global_world_size != 2 or self.shard_size != 2:
+            raise ValueError("Windows CUDA P2P backend currently requires exactly two ranks")
+        if self.parallel_dict.get("is_fsdp"):
+            raise ValueError("Windows CUDA P2P backend does not support FSDP")
+        self._windows_p2p_control = WindowsSpinControl(group_name, self.local_rank)
+        self._windows_p2p = CudaP2PAllToAll(
+            self.local_rank,
+            capacity_bytes,
+            self._windows_p2p_control,
+            timeout_seconds=10,
+        )
+        return self._windows_p2p.local_ipc_metadata()
+
+    def connect_windows_p2p(self, peer_metadata):
+        if self._windows_p2p is None:
+            raise RuntimeError("prepare_windows_p2p must run before connect_windows_p2p")
+        self._windows_p2p.connect_ipc_metadata(peer_metadata)
+        return True
+
+    def check_windows_p2p(self, size_bytes, iterations=100):
+        if self._windows_p2p is None:
+            raise RuntimeError("Windows CUDA P2P backend is not connected")
+        elements = size_bytes // 4
+        half = elements // 2
+        source = torch.empty(elements, dtype=torch.float32, device=self.device)
+        source[:half].fill_(self.local_rank * 100 + 1)
+        source[half:].fill_(self.local_rank * 100 + 2)
+        output = torch.empty_like(source)
+        for _ in range(3):
+            self._windows_p2p.all_to_all_single(output, source)
+        torch.cuda.synchronize(self.device)
+        started = time.perf_counter()
+        for _ in range(iterations):
+            self._windows_p2p.all_to_all_single(output, source)
+        torch.cuda.synchronize(self.device)
+        elapsed = time.perf_counter() - started
+        expected = (1, 101) if self.local_rank == 0 else (2, 102)
+        observed = (int(output[0].item()), int(output[half].item()))
+        if observed != expected:
+            raise RuntimeError(
+                f"Windows P2P health check mismatch rank={self.local_rank}: "
+                f"observed={observed}, expected={expected}"
+            )
+        return {
+            "rank": self.local_rank,
+            "elapsed_seconds": elapsed,
+            "remote_gib_s": (size_bytes / 2 / 2**30) * iterations / elapsed,
+        }
+
+    def enable_windows_p2p(self):
+        if self._windows_p2p is None:
+            raise RuntimeError("Windows CUDA P2P backend is not connected")
+        if self._original_all_to_all_single is None:
+            self._original_all_to_all_single = dist.all_to_all_single
+            dist.all_to_all_single = make_all_to_all_router(
+                self._windows_p2p,
+                self._original_all_to_all_single,
+            )
+        return True
+
+    def disable_windows_p2p(self):
+        original = getattr(self, "_original_all_to_all_single", None)
+        if original is not None:
+            dist.all_to_all_single = original
+            self._original_all_to_all_single = None
+        return True
 
     def get_meta_model(self):
         base_model = getattr(self.model, "model", self.model)
@@ -1053,6 +1149,15 @@ class RayWorker:
         self._free_cached_aux_models()
         self._invalidate_non_fsdp_cache()
         self.model = None
+        self.disable_windows_p2p()
+        if getattr(self, "_windows_p2p", None) is not None:
+            self._windows_p2p.close()
+            self._windows_p2p = None
+        if hasattr(self, "_windows_p2p_control"):
+            self._windows_p2p_control.close()
+        tracer = getattr(self, "_a2a_tracer", None)
+        if tracer is not None:
+            tracer.close()
         dist.destroy_process_group()
         ray.actor.exit_actor()
 
@@ -1088,6 +1193,7 @@ class RayWorker:
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
     @patch_enable_comfy_kitchen_fsdp
+    @trace_a2a_capture
     def custom_sampler_advanced(
         self,
         add_noise,
@@ -1185,6 +1291,7 @@ class RayWorker:
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
     @patch_enable_comfy_kitchen_fsdp
+    @trace_a2a_capture
     def custom_sampler(
         self,
         add_noise,
@@ -1322,6 +1429,7 @@ class RayWorker:
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
     @patch_enable_comfy_kitchen_fsdp
+    @trace_a2a_capture
     def common_ksampler(
         self,
         seed,
@@ -1415,13 +1523,23 @@ class RayCOMMTester:
         device = torch.device(f"cuda:{device_id}")
         os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
 
-        dist.init_process_group(
-            "nccl",
-            rank=local_rank,
-            world_size=world_size,
-            timeout=timedelta(minutes=1),
-            # device_id=self.device
-        )
+        if is_windows():
+            master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
+            master_port = int(os.environ.get("MASTER_PORT", "29500")) + 100
+            init_windows_gloo_process_group(
+                rank=local_rank,
+                world_size=world_size,
+                master_addr=master_addr,
+                port=master_port,
+            )
+        else:
+            dist.init_process_group(
+                "nccl",
+                rank=local_rank,
+                world_size=world_size,
+                timeout=timedelta(minutes=1),
+                # device_id=self.device
+            )
         print("Running COMM pre-run")
 
         # Each rank contributes rank+1
@@ -1504,6 +1622,39 @@ def make_ray_actor_fn(world_size, parallel_dict):
 
         for actor in ray_actors["workers"]:
             ray.get(actor.__ray_ready__.remote())
+        if is_windows() and os.environ.get("RAYLIGHT_WINDOWS_P2P") == "1":
+            if world_size != 2 or shard_size != 2 or parallel_dict.get("is_fsdp"):
+                raise ValueError(
+                    "RAYLIGHT_WINDOWS_P2P=1 requires two ranks, shard_size=2, and FSDP disabled"
+                )
+            capacity_bytes = int(
+                os.environ.get("RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES", str(64 * 1024 * 1024))
+            )
+            health_check_bytes = min(capacity_bytes * 2, 115_343_360)
+            group_name = f"raylight_{os.getpid()}_{time.time_ns()}"
+            metadata = ray.get(
+                [
+                    actor.prepare_windows_p2p.remote(group_name, capacity_bytes)
+                    for actor in ray_actors["workers"]
+                ]
+            )
+            ray.get(
+                [
+                    ray_actors["workers"][rank].connect_windows_p2p.remote(metadata[1 - rank])
+                    for rank in range(2)
+                ]
+            )
+            checks = ray.get(
+                [actor.check_windows_p2p.remote(health_check_bytes) for actor in ray_actors["workers"]]
+            )
+            minimum_gib_s = float(os.environ.get("RAYLIGHT_WINDOWS_P2P_MIN_GIB_S", "50"))
+            slow = [check for check in checks if check["remote_gib_s"] < minimum_gib_s]
+            if slow:
+                raise RuntimeError(
+                    f"Windows CUDA P2P health check below {minimum_gib_s} GiB/s: {checks}"
+                )
+            ray.get([actor.enable_windows_p2p.remote() for actor in ray_actors["workers"]])
+            print(f"[Raylight] Windows CUDA P2P enabled: {checks}")
         return ray_actors
 
     return _init_ray_actor
@@ -1536,3 +1687,4 @@ def ensure_fresh_actors(ray_actors_init):
     parallel_dict = ray.get(gpu_actors[0].get_parallel_dict.remote())
 
     return ray_actors, gpu_actors, parallel_dict
+# Modified by the windows-v100-p2p fork for Windows Gloo, CUDA P2P routing, and worker reuse support.

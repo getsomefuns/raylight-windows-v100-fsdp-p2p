@@ -143,6 +143,25 @@ def _build_local_runtime_env(module_dir: Path, repo_root: Path, runtime_workdir:
         "PYTHONPATH": python_path,
         "COMFYUI_BASE_DIRECTORY": str(repo_root),
     }
+    forwarded_keys = (
+        "MASTER_ADDR",
+        "MASTER_PORT",
+        "RAYLIGHT_GLOO_HOST",
+        "RAYLIGHT_A2A_TRACE_DIR",
+        "USE_LIBUV",
+        "RAY_DEBUG_DISABLE_MEMORY_MONITOR",
+        "RAY_memory_usage_threshold",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS",
+        "PYTHONUTF8",
+        "PYTHONIOENCODING",
+        "RAYLIGHT_WINDOWS_P2P",
+        "RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES",
+        "RAYLIGHT_WINDOWS_P2P_MIN_GIB_S",
+    )
+    for key in forwarded_keys:
+        value = os.environ.get(key)
+        if value is not None:
+            env_vars[key] = value
     alloc_conf = _sanitized_worker_alloc_conf()
     if alloc_conf is not None:
         env_vars["PYTORCH_CUDA_ALLOC_CONF"] = alloc_conf
@@ -237,6 +256,67 @@ _RAYLIGHT_RUNTIME_WORKDIR = _ensure_runtime_workdir(_RAYLIGHT_MODULE_PATH)
 _RAY_RUNTIME_ENV_LOCAL = _build_local_runtime_env(_RAYLIGHT_MODULE_PATH, _COMFY_ROOT_PATH, _RAYLIGHT_RUNTIME_WORKDIR)
 _RAY_RUNTIME_ENV_REMOTE = _build_remote_runtime_env(_RAYLIGHT_MODULE_PATH, _COMFY_ROOT_PATH)
 _LOCAL_CLUSTER_ADDRESSES = {None, "", "local", "LOCAL"}
+_ACTIVE_RAY_SESSION = None
+
+
+def _ray_session_key(configuration: dict[str, Any]) -> str:
+    """Return a stable key for settings that affect the Ray worker topology."""
+    p2p_environment = {
+        key: os.environ.get(key)
+        for key in (
+            "RAYLIGHT_WINDOWS_P2P",
+            "RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES",
+            "RAYLIGHT_WINDOWS_P2P_MIN_GIB_S",
+            "MASTER_ADDR",
+            "MASTER_PORT",
+            "RAYLIGHT_GLOO_HOST",
+            "USE_LIBUV",
+        )
+    }
+    return json.dumps(
+        {"configuration": configuration, "p2p_environment": p2p_environment},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _cache_active_ray_session(session_key: str, payload):
+    global _ACTIVE_RAY_SESSION
+    _ACTIVE_RAY_SESSION = (session_key, payload)
+
+
+def _clear_active_ray_session():
+    global _ACTIVE_RAY_SESSION
+    _ACTIVE_RAY_SESSION = None
+
+
+def _probe_ray_actor_payload(payload, expected_world_size: int) -> bool:
+    try:
+        ray_actors, _ = payload
+        workers = ray_actors["workers"]
+        if len(workers) != expected_world_size:
+            return False
+        results = ray.get(
+            [actor.get_parallel_dict.remote() for actor in workers],
+            timeout=5,
+        )
+        return len(results) == expected_world_size
+    except Exception:
+        return False
+
+
+def _reuse_active_ray_session(session_key: str, expected_world_size: int):
+    global _ACTIVE_RAY_SESSION
+    if _ACTIVE_RAY_SESSION is None or not ray.is_initialized():
+        return None
+    cached_key, payload = _ACTIVE_RAY_SESSION
+    if cached_key != session_key:
+        return None
+    if not _probe_ray_actor_payload(payload, expected_world_size):
+        _ACTIVE_RAY_SESSION = None
+        return None
+    return payload
 
 
 def _quant_metadata_checker(unet_path: str) -> bool:
@@ -599,8 +679,26 @@ class RayInitializer:
         if ray_cluster_address in _LOCAL_CLUSTER_ADDRESSES:
             _configure_raylight_ray_tmpdir(runtime_env_base)
 
+        session_key = _ray_session_key(
+            {
+                "ray_cluster_address": ray_cluster_address,
+                "ray_cluster_namespace": ray_cluster_namespace,
+                "GPU": GPU,
+                "GPU_SELECT": GPU_SELECT,
+                "parallel_dict": self.parallel_dict,
+                "ray_object_store_bytes": ray_object_store_gb,
+                "ray_dashboard_address": ray_dashboard_address,
+                "runtime_env": runtime_env_base,
+            }
+        )
+        cached_payload = _reuse_active_ray_session(session_key, world_size)
+        if cached_payload is not None:
+            print(f"[Raylight] Reusing {world_size} live Ray workers for unchanged configuration")
+            return (cached_payload,)
+
         try:
             # Shut down so if comfy user try another workflow it will not cause error
+            _clear_active_ray_session()
             ray.shutdown()
             _cleanup_ray_temp()
             RayControlNetLoader._current_controlnet_path = None
@@ -640,13 +738,15 @@ class RayInitializer:
             raise RuntimeError(f"Ray connection failed: {e}")
 
         if not skip_comm_test:
-            print("Running NCCL communication test...")
+            print("Running distributed communication test...")
             ray_nccl_tester(world_size)
         else:
-            print("Skipping NCCL test (skip_comm_test=True)")
+            print("Skipping distributed communication test (skip_comm_test=True)")
         ray_actor_fn = make_ray_actor_fn(world_size, self.parallel_dict)
         ray_actors = ray_actor_fn()
-        return ([ray_actors, ray_actor_fn],)
+        payload = [ray_actors, ray_actor_fn]
+        _cache_active_ray_session(session_key, payload)
+        return (payload,)
 
 
 class RayInitializerAdvanced(RayInitializer):
@@ -1424,6 +1524,7 @@ class RayKill:
     CATEGORY = "Raylight"
 
     def kill_ray(self, ray_actors, kill_mode):
+        _clear_active_ray_session()
         gpu_actors = ray_actors["workers"]
         futures = [actor.kill.remote() for actor in gpu_actors]
         try:
@@ -1891,3 +1992,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "RayVAEDecodeDistributed": "Distributed VAE (Ray)",
     "RaySeedVR2VAEDecodeDistributed": "SeedVR2 VAE Decode Distributed (Ray)",
 }
+# Modified by the windows-v100-p2p fork to forward Windows transport settings and reuse Ray sessions.

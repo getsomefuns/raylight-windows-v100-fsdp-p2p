@@ -2,6 +2,13 @@
 
 Raylight. Using Ray Worker to manage multi GPU sampler setup. With XDiT-XFuser and FSDP to implement parallelism.
 
+> [!IMPORTANT]
+> This fork adds an experimental native-Windows CUDA IPC/P2P transport for the
+> two-rank Ulysses `all_to_all_single` path. It was developed and measured on
+> 2x Tesla V100-SXM2-16GB in TCC mode with NVLink. It is not a general NCCL or
+> FSDP replacement. Start with the [Windows V100 P2P guide](docs/windows-v100-p2p.md)
+> and review [the fork-specific changes](WINDOWS_P2P_CHANGES.md).
+
 *"Why buy 5090 when you can buy 2x5070s"-Komikndr*
 
 
