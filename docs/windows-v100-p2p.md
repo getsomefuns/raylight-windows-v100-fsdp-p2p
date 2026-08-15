@@ -107,8 +107,10 @@ The script automatically derives the ComfyUI root from
 
 - `USE_LIBUV=0` and a local TCPStore rendezvous.
 - Ray memory-monitor overrides used by the validated large workflow.
-- Windows CUDA P2P mode with one persistent 64 MiB send buffer per rank.
+- Windows CUDA P2P mode with one persistent 128 MiB send buffer per rank.
 - A strict 50 GiB/s startup health threshold.
+- A strict 10-second P2P coordination timeout; diagnostic overrides are forwarded
+  into Ray workers and force a new worker session.
 - `CUDA_VISIBLE_DEVICES=0,1`.
 - ComfyUI `--disable-cuda-malloc` for the V100 VAE path.
 
@@ -134,6 +136,7 @@ Use these settings for the validated workflow:
 | FSDP / FSDP_CPU_OFFLOAD | false / false |
 | XFuser_attention | TORCH_EFFICIENT |
 | skip_comm_test | true |
+| use_mmap | true |
 
 `skip_comm_test=true` skips Raylight's older general communication tester. It
 does not skip this fork's strict CUDA P2P health check.
@@ -178,7 +181,8 @@ important optimization areas.
 - Wrong Gloo adapter or timeout: pass the physical IPv4 with `-GlooHost`.
 - FSDP requested: unsupported on this Windows P2P path; disable it.
 - Payload exceeds capacity: increase `-P2PCapacityBytes` only after checking
-  available VRAM. The validated maximum input was 115,343,360 bytes.
+  available VRAM. The validated 10-second workflow reached a maximum collective input of 230,686,720 bytes and requires the 128 MiB-per-rank default.
+- Black video or audio NaN/Inf after forcing FP16: restore the LTX/LTXAV default BF16/FP32 inference range. Global FP16 was numerically invalid in the validated V100 workflow.
 
 Ray on Windows remains a beta platform. Treat this branch as an experimental,
 single-machine compatibility implementation rather than a drop-in Linux/NCCL

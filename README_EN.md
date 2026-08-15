@@ -27,6 +27,7 @@ FSDP.
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
 - License: Apache License 2.0
 - Branch change log: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
+- Maintained test record: [docs/TESTING.md](docs/TESTING.md)
 
 This project preserves the upstream license, copyright, and attribution. The
 Windows P2P compatibility layer, tests, scripts, and documentation are
@@ -261,7 +262,7 @@ Use these RayInitializer settings:
 | FSDP / FSDP_CPU_OFFLOAD | false / false |
 | XFuser_attention | TORCH_EFFICIENT |
 | skip_comm_test | true |
-| use_mmap | false |
+| use_mmap | true |
 
 `skip_comm_test=true` skips Raylight's original generic communication test. It
 does not skip this branch's CUDA P2P correctness and bandwidth checks.
@@ -297,7 +298,7 @@ supported operation through host memory while claiming that NVLink is active.
 | `RAY_DEBUG_DISABLE_MEMORY_MONITOR` | `1` | Prevents Ray from killing workers early under high memory use |
 | `RAY_memory_usage_threshold` | `1` | Raises Ray's memory threshold to 100% |
 | `RAYLIGHT_WINDOWS_P2P` | `1` | Enables the Windows CUDA P2P fast path |
-| `RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES` | `67108864` | Persistent 64 MiB send buffer per rank |
+| `RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES` | `134217728` | Persistent 128 MiB send buffer per rank |
 | `RAYLIGHT_WINDOWS_P2P_MIN_GIB_S` | `50` | Hard startup bandwidth gate |
 | `CUDA_VISIBLE_DEVICES` | `0,1` | Fixes the visible order of the two target GPUs |
 
@@ -348,7 +349,7 @@ The core implementation is in:
 
 Each rank owns:
 
-- One persistent CUDA send buffer, 64 MiB by default.
+- One persistent CUDA send buffer, 128 MiB by default.
 - An exportable CUDA IPC storage handle.
 - Interprocess `ready` and `consumed` CUDA events.
 - A Windows named shared-memory and event control plane.
@@ -400,7 +401,7 @@ toolkit.
 
 ### Release verification
 
-- New Windows P2P, trace, session, and runtime unit tests: 18/18 passing.
+- Windows P2P, trace, session, runtime, mmap, metadata, synchronized model-loading, and release-profile checks are maintained continuously; use the [test record](docs/TESTING.md) and the current test command output as the source of truth.
 - Real LTX tensor sizes: 516,096, 8,388,608, 28,835,840, and 115,343,360 bytes.
 - Both ranks at every size: `0 mismatch / 0 maximum error`.
 - Mismatched operation IDs and absent peers time out as expected in about two
@@ -425,6 +426,8 @@ The fair warm-to-warm improvement is:
 (316.60 - 284.06) / 316.60 = 10.28%
 ```
 
+Quantized safetensors can now preserve metadata while using `use_mmap=true`. Both ranks load with a shared minimum VRAM budget and synchronize after model loading. The 10-second workflow remains validated against the strict 10-second communication timeout; the fix does not hide rank skew by relaxing that limit.
+
 The current version demonstrates real dual-GPU execution, a correct CUDA P2P
 data path, and stable generation. It has not yet reached the project goal of at
 least 20% improvement over a warm single-GPU run. Cold-start single-GPU time is
@@ -437,6 +440,7 @@ not used to inflate the published speedup.
 - WDDM is untested; the release gate requires TCC.
 - FSDP must remain disabled on this Windows path.
 - GGUF cannot gain FSDP weight sharding through this implementation.
+- LTX/LTXAV should retain ComfyUI's default BF16/FP32 inference range; forcing global FP16 produced fully black video and audio NaN/Inf in the validated V100 test.
 - Text encoding and VAE encoding/decoding are not distributed across GPUs.
 - Model weights are generally replicated, so VRAM does not add transparently.
 - Python, named-control, synchronization, and event overhead remain significant
@@ -497,7 +501,9 @@ raylight/
 ├─ example_workflows/                    LTX 2.3 example workflow
 ├─ docs/
 │  ├─ windows-v100-p2p.md               Windows-specific technical guide
-│  └─ ltx23-model-manifest.md            Model and custom-node manifest
+│  ├─ ltx23-model-manifest.md            Model and custom-node manifest
+│  ├─ TESTING.md                         Maintained validation record
+│  └─ test-results-2026-08.csv           Compact test-data attachment
 ├─ environment-windows-v100.json         Machine-readable validation matrix
 ├─ requirements-windows-v100.txt         Pinned dependencies
 └─ WINDOWS_P2P_CHANGES.md                Changes relative to upstream

@@ -22,6 +22,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
 - 许可证：Apache License 2.0
 - 分支修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
+- 持续测试记录：[docs/TESTING.md](docs/TESTING.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -236,7 +237,7 @@ RayInitializer 使用以下设置：
 | FSDP / FSDP_CPU_OFFLOAD | false / false |
 | XFuser_attention | TORCH_EFFICIENT |
 | skip_comm_test | true |
-| use_mmap | false |
+| use_mmap | true |
 
 `skip_comm_test=true` 只跳过 Raylight 原有的通用通信测试，不会跳过此分支的
 CUDA P2P 正确性和带宽检查。
@@ -271,7 +272,7 @@ CUDA P2P 正确性和带宽检查。
 | `RAY_DEBUG_DISABLE_MEMORY_MONITOR` | `1` | 避免 Ray 因高内存占用提前杀 worker |
 | `RAY_memory_usage_threshold` | `1` | 将 Ray 内存阈值提高到 100% |
 | `RAYLIGHT_WINDOWS_P2P` | `1` | 启用 Windows CUDA P2P 快速路径 |
-| `RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES` | `67108864` | 每 rank 64 MiB 持久发送缓冲区 |
+| `RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES` | `134217728` | 每 rank 128 MiB 持久发送缓冲区 |
 | `RAYLIGHT_WINDOWS_P2P_MIN_GIB_S` | `50` | 启动带宽硬门槛 |
 | `CUDA_VISIBLE_DEVICES` | `0,1` | 固定两张目标 GPU 的可见顺序 |
 
@@ -318,7 +319,7 @@ endpoint，阻止在通信状态不一致时继续执行。
 
 每个 rank 持有：
 
-- 一个默认 64 MiB 的持久 CUDA 发送缓冲区。
+- 一个默认 128 MiB 的持久 CUDA 发送缓冲区。
 - 可导出的 CUDA IPC storage handle。
 - `ready` 和 `consumed` 跨进程 CUDA Event。
 - Windows named shared memory + event 控制面。
@@ -361,7 +362,7 @@ key。配置相同且 worker 健康时复用现有 actor；配置改变或健康
 
 ### 发布前验证
 
-- 新增 Windows P2P/trace/session/runtime 单元测试：18/18 通过。
+- Windows P2P、trace、session、runtime、mmap、metadata、模型加载同步和发布配置测试均纳入持续测试；当前结果以 [测试记录](docs/TESTING.md) 与实际测试命令输出为准。
 - 真实 LTX 张量尺寸：516,096、8,388,608、28,835,840 和
   115,343,360 字节。
 - 两个 rank、全部尺寸：`0 mismatch / 0 maximum error`。
@@ -385,6 +386,8 @@ key。配置相同且 worker 健康时复用现有 actor；配置改变或健康
 (316.60 - 284.06) / 316.60 = 10.28%
 ```
 
+量化 safetensors 现在可在 `use_mmap=true` 时保留 metadata 并延迟映射；两个 rank 使用共同的最小显存预算加载模型，并在加载后同步。10 秒工作流仍以严格 10 秒通信超时验证，不通过放宽超时掩盖 rank 偏差。
+
 当前版本已经证明真实双 GPU 工作、正确 CUDA P2P 数据路径和稳定生成，但尚未达到
 项目希望的“比单卡热启动快至少 20%”目标。文档不会用单卡冷启动作为基线夸大收益。
 
@@ -394,6 +397,7 @@ key。配置相同且 worker 健康时复用现有 actor；配置改变或健康
 - WDDM 未验证；发行门槛要求 TCC。
 - FSDP 在此 Windows 路径中必须关闭。
 - GGUF 不能通过此实现获得 FSDP 权重分片。
+- LTX/LTXAV 应保持 ComfyUI 默认 BF16/FP32 推理范围；实测强制全局 FP16 会产生全黑视频和音频 NaN/Inf。
 - 不支持多 GPU 文本编码、VAE 编码/解码。
 - 模型权重通常每卡一份，显存不是简单相加。
 - 小张量的 Python、named control、同步和 event 开销仍明显。
@@ -447,7 +451,9 @@ raylight/
 ├─ example_workflows/                    LTX 2.3 示例工作流
 ├─ docs/
 │  ├─ windows-v100-p2p.md               Windows 专项技术指南
-│  └─ ltx23-model-manifest.md            模型与节点清单
+│  ├─ ltx23-model-manifest.md            模型与节点清单
+│  ├─ TESTING.md                         持续测试与验证总表
+│  └─ test-results-2026-08.csv           精简测试数据附件
 ├─ environment-windows-v100.json         机器可读验证矩阵
 ├─ requirements-windows-v100.txt         锁定依赖
 └─ WINDOWS_P2P_CHANGES.md                相对上游的修改说明

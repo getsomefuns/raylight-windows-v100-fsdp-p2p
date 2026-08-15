@@ -35,3 +35,25 @@ communication, more than two ranks, asynchronous collectives, or arbitrary
 split sizes. Unsupported operations remain on the Gloo fallback path.
 
 The original Apache-2.0 license and upstream attribution are retained.
+
+## 2026-08-15 stability and release-profile update
+
+- Quantized safetensors can use the mmap path while preserving file metadata
+  required for correct model detection.
+- Both ranks derive a shared minimum model-load VRAM budget and synchronize after
+  loading, preventing host-memory/pagefile pressure from creating large rank skew.
+- The strict Windows P2P timeout remains 10 seconds by default and is configurable
+  with `RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS` for diagnostics only.
+- Timeout and rank-diagnostic environment variables are forwarded into Ray workers
+  and included in the worker-session key, so changed settings do not reuse stale actors.
+- The worker fallback capacity, public start script, environment matrix, and example
+  workflow are aligned to the validated release profile.
+- The validated 10-second LTX workflow now defaults to a 128 MiB persistent send
+  buffer per rank and `use_mmap=true`; its maximum observed collective input was
+  230,686,720 bytes.
+- Global FP16 for LTX/LTXAV was tested and rejected because it produced fully
+  black video and audio NaN/Inf. The ComfyUI BF16/FP32 support declaration remains
+  unchanged.
+- Added focused regression tests for mmap policy, lazy-loader metadata, synchronized
+  model loading, and the public release profile, plus a maintainable test ledger in
+  `docs/TESTING.md`.

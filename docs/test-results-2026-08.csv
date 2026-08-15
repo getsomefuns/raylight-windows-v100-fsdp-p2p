@@ -1,0 +1,18 @@
+test_id,date,category,status,target,key_conditions,key_result,evidence
+HW-001,2026-08-11,hardware,PASS,CUDA P2P and NVLink,"2x V100 SXM2 16GB; TCC","peer access and correctness pass; 240+ GB/s bidirectional aggregate",NVIDIA p2pBandwidthLatencyTest
+TR-001,2026-08-11,transport,REJECTED,Gloo CUDA collective,"native Windows; two processes","correct but stages through host memory",local minimal probe
+TR-002,2026-08-13,transport,PASS,custom CUDA P2P correctness,"two Ray actors; LTX tensor sizes","0 mismatch; 0 maximum error",tests/windows_p2p_full_correctness_probe.py
+TR-003,2026-08-13,transport,PASS,P2P bandwidth,"approximately 100 MiB chunks","approximately 108 GiB/s microbenchmark peak; approximately 59.2 GiB/s project probe",tests/windows_p2p_ray_probe.py
+TR-004,2026-08-14,integration,PASS,xFuser subgroup,"Ulysses=2; two ranks","integration probe passes",tests/windows_xfuser_ray_probe.py
+PERF-001,2026-08-13,performance,PASS,single V100 cold,"same LTX workflow","519.94 s",docs/TESTING.md
+PERF-002,2026-08-13,performance,PASS,single V100 warm,"same LTX workflow","316.60 s",docs/TESTING.md
+PERF-003,2026-08-13,performance,PASS,dual V100 reused session,"same LTX workflow; P2P","284.06 s median; 10.28% faster than single warm",docs/TESTING.md
+STAB-001,2026-08-14,stability,FAIL,10-second pre-fix workflow,"quantized mmap excluded; unsynchronized model load","rank drift; timeout or actor death",local benchmark archive
+STAB-002,2026-08-14,stability,PASS,quantized safetensors mmap,"metadata forwarded","model detection and lazy load pass",tests/test_lazy_loader_metadata.py
+STAB-003,2026-08-14,stability,PASS,synchronized rank model load,"minimum shared VRAM budget; post-load barrier","both ranks aligned",tests/test_model_load_sync.py
+STAB-004,2026-08-14,stability,PASS,10-second default dtype,"mmap=true; 128 MiB; strict 10 s","valid 9.96 s H264 plus AAC; 581.35 s",local benchmark archive
+STAB-005,2026-08-14,stability,PASS,post-fix rank skew,"diagnostics enabled","sampler start skew below about 0.06 s",local benchmark archive
+MEM-002,2026-08-15,cache,DIAGNOSTIC,ComfyUI downstream cache,"5-second workflow","385.37 s cold; 145.15 s cached downstream rerun",local benchmark archive
+NUM-001,2026-08-15,numerics,REJECTED,5-second global FP16,"RayUNETLoader fp16","faster sampling; black video; audio NaN/Inf",local benchmark archive
+NUM-002,2026-08-15,numerics,REJECTED,10-second FP16 whitelist experiment,"251 requested frames; fp16","8.31 and 18.1 s/it; black video; AAC NaN/Inf",local benchmark archive
+REL-004,2026-08-15,release,PASS,release-profile consistency,"script and worker defaults; environment forwarding; session key","128 MiB and strict 10 s aligned; timeout or diagnostic changes recreate workers",tests/test_windows_release_profile.py
