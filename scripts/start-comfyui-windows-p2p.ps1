@@ -4,7 +4,7 @@ param(
     [string]$GpuSelect = "0,1",
     [int]$Port = 8188,
     [int]$MasterPort = 29500,
-    [long]$P2PCapacityBytes = 67108864,
+    [long]$P2PCapacityBytes = 134217728,
     [double]$MinimumP2PGiBs = 50,
     [switch]$ValidateOnly
 )

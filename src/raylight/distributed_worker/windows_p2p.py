@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+import json
 from ctypes import wintypes
 import mmap
+import os
 import struct
 import sys
 import time
@@ -12,6 +14,22 @@ import time
 import torch
 import torch.distributed as dist
 from torch.multiprocessing.reductions import rebuild_cuda_tensor, reduce_tensor
+
+
+DEFAULT_WINDOWS_P2P_CAPACITY_BYTES = 128 * 1024 * 1024
+
+
+def should_use_safetensors_mmap(parallel_dict, unet_path):
+    """Honor explicit mmap for safetensors, including FP8/quantized checkpoints."""
+    return bool(parallel_dict.get("use_mmap", True)) and unet_path.lower().endswith(".safetensors")
+
+
+def synchronized_model_load(local_budget, load_model, reduce_min, barrier):
+    """Use one VRAM budget on every rank and release them only after all loads finish."""
+    synchronized_budget = reduce_min(local_budget)
+    result = load_model(synchronized_budget)
+    barrier()
+    return result
 
 
 class P2PGroupError(RuntimeError):
@@ -161,6 +179,8 @@ class CudaP2PAllToAll:
         self._poisoned_reason = None
         # Zero is reserved for an uninitialized shared-memory control slot.
         self._operation_id = 1
+        self._last_call_perf = None
+        self._diag_enabled = os.environ.get("RAYLIGHT_RANK_DIAG", "0") == "1"
         self._send_buffer = torch.empty(capacity_bytes, dtype=torch.uint8, device="cuda:0")
         self._ready_event = torch.cuda.Event(interprocess=True)
         self._consumed_event = torch.cuda.Event(interprocess=True)
@@ -217,9 +237,20 @@ class CudaP2PAllToAll:
         total_bytes = validate_collective(output, input_tensor, self.capacity_bytes)
         operation_id = self._operation_id
         self._operation_id += 1
+        call_perf = time.perf_counter()
+        idle_seconds = None if self._last_call_perf is None else call_perf - self._last_call_perf
+        self._last_call_perf = call_perf
+        log_boundary = self._diag_enabled and (idle_seconds is None or idle_seconds >= 1.0)
         current_stream = torch.cuda.current_stream(0)
 
         try:
+            if log_boundary:
+                self._diag(
+                    "collective_after_idle",
+                    operation_id=operation_id,
+                    idle_seconds=idle_seconds,
+                    total_bytes=total_bytes,
+                )
             input_bytes = input_tensor.view(torch.uint8).reshape(-1)
             output_bytes = output.view(torch.uint8).reshape(-1)
 
@@ -237,11 +268,22 @@ class CudaP2PAllToAll:
                 )
                 self._ready_event.record(self._stream)
             self.control.publish_ready(self.rank, operation_id, total_bytes)
+            wait_started = time.perf_counter()
+            if log_boundary:
+                self._diag("ready_published", operation_id=operation_id, total_bytes=total_bytes)
             peer_total_bytes = self.control.wait_ready(
                 1 - self.rank,
                 operation_id,
                 timeout_seconds=self.timeout_seconds,
             )
+            wait_seconds = time.perf_counter() - wait_started
+            if log_boundary or wait_seconds >= 0.05:
+                self._diag(
+                    "peer_ready_observed",
+                    operation_id=operation_id,
+                    wait_seconds=wait_seconds,
+                    total_bytes=total_bytes,
+                )
             if peer_total_bytes != total_bytes:
                 raise ValueError(
                     f"collective size mismatch at operation {operation_id}: "
@@ -258,7 +300,32 @@ class CudaP2PAllToAll:
             current_stream.wait_event(self._consumed_event)
             return output
         except Exception as exc:
+            peer_operation = None
+            try:
+                peer_operation = self.control.peek_ready(1 - self.rank, operation_id)
+            except Exception:
+                pass
+            self._diag(
+                "collective_error",
+                operation_id=operation_id,
+                error=f"{type(exc).__name__}: {exc}",
+                peer_operation=peer_operation,
+                total_bytes=total_bytes,
+            )
             self._fail(exc)
+
+    def _diag(self, event, **fields):
+        if not self._diag_enabled:
+            return
+        payload = {
+            "event": event,
+            "perf_ns": time.perf_counter_ns(),
+            "pid": os.getpid(),
+            "rank": self.rank,
+            "time_ns": time.time_ns(),
+        }
+        payload.update(fields)
+        print(f"[RAYLIGHT_P2P_DIAG] {json.dumps(payload, sort_keys=True)}", flush=True)
 
     def close(self):
         self._peer_buffer = None
@@ -478,6 +545,9 @@ class WindowsSpinControl:
             if spins % 4096 == 0:
                 time.sleep(0)
 
+    def peek_ready(self, rank, operation_id):
+        offset = self._offset(rank, operation_id)
+        return struct.unpack_from("<q", self._mapping, offset)[0]
     def close(self):
         if self._closed:
             return

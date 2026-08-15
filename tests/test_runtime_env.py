@@ -29,8 +29,10 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
             "RAYLIGHT_WINDOWS_P2P": "1",
-            "RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES": "67108864",
+            "RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES": "134217728",
             "RAYLIGHT_WINDOWS_P2P_MIN_GIB_S": "50",
+            "RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS": "10",
+            "RAYLIGHT_RANK_DIAG": "1",
         }
         with mock.patch.dict(os.environ, expected, clear=False):
             runtime_env = nodes._build_local_runtime_env(

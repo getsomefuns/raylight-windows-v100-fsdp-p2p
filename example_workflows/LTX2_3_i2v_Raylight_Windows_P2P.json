@@ -2147,7 +2147,7 @@
         false,
         "TORCH_EFFICIENT",
         true,
-        false
+        true
       ]
     },
     {

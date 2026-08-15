@@ -768,14 +768,14 @@ def lazy_load_diffusion_model(unet_path, model_options={}):
     from raylight.expansion.comfyui_lazytensors.lazy_tensor import wrap_state_dict_lazy
     from raylight.expansion.comfyui_lazytensors.ops import SafetensorOps
 
-    sd = load_safetensors_mmap(unet_path)
+    sd, metadata = load_safetensors_mmap_with_metadata(unet_path)
     lazy_sd = wrap_state_dict_lazy(sd)
 
     load_options = model_options.copy()
     cast_dtype = load_options.pop("dtype", None)
     load_options.setdefault("custom_operations", SafetensorOps)
 
-    model = comfy.sd.load_diffusion_model_state_dict(lazy_sd, model_options=load_options)
+    model = comfy.sd.load_diffusion_model_state_dict(lazy_sd, model_options=load_options, metadata=metadata)
     if model is None:
         logging.error("ERROR UNSUPPORTED DIFFUSION MODEL {}".format(unet_path))
         raise RuntimeError("ERROR: Could not detect model type of: {}\n{}".format(unet_path, model_detection_error_hint(unet_path, sd)))

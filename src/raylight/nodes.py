@@ -157,6 +157,8 @@ def _build_local_runtime_env(module_dir: Path, repo_root: Path, runtime_workdir:
         "RAYLIGHT_WINDOWS_P2P",
         "RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES",
         "RAYLIGHT_WINDOWS_P2P_MIN_GIB_S",
+        "RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS",
+        "RAYLIGHT_RANK_DIAG",
     )
     for key in forwarded_keys:
         value = os.environ.get(key)
@@ -267,6 +269,8 @@ def _ray_session_key(configuration: dict[str, Any]) -> str:
             "RAYLIGHT_WINDOWS_P2P",
             "RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES",
             "RAYLIGHT_WINDOWS_P2P_MIN_GIB_S",
+        "RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS",
+        "RAYLIGHT_RANK_DIAG",
             "MASTER_ADDR",
             "MASTER_PORT",
             "RAYLIGHT_GLOO_HOST",

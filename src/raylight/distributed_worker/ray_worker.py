@@ -54,14 +54,50 @@ from raylight.distributed_worker.windows_gloo import (
 )
 from raylight.distributed_worker.windows_p2p import (
     CudaP2PAllToAll,
+    DEFAULT_WINDOWS_P2P_CAPACITY_BYTES,
     WindowsSpinControl,
     make_all_to_all_router,
+    should_use_safetensors_mmap,
+    synchronized_model_load,
 )
 from raylight.comfy_dist.quant_ops import patch_temp_fix_ck_ops
 from ray.exceptions import RayActorError
 
 
 _WORKER_AIMDO_INIT_ATTEMPTED = False
+
+
+def _raylight_rank_diag_enabled():
+    return os.environ.get("RAYLIGHT_RANK_DIAG", "0") == "1"
+
+
+def _raylight_rank_diag(worker, invocation, event, **fields):
+    """Emit low-frequency phase timing without synchronizing CUDA."""
+    if not _raylight_rank_diag_enabled():
+        return
+    payload = {
+        "event": event,
+        "invocation": invocation,
+        "perf_ns": time.perf_counter_ns(),
+        "pid": os.getpid(),
+        "rank": worker.local_rank,
+        "time_ns": time.time_ns(),
+    }
+    try:
+        import psutil
+
+        memory = psutil.Process().memory_info()
+        for name in ("rss", "vms", "pagefile", "peak_pagefile", "private", "num_page_faults"):
+            value = getattr(memory, name, None)
+            if value is not None:
+                payload[f"process_{name}"] = value
+    except Exception as exc:
+        payload["process_memory_error"] = type(exc).__name__
+    if torch.cuda.is_available():
+        payload["cuda_allocated"] = torch.cuda.memory_allocated()
+        payload["cuda_reserved"] = torch.cuda.memory_reserved()
+    payload.update(fields)
+    print(f"[RAYLIGHT_RANK_DIAG] {json.dumps(payload, ensure_ascii=False, sort_keys=True)}", flush=True)
 
 
 # Developer reminder, Checking model parameter outside ray actor is very expensive (e.g Comfy main thread)
@@ -414,6 +450,7 @@ class RayWorker:
         self.xfuser_parallel = None
         self._windows_p2p = None
         self._original_all_to_all_single = None
+        self._sampler_invocation = 0
 
         self.is_model_loaded = False
         self.is_cpu_offload = self.parallel_dict.get("fsdp_cpu_offload", False)
@@ -486,7 +523,92 @@ class RayWorker:
                 f"DP={self.xfuser_parallel.config.data_parallel_degree}"
             )
         self._a2a_tracer = create_a2a_tracer(local_rank)
+        self._install_rank_phase_diagnostics()
 
+    def _install_rank_phase_diagnostics(self):
+        """Synchronize model loads and optionally trace the pre-collective path."""
+        import comfy.model_management as comfy_model_management
+
+        if is_windows() and os.environ.get("RAYLIGHT_WINDOWS_P2P", "0") == "1":
+            original_model_load = comfy_model_management.LoadedModel.model_load
+            if not getattr(original_model_load, "_raylight_model_load_sync_wrapped", False):
+
+                @functools.wraps(original_model_load)
+                def synchronized_load(loaded_model, lowvram_model_memory=0, force_patch_weights=False):
+                    if not comfy_model_management.is_device_cuda(loaded_model.device):
+                        return original_model_load(
+                            loaded_model,
+                            lowvram_model_memory,
+                            force_patch_weights=force_patch_weights,
+                        )
+
+                    local_budget = float(lowvram_model_memory)
+
+                    def reduce_min(value):
+                        budget = torch.tensor([value], dtype=torch.float64, device="cpu")
+                        dist.all_reduce(budget, op=dist.ReduceOp.MIN)
+                        return float(budget.item())
+
+                    def load_with_budget(synchronized_budget):
+                        free_bytes, total_bytes = torch.cuda.mem_get_info()
+                        _raylight_rank_diag(
+                            self,
+                            self._sampler_invocation,
+                            "model_load_budget_synchronized",
+                            cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"),
+                            cuda_free_bytes=free_bytes,
+                            cuda_total_bytes=total_bytes,
+                            local_budget_bytes=local_budget,
+                            synchronized_budget_bytes=synchronized_budget,
+                        )
+                        return original_model_load(
+                            loaded_model,
+                            synchronized_budget,
+                            force_patch_weights=force_patch_weights,
+                        )
+
+                    return synchronized_model_load(
+                        local_budget,
+                        load_with_budget,
+                        reduce_min,
+                        dist.barrier,
+                    )
+
+                synchronized_load._raylight_model_load_sync_wrapped = True
+                comfy_model_management.LoadedModel.model_load = synchronized_load
+
+        if not _raylight_rank_diag_enabled():
+            return
+
+        import comfy.sampler_helpers as comfy_sampler_helpers
+
+        def wrap(target, name, label):
+            original = getattr(target, name)
+            if getattr(original, "_raylight_rank_diag_wrapped", False):
+                return
+
+            @functools.wraps(original)
+            def traced(*args, **kwargs):
+                invocation = self._sampler_invocation
+                started = time.perf_counter()
+                _raylight_rank_diag(self, invocation, f"{label}_begin")
+                try:
+                    return original(*args, **kwargs)
+                finally:
+                    _raylight_rank_diag(
+                        self,
+                        invocation,
+                        f"{label}_end",
+                        elapsed_seconds=time.perf_counter() - started,
+                    )
+
+            traced._raylight_rank_diag_wrapped = True
+            setattr(target, name, traced)
+
+        wrap(comfy_sampler_helpers, "prepare_sampling", "prepare_sampling")
+        wrap(comfy_model_management, "load_models_gpu", "load_models_gpu")
+        wrap(comfy_model_management, "free_memory", "free_memory")
+        wrap(comfy_model_management.LoadedModel, "model_load", "loaded_model_model_load")
     def prepare_windows_p2p(self, group_name, capacity_bytes):
         if not is_windows():
             raise RuntimeError("Windows CUDA P2P backend is only available on Windows")
@@ -499,7 +621,7 @@ class RayWorker:
             self.local_rank,
             capacity_bytes,
             self._windows_p2p_control,
-            timeout_seconds=10,
+            timeout_seconds=float(os.environ.get("RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS", "10")),
         )
         return self._windows_p2p.local_ipc_metadata()
 
@@ -992,11 +1114,7 @@ class RayWorker:
 
             base_key = self._base_model_key(unet_path, model_options)
             active_key = self._active_model_key(unet_path, model_options)
-            use_mmap = (
-                self.parallel_dict.get("use_mmap", True)
-                and not self.parallel_dict.get("is_quant", False)
-                and unet_path.lower().endswith(".safetensors")
-            )
+            use_mmap = should_use_safetensors_mmap(self.parallel_dict, unet_path)
 
             if self.model is not None and self.active_request_key == active_key:
                 base_model = getattr(self.model, "model", self.model)
@@ -1210,10 +1328,22 @@ class RayWorker:
         import comfy.utils as comfy_utils
         import latent_preview
 
+        self._sampler_invocation += 1
+        invocation = self._sampler_invocation
+        latent_samples = latent_image.get("samples") if isinstance(latent_image, dict) else None
+        _raylight_rank_diag(
+            self,
+            invocation,
+            "sampler_entry",
+            latent_shape=list(latent_samples.shape) if hasattr(latent_samples, "shape") else None,
+            sigmas_shape=list(sigmas.shape) if hasattr(sigmas, "shape") else None,
+        )
+
         for cond_list in _get_guider_conditionings(guider_spec):
             _restore_controlnet_refs(cond_list, self.cached_controlnet, self.vae_model)
             _remap_conditioning_devices(cond_list, None)
             _prepare_control_models(cond_list, None)
+        _raylight_rank_diag(self, invocation, "conditions_prepared")
 
         latent = latent_image
         latent_image = latent["samples"]
@@ -1225,8 +1355,10 @@ class RayWorker:
             latent.get("downscale_ratio_temporal", None),
         )
         latent["samples"] = latent_image
+        _raylight_rank_diag(self, invocation, "latent_prepared")
 
         noise, sampling_seed = _generate_advanced_noise(add_noise, noise_seed, latent)
+        _raylight_rank_diag(self, invocation, "noise_prepared")
 
         noise_mask = None
         if "noise_mask" in latent:
@@ -1241,6 +1373,7 @@ class RayWorker:
             gc.collect()
 
         guider = _build_ray_guider(self.model, guider_spec)
+        _raylight_rank_diag(self, invocation, "guider_built")
         x0_output = {}
         callback = latent_preview.prepare_callback(guider.model_patcher, sigmas.shape[-1] - 1, x0_output)
 
@@ -1249,6 +1382,7 @@ class RayWorker:
             disable_pbar = not comfy_utils.PROGRESS_BAR_ENABLED
 
         with torch.no_grad():
+            _raylight_rank_diag(self, invocation, "sample_begin")
             samples = guider.sample(
                 noise,
                 latent_image,
@@ -1259,6 +1393,7 @@ class RayWorker:
                 disable_pbar=disable_pbar,
                 seed=sampling_seed,
             )
+            _raylight_rank_diag(self, invocation, "sample_returned")
             samples = samples.to(comfy_model_management.intermediate_device())
 
             out = latent.copy()
@@ -1283,6 +1418,7 @@ class RayWorker:
             pass
         comfy_model_management.soft_empty_cache()
         gc.collect()
+        _raylight_rank_diag(self, invocation, "sampler_return")
         result = (out, out_denoised)
         if grouped_output:
             return self._grouped_sampling_result(result)
@@ -1628,7 +1764,7 @@ def make_ray_actor_fn(world_size, parallel_dict):
                     "RAYLIGHT_WINDOWS_P2P=1 requires two ranks, shard_size=2, and FSDP disabled"
                 )
             capacity_bytes = int(
-                os.environ.get("RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES", str(64 * 1024 * 1024))
+                os.environ.get("RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES", str(DEFAULT_WINDOWS_P2P_CAPACITY_BYTES))
             )
             health_check_bytes = min(capacity_bytes * 2, 115_343_360)
             group_name = f"raylight_{os.getpid()}_{time.time_ns()}"

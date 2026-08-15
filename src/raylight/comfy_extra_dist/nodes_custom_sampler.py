@@ -1,4 +1,7 @@
 import gc
+import json
+import os
+import time
 import ray
 
 import torch
@@ -445,8 +448,12 @@ class XFuserSamplerCustomAdvanced:
         comfy.model_management.soft_empty_cache()
         ray_actors = _extract_ray_actors_from_guider(guider)
         gpu_actors = ray_actors["workers"]
-        futures = [
-            actor.custom_sampler_advanced.remote(
+        diag_enabled = os.environ.get("RAYLIGHT_RANK_DIAG", "0") == "1"
+        submit_batch_ns = time.time_ns()
+        futures = []
+        for actor_index, actor in enumerate(gpu_actors):
+            submit_started_ns = time.time_ns()
+            future = actor.custom_sampler_advanced.remote(
                 add_noise,
                 noise_seed,
                 guider,
@@ -454,8 +461,22 @@ class XFuserSamplerCustomAdvanced:
                 sigmas,
                 latent_image,
             )
-            for actor in gpu_actors
-        ]
+            futures.append(future)
+            if diag_enabled:
+                print(
+                    "[RAYLIGHT_SUBMIT_DIAG] "
+                    + json.dumps(
+                        {
+                            "actor_index": actor_index,
+                            "batch_time_ns": submit_batch_ns,
+                            "event": "actor_submitted",
+                            "submit_elapsed_ns": time.time_ns() - submit_started_ns,
+                            "time_ns": time.time_ns(),
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
         results = ray.get(futures)
         _clear_ray_worker_vram_after_sampling(ray_actors)
         output, denoised_output = results[0]
