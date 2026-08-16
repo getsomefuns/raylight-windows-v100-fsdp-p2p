@@ -7,6 +7,7 @@ import argparse
 import copy
 import csv
 import ctypes
+import hashlib
 import importlib.util
 import json
 import os
@@ -116,6 +117,16 @@ class WindowsKillOnCloseJob:
         if self._handle:
             self._kernel32.CloseHandle(self._handle)
             self._handle = None
+
+
+def attach_kill_on_close_job(process: subprocess.Popen, factory=WindowsKillOnCloseJob):
+    candidate = factory()
+    try:
+        candidate.assign(process)
+    except BaseException:
+        candidate.close()
+        raise
+    return candidate
 
 
 def _load_script(name: str, path: Path):
@@ -495,14 +506,47 @@ def _runtime_source_dirty(repository: Path) -> bool:
     return completed.returncode == 1
 
 
+def read_deployed_source_commit(marker_path: Path) -> str:
+    try:
+        value = marker_path.read_text(encoding="utf-8-sig").strip()
+    except OSError as exc:
+        raise RuntimeError("installed Raylight deployment marker is missing or invalid") from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise RuntimeError("installed Raylight deployment marker is missing or invalid")
+    return value
+
+
+def hash_input_files(paths: list[Path]) -> dict[str, str]:
+    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+
+
+def write_prompt_artifact(path: Path, prompt: dict) -> str:
+    canonical = json.dumps(prompt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    path.write_text(json.dumps(prompt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def benchmark_input_paths(mode: str) -> list[Path]:
+    workflow_name = {
+        "i2v": "Minimax_H3_I2V_Raylight.json",
+        "ref2va": "Minimax_H3_REF2VA_Raylight.json",
+    }[mode]
+    return [
+        Path(__file__).resolve(),
+        SCRIPT_ROOT / "build_workflows.py",
+        SCRIPT_ROOT / "workflow_to_api.py",
+        REPO_ROOT / "example_workflows" / workflow_name,
+    ]
+
+
 def collect_runtime_identity() -> dict:
     installed = COMFY_ROOT / "custom_nodes" / "raylight"
     source_status = _git_output(REPO_ROOT, "status", "--short")
     installed_status = _git_output(installed, "status", "--short")
-    installed_message = _git_output(installed, "log", "-1", "--format=%B")
-    match = re.search(r"runtime from ([0-9a-f]{40})", installed_message)
-    if not match:
-        raise RuntimeError("installed Raylight commit does not identify its deployed source commit")
+    marker_path = Path(_git_output(installed, "rev-parse", "--git-path", "raylight-deployed-commit"))
+    if not marker_path.is_absolute():
+        marker_path = installed / marker_path
+    deployed_source_commit = read_deployed_source_commit(marker_path)
     return {
         "source": {
             "head": _git_output(REPO_ROOT, "rev-parse", "HEAD"),
@@ -514,7 +558,7 @@ def collect_runtime_identity() -> dict:
             "status": installed_status,
             "dirty": bool(installed_status),
         },
-        "deployed_source_commit": match.group(1),
+        "deployed_source_commit": deployed_source_commit,
     }
 
 
@@ -602,6 +646,7 @@ def run_benchmark(
         "profile": profile,
         "cpu_offload": cpu_offload,
         "runtime_identity": runtime_identity,
+        "benchmark_input_hashes": hash_input_files(benchmark_input_paths(mode)),
         "started_ns": time.time_ns(),
         "runs": [],
     }
@@ -617,15 +662,18 @@ def run_benchmark(
         report["server_pid"] = process.pid
         job = None
         try:
-            job = WindowsKillOnCloseJob()
-            job.assign(process)
+            job = attach_kill_on_close_job(process)
             wait_server(base_url, process)
             template = build_api_prompt(base_url, mode, profile, cpu_offload)
+            report["api_prompt_template_sha256"] = write_prompt_artifact(
+                result_dir / "api-prompt-template.json", template
+            )
             sampler_id, _ = _one_node(template, "XFuserSamplerCustomAdvanced")
             for run_index in range(runs):
                 prompt = prepare_prompt(template, mode, run_index)
                 stdout.flush()
                 stderr.flush()
+                prompt_sha256 = write_prompt_artifact(result_dir / f"run{run_index}-prompt.json", prompt)
                 log_start = stdout_path.stat().st_size
                 samples: list[dict] = []
                 monitor_errors: list[str] = []
@@ -666,6 +714,7 @@ def run_benchmark(
                     "prompt_id": prompt_id,
                     "elapsed_seconds": elapsed,
                     "noise_seed": prompt[sampler_id]["inputs"]["noise_seed"],
+                    "api_prompt_sha256": prompt_sha256,
                     "phases": phases,
                     "resources": summarize_resources(samples),
                     "outputs": history.get("outputs", {}),
