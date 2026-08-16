@@ -501,6 +501,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
         self.is_cpu_offload = is_cpu_offload
         self._has_quantized_dtensor_shards: bool | None = None
         self.fsdp_param_dtype: torch.dtype | None = None
+        self._fsdp_full_load_ready = False
         self.patch_fsdp = patch_fsdp.__get__(self, FSDPModelPatcher)
 
     def is_dynamic(self):
@@ -532,6 +533,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
         released deterministically without relying on __del__ / gc.collect().
         """
         model = getattr(self, "model", None)
+        self._fsdp_full_load_ready = False
         if model is None:
             return
         # Break reference cycle (model.current_patcher -> self -> model)
@@ -619,6 +621,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
         n.is_cpu_offload = self.is_cpu_offload
         n._has_quantized_dtensor_shards = self._has_quantized_dtensor_shards
         n.fsdp_param_dtype = self.fsdp_param_dtype
+        n._fsdp_full_load_ready = getattr(self, "_fsdp_full_load_ready", False)
 
         return n
 
@@ -702,14 +705,20 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
                     "loaded partially {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), patch_counter)
                 )
                 self.model.model_lowvram = True
+                self._fsdp_full_load_ready = False
             else:
                 logging.info(
                     "loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load)
                 )
                 self.model.model_lowvram = False
+                self._fsdp_full_load_ready = bool(full_load)
                 if full_load:
-                    self.model.to(device_to)
-                    mem_counter = self.model_size()
+                    # FSDP owns shard placement and materializes its meta placeholders
+                    # during unshard. Moving the whole module like a regular ComfyUI
+                    # model is both unnecessary and invalid for those placeholders.
+                    logging.info("FSDP full-load budget accepted without whole-model device move")
+                    if not self.is_cpu_offload:
+                        mem_counter = self.model_size()
 
             self.model.lowvram_patch_counter += patch_counter
             self.model.device = device_to
@@ -722,6 +731,21 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
                 callback(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
 
             self.apply_hooks(self.forced_hooks, force_apply=True)
+
+    def partially_load(self, device_to, extra_memory=0, force_patch_weights=False):
+        if (
+            self._fsdp_full_load_ready
+            and not force_patch_weights
+            and self.model.current_weight_patches_uuid == self.patches_uuid
+        ):
+            with self.use_ejected(skip_and_inject_on_exit_only=True):
+                # CPU-offloaded shards are ready without being GPU-resident.
+                # Restore object patches and injections without reloading weights.
+                self.patch_model(load_weights=False)
+                self.model.current_patcher = self
+                self.apply_hooks(self.forced_hooks, force_apply=True)
+            return 0
+        return super().partially_load(device_to, extra_memory, force_patch_weights)
 
     def cleanup(self):
         self.clean_hooks()
@@ -753,6 +777,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
                     comfy.utils.set_attr_param(self.model, k, bk.weight)
 
             self.model.current_weight_patches_uuid = None
+            self._fsdp_full_load_ready = False
             self.backup.clear()
 
             if device_to is not None:
