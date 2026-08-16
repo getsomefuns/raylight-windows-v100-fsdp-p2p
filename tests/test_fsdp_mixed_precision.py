@@ -1,3 +1,4 @@
+import inspect
 import os
 import types
 import unittest
@@ -8,6 +9,8 @@ import torch
 from raylight.comfy_dist.model_patcher import (
     FSDPModelPatcher,
     _align_dense_meta_dtypes_from_state_dict,
+    _can_release_fsdp_state_dict_during_load,
+    patch_fsdp,
     select_fsdp_cpu_offload_policy,
     select_fsdp_mixed_precision_policy,
 )
@@ -91,6 +94,15 @@ class FSDPMixedPrecisionTests(unittest.TestCase):
             policy = select_fsdp_cpu_offload_policy(model_patcher, platform="win32")
 
         self.assertTrue(policy.pin_memory)
+
+    def test_quant_state_dict_is_released_incrementally_without_excluded_modules(self):
+        self.assertTrue(_can_release_fsdp_state_dict_during_load(set()))
+        self.assertIn("release_sd=release_state_dict", inspect.getsource(patch_fsdp))
+        self.assertIn("self.fsdp_state_dict = None", inspect.getsource(patch_fsdp))
+
+    def test_quant_state_dict_is_retained_when_excluded_modules_need_it_later(self):
+        self.assertFalse(_can_release_fsdp_state_dict_during_load({object()}))
+
 
     def test_lora_clone_preserves_explicit_fsdp_parameter_dtype(self):
         patcher = object.__new__(FSDPModelPatcher)

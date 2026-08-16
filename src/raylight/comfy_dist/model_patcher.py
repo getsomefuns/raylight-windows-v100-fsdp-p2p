@@ -211,6 +211,10 @@ def select_fsdp_cpu_offload_policy(model, *, platform: str | None = None):
     return CPUOffloadPolicy(pin_memory=pin_memory)
 
 
+def _can_release_fsdp_state_dict_during_load(excluded_modules) -> bool:
+    return not excluded_modules
+
+
 def _align_dense_meta_dtypes_from_state_dict(
     model: torch.nn.Module,
     full_sd: dict,
@@ -378,6 +382,7 @@ def patch_fsdp(self):
             print(f"[Rank {self.rank}] Promoted {replaced} non-floating quant params to meta placeholders before FSDP wrapping")
 
     excluded_modules = _collect_controlnet_shared_modules(diffusion_model)
+    release_state_dict = _can_release_fsdp_state_dict_during_load(excluded_modules)
     if excluded_modules:
         print(f"[Rank {self.rank}] Excluding {len(excluded_modules)} ControlNet-shared modules from FSDP: "
               f"{[n for n, m in diffusion_model.named_modules() if m in excluded_modules]}")
@@ -400,7 +405,7 @@ def patch_fsdp(self):
             device=target_device,
             strict=False,
             cpu_offload=self.is_cpu_offload,
-            release_sd=False,
+            release_sd=release_state_dict,
         )
     else:
         options = StateDictOptions(
