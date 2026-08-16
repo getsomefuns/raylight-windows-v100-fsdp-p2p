@@ -208,6 +208,7 @@ def server_environment(base: dict | None = None) -> dict:
             "RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS": "10",
             "RAYLIGHT_P2P_PROFILE": "1",
             "RAYLIGHT_RANK_DIAG": "1",
+            "RAY_DEDUP_LOGS_ALLOW_REGEX": r"\[RAYLIGHT_RANK_DIAG\]",
         }
     )
     return environment
