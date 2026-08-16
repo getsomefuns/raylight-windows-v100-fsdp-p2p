@@ -406,7 +406,7 @@
         "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "minimax_h3_green_robots.jpg",
+        "minimax_h3_ref2va_green_robots.jpg",
         "image"
       ]
     },
@@ -443,7 +443,7 @@
         "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "minimax_h3_green_robots.jpg",
+        "minimax_h3_ref2va_green_robots.jpg",
         "image"
       ]
     },

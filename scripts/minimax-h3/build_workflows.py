@@ -25,6 +25,10 @@ OUTPUT_PREFIXES = {
     "i2v": "video/MiniMax_H3_I2V_Windows_V100_FSDP_FP8",
     "ref2va": "video/MiniMax_H3_REF2VA_Windows_V100_FSDP_FP8",
 }
+INPUT_FILENAMES = {
+    "i2v": "minimax_h3_i2v_spear_portals.jpg",
+    "ref2va": "minimax_h3_ref2va_green_robots.jpg",
+}
 RAY_INITIALIZER_WIDGETS = [
     "local",
     "default",
@@ -69,7 +73,7 @@ def build_workflow(
     source_path: str | Path,
     *,
     mode: str,
-    input_filename: str,
+    input_filename: str | None = None,
     profile: str = "full",
     megapixels: float | None = None,
     duration: float | None = None,
@@ -77,6 +81,8 @@ def build_workflow(
 ) -> dict[str, Any]:
     if mode not in SOURCE_WORKFLOWS:
         raise ValueError(f"Unsupported MiniMax workflow mode: {mode}")
+    if input_filename is None:
+        input_filename = INPUT_FILENAMES[mode]
     if profile not in {"full", "smoke"}:
         raise ValueError(f"Unsupported workflow profile: {profile}")
     if not input_filename:
@@ -145,7 +151,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build MiniMax H3 Windows V100 FSDP workflows")
     parser.add_argument("--mode", choices=("i2v", "ref2va", "all"), default="all")
     parser.add_argument("--profile", choices=("full", "smoke"), default="full")
-    parser.add_argument("--input-filename", default="minimax_h3_green_robots.jpg")
+    parser.add_argument("--input-filename")
     parser.add_argument("--megapixels", type=float)
     parser.add_argument("--duration", type=float)
     parser.add_argument("--steps", type=int)

@@ -34,7 +34,6 @@ def test_i2v_builder_enables_the_supported_windows_v100_hybrid_topology():
     built = builder.build_workflow(
         source_path,
         mode="i2v",
-        input_filename="minimax_h3_green_robots.jpg",
         profile="full",
     )
 
@@ -57,7 +56,7 @@ def test_i2v_builder_enables_the_supported_windows_v100_hybrid_topology():
     assert _node(built, "RayUNETLoader")["widgets_values"][0] == (
         "minimax_h3_fl2va_pruned_fp8_scaled.safetensors"
     )
-    assert _node(built, "LoadImage")["widgets_values"][0] == "minimax_h3_green_robots.jpg"
+    assert _node(built, "LoadImage")["widgets_values"][0] == "minimax_h3_i2v_spear_portals.jpg"
     assert _node(built, "SaveVideo")["widgets_values"][0] == (
         "video/MiniMax_H3_I2V_Windows_V100_FSDP_FP8"
     )
@@ -79,7 +78,6 @@ def test_ref2va_builder_reuses_the_validation_image_without_changing_the_prompt(
     built = builder.build_workflow(
         source_path,
         mode="ref2va",
-        input_filename="minimax_h3_green_robots.jpg",
         profile="full",
     )
 
@@ -103,8 +101,8 @@ def test_ref2va_builder_reuses_the_validation_image_without_changing_the_prompt(
         "minimax_h3_ref2va_pruned_fp8_scaled.safetensors"
     )
     assert [node["widgets_values"][0] for node in _nodes(built, "LoadImage")] == [
-        "minimax_h3_green_robots.jpg",
-        "minimax_h3_green_robots.jpg",
+        "minimax_h3_ref2va_green_robots.jpg",
+        "minimax_h3_ref2va_green_robots.jpg",
     ]
     assert _node(built, "SaveVideo")["widgets_values"][0] == (
         "video/MiniMax_H3_REF2VA_Windows_V100_FSDP_FP8"
