@@ -2013,34 +2013,139 @@ def make_ray_actor_fn(world_size, parallel_dict):
             )
         return ray_actors
 
+    _init_ray_actor.raylight_world_size = world_size
+    _init_ray_actor.raylight_parallel_dict = dict(parallel_dict)
     return _init_ray_actor
+
+
+def ray_worker_actor_names(world_size, parallel_dict):
+    num_replicas = parallel_dict.get("dp_degree", 1)
+    shard_size = parallel_dict.get("shard_size", world_size)
+    use_group_process_group = bool(parallel_dict.get("use_group_process_group"))
+    if num_replicas <= 1 or not use_group_process_group:
+        return [f"RayWorker:{rank}" for rank in range(world_size)]
+    return [
+        f"RayWorker:{group_id}_{local_rank}"
+        for group_id in range(num_replicas)
+        for local_rank in range(shard_size)
+    ]
+
+
+def cleanup_named_ray_workers(world_size, parallel_dict):
+    killed = []
+    for name in ray_worker_actor_names(world_size, parallel_dict):
+        try:
+            actor = ray.get_actor(name)
+        except Exception:
+            continue
+        try:
+            ray.kill(actor, no_restart=True)
+            killed.append(actor)
+        except Exception:
+            pass
+    return killed
+
+
+def wait_for_ray_workers_exit(workers, timeout_seconds=10.0):
+    pending = list(workers)
+    deadline = time.monotonic() + timeout_seconds
+    while pending:
+        still_running = []
+        for actor in pending:
+            try:
+                remaining = max(0.05, min(0.25, deadline - time.monotonic()))
+                ray.get(actor.get_parallel_dict.remote(), timeout=remaining)
+            except ray.exceptions.GetTimeoutError:
+                still_running.append(actor)
+                continue
+            except RayActorError:
+                continue
+            except Exception as error:
+                raise RuntimeError("Unable to confirm Ray worker termination") from error
+            still_running.append(actor)
+        if not still_running:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"Timed out waiting for {len(still_running)} Ray workers to exit"
+            )
+        pending = still_running
+        time.sleep(0.05)
+
+
+def _actor_factory_topology(ray_actor_fn, fallback_world_size):
+    configured_world_size = getattr(
+        ray_actor_fn, "raylight_world_size", fallback_world_size
+    )
+    if not isinstance(configured_world_size, int):
+        configured_world_size = fallback_world_size
+    configured_parallel_dict = getattr(
+        ray_actor_fn, "raylight_parallel_dict", {}
+    )
+    if not isinstance(configured_parallel_dict, dict):
+        configured_parallel_dict = {}
+    world_size = int(configured_world_size)
+    parallel_dict = dict(configured_parallel_dict)
+    return world_size, parallel_dict
 
 
 # (TODO-Komikndr) Should be removed since FSDP can be unloaded properly
 def ensure_fresh_actors(ray_actors_init):
+    if not isinstance(ray_actors_init, list):
+        raise TypeError("RAY_ACTORS_INIT payload must be mutable for worker recovery")
     ray_actors, ray_actor_fn = ray_actors_init
-    gpu_actors = ray_actors["workers"]
-
-    needs_restart = False
+    gpu_actors = list(ray_actors.get("workers", []))
+    expected_world_size, expected_parallel_dict = _actor_factory_topology(
+        ray_actor_fn, len(gpu_actors)
+    )
     try:
-        is_loaded = ray.get(gpu_actors[0].get_is_model_loaded.remote())
-        if is_loaded:
-            needs_restart = True
-    except RayActorError:
-        # Actor already dead or crashed
-        needs_restart = True
-
-    needs_restart = False
-    if needs_restart:
+        if not gpu_actors:
+            raise RuntimeError("Ray actor payload contains no workers")
+        parallel_dicts = ray.get(
+            [actor.get_parallel_dict.remote() for actor in gpu_actors],
+            timeout=5,
+        )
+        if len(gpu_actors) != expected_world_size or len(parallel_dicts) != expected_world_size:
+            raise RuntimeError("Ray actor probe returned an incomplete result set")
+    except Exception:
         for actor in gpu_actors:
             try:
-                ray.get(actor.kill.remote())
+                ray.kill(actor, no_restart=True)
             except Exception:
-                pass  # ignore already dead
-        ray_actors = ray_actor_fn()
-        gpu_actors = ray_actors["workers"]
+                pass
+        ray_actors_init[0] = {
+            "workers": [],
+            "world_size": expected_world_size,
+        }
+        try:
+            if gpu_actors:
+                wait_for_ray_workers_exit(gpu_actors)
+            ray_actors = ray_actor_fn()
+            gpu_actors = list(ray_actors["workers"])
+            if len(gpu_actors) != expected_world_size:
+                raise RuntimeError(
+                    "Ray actor factory returned an incomplete actor set: "
+                    f"expected {expected_world_size}, got {len(gpu_actors)}"
+                )
+            parallel_dicts = ray.get(
+                [actor.get_parallel_dict.remote() for actor in gpu_actors],
+                timeout=5,
+            )
+            if len(parallel_dicts) != expected_world_size:
+                raise RuntimeError("Recovered Ray actor probe was incomplete")
+        except Exception:
+            leaked_workers = cleanup_named_ray_workers(
+                expected_world_size,
+                expected_parallel_dict,
+            )
+            if leaked_workers:
+                wait_for_ray_workers_exit(leaked_workers)
+            ray_actors_init[0] = {
+                "workers": [],
+                "world_size": expected_world_size,
+            }
+            raise
+        ray_actors_init[0] = ray_actors
 
-    parallel_dict = ray.get(gpu_actors[0].get_parallel_dict.remote())
-
-    return ray_actors, gpu_actors, parallel_dict
+    return ray_actors, gpu_actors, parallel_dicts[0]
 # Modified by the windows-v100-p2p fork for Windows Gloo, CUDA P2P routing, and worker reuse support.

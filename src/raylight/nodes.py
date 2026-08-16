@@ -21,6 +21,9 @@ from yunchang.kernels import AttnType
 from .distributed_worker.ray_worker import (
     make_ray_actor_fn,
     ensure_fresh_actors,
+    wait_for_ray_workers_exit,
+    cleanup_named_ray_workers,
+    _actor_factory_topology,
     ray_nccl_tester,
 )
 from .distributed_worker.parallel_group_manager import validate_hybrid_topology
@@ -333,17 +336,74 @@ def _fsdp_model_transition(*, already_loaded: bool, model_loaded: bool) -> str:
     return "load"
 
 
+def _fsdp_actor_model_transition(gpu_actors, unet_path, model_options) -> str:
+    if not gpu_actors:
+        return "recycle"
+    try:
+        exact_matches = ray.get(
+            [
+                actor.check_model_loaded.remote(unet_path, model_options)
+                for actor in gpu_actors
+            ]
+        )
+        loaded_states = ray.get(
+            [actor.get_is_model_loaded.remote() for actor in gpu_actors]
+        )
+    except Exception:
+        return "recycle"
+    if len(exact_matches) != len(gpu_actors) or len(loaded_states) != len(gpu_actors):
+        return "recycle"
+    return _fsdp_model_transition(
+        already_loaded=all(exact_matches),
+        model_loaded=any(loaded_states),
+    )
+
+
+def _wait_for_ray_workers_exit(workers, timeout_seconds: float = 10.0):
+    return wait_for_ray_workers_exit(workers, timeout_seconds=timeout_seconds)
+
+
+def _cleanup_named_ray_workers(ray_actor_fn, fallback_world_size: int):
+    world_size, parallel_dict = _actor_factory_topology(
+        ray_actor_fn, fallback_world_size
+    )
+    return cleanup_named_ray_workers(world_size, parallel_dict)
+
+
 def _recycle_ray_actor_payload(ray_actors_init):
+    global _ACTIVE_RAY_SESSION
     if not isinstance(ray_actors_init, list):
         raise TypeError("RAY_ACTORS_INIT payload must be mutable for worker recycling")
     ray_actors, ray_actor_fn = ray_actors_init
     old_workers = list(ray_actors["workers"])
+    cached_key = None
+    if _ACTIVE_RAY_SESSION is not None and _ACTIVE_RAY_SESSION[1] is ray_actors_init:
+        cached_key = _ACTIVE_RAY_SESSION[0]
     for actor in old_workers:
         ray.kill(actor, no_restart=True)
 
-    ray_actors = ray_actor_fn()
-    gpu_actors = ray_actors["workers"]
+    ray_actors_init[0] = {"workers": []}
+    _clear_active_ray_session()
+    try:
+        _wait_for_ray_workers_exit(old_workers)
+        ray_actors = ray_actor_fn()
+        gpu_actors = ray_actors["workers"]
+        if len(gpu_actors) != len(old_workers):
+            raise RuntimeError(
+                "Ray worker factory returned an incomplete actor set: "
+                f"expected {len(old_workers)}, got {len(gpu_actors)}"
+            )
+    except Exception:
+        leaked_workers = _cleanup_named_ray_workers(ray_actor_fn, len(old_workers))
+        if leaked_workers:
+            _wait_for_ray_workers_exit(leaked_workers)
+        ray_actors_init[0] = {"workers": []}
+        _clear_active_ray_session()
+        raise
+
     ray_actors_init[0] = ray_actors
+    if cached_key is not None:
+        _cache_active_ray_session(cached_key, ray_actors_init)
     return ray_actors, gpu_actors
 
 
@@ -1062,16 +1122,11 @@ class RayUNETLoader:
             num_replicas = parallel_dict.get("dp_degree", 1)
             shard_size = parallel_dict.get("shard_size", len(gpu_actors))
 
-            # Reuse any unchanged FSDP model: if the first worker already has
-            # this exact model + LoRA combo, all workers do (loaded together).
+            # Reuse only when every worker confirms the exact model + LoRA combo;
+            # any rank mismatch or query failure triggers full actor recycling.
             # Skip the expensive reload — handles MCP re-creating the same
             # workflow and ComfyUI re-executing RayUNETLoader with identical inputs.
-            already_loaded = ray.get(gpu_actors[0].check_model_loaded.remote(unet_path, model_options))
-            model_loaded = ray.get(gpu_actors[0].get_is_model_loaded.remote())
-            transition = _fsdp_model_transition(
-                already_loaded=already_loaded,
-                model_loaded=model_loaded,
-            )
+            transition = _fsdp_actor_model_transition(gpu_actors, unet_path, model_options)
             if transition == "reuse":
                 return (ray_actors,)
             if transition == "recycle":

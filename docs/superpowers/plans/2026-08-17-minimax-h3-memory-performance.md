@@ -13,6 +13,8 @@ Keep the accepted full I2V and REF2VA workflows correct while making repeated in
 
 ## Phase O1: checkpoint-aware worker recycling
 
+**Status: complete and accepted on 2026-08-17.** The REF2VA-to-I2V live switch replaced both worker PIDs, reduced committed memory to about 51.1 GiB before loading the new checkpoint, and limited the transition peak to 127.45 GiB. A changed-seed I2V warm run reused both replacement PIDs without reloading or rewrapping the checkpoint. Full evidence is recorded in `docs/testing/minimax-h3/CHECKPOINT_RECYCLING_2026-08-17.md`.
+
 1. Add a worker query that returns the active model key without exposing checkpoint contents.
 2. In `RayUNETLoader`, retain the current fast path when all workers already hold the requested checkpoint and LoRA/options signature.
 3. When live workers hold a different checkpoint, retire the complete actor set and recreate it through the existing initializer factory before loading the new model.
@@ -29,6 +31,8 @@ Keep the accepted full I2V and REF2VA workflows correct while making repeated in
 - Media has valid video/audio streams, no black interval and temporal variation.
 
 ## Phase O2: repeatable cold/warm benchmark
+
+**Status: active.** O1 provides the stable worker lifecycle required for meaningful repeated-run measurements.
 
 1. Record one cold and two warm runs for the selected I2V profile.
 2. Record one cold and two warm runs for the selected REF2VA development profile; use one full REF2VA release run after optimization because the full profile is expensive.

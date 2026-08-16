@@ -4,8 +4,10 @@ import sys
 import unittest
 from unittest import mock
 
+from tests.path_helpers import comfy_root
 
-COMFY_ROOT = Path(__file__).parents[3]
+
+COMFY_ROOT = comfy_root()
 RAYLIGHT_SRC = Path(__file__).parents[1] / "src"
 
 
@@ -86,7 +88,10 @@ class RaySessionCacheTests(unittest.TestCase):
         actor_fn = mock.Mock(return_value=new_actors)
         payload = [{"workers": old_workers}, actor_fn]
 
-        with mock.patch.object(self.nodes.ray, "kill") as kill:
+        with (
+            mock.patch.object(self.nodes.ray, "kill") as kill,
+            mock.patch.object(self.nodes, "_wait_for_ray_workers_exit"),
+        ):
             ray_actors, gpu_actors = self.nodes._recycle_ray_actor_payload(payload)
 
         self.assertIs(ray_actors, new_actors)

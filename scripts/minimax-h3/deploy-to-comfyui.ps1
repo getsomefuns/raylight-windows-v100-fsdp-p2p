@@ -11,17 +11,38 @@ if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
     $SourceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 }
 
+function Invoke-GitNative {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $lines = @(& git.exe -C $Root @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Lines = @($lines | ForEach-Object { [string]$_ })
+    }
+}
+
 function Invoke-GitLines {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
-    $lines = @(& git.exe -C $Root @Arguments 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "git $($Arguments -join ' ') failed in ${Root}: $($lines -join [Environment]::NewLine)"
+    $result = Invoke-GitNative -Root $Root -Arguments $Arguments
+    if ($result.ExitCode -ne 0) {
+        throw "git $($Arguments -join ' ') failed in ${Root}: $($result.Lines -join [Environment]::NewLine)"
     }
-    return @($lines | ForEach-Object { [string]$_ })
+    return @($result.Lines)
 }
 
 function Resolve-GitRoot {
@@ -145,24 +166,23 @@ if ($PSCmdlet.ShouldProcess($markerPath, "Record deployed source commit")) {
 
 Write-Host "Deployed Raylight runtime from $sourceCommit"
 $pathspec = @("__init__.py", "icon.png", "src")
-$gitOutput = @(& git.exe -C $destination add -A -- @pathspec 2>&1)
-if ($LASTEXITCODE -ne 0) {
-    throw "Unable to stage deployed runtime files: $($gitOutput -join [Environment]::NewLine)"
+$gitResult = Invoke-GitNative -Root $destination -Arguments (@("add", "-A", "--") + $pathspec)
+if ($gitResult.ExitCode -ne 0) {
+    throw "Unable to stage deployed runtime files: $($gitResult.Lines -join [Environment]::NewLine)"
 }
 
-& git.exe -C $destination diff --cached --quiet -- @pathspec
-$stagedDiffExit = $LASTEXITCODE
+$gitResult = Invoke-GitNative -Root $destination -Arguments (@("diff", "--cached", "--quiet", "--") + $pathspec)
+$stagedDiffExit = $gitResult.ExitCode
 if ($stagedDiffExit -eq 1) {
-    $gitOutput = @(
-        & git.exe -C $destination `
-            -c "user.name=Raylight Runtime Deployer" `
-            -c "user.email=raylight-runtime@localhost" `
-            commit --no-verify `
-            -m "deploy: runtime from $sourceCommit" `
-            -- @pathspec 2>&1
-    )
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to commit deployed runtime files: $($gitOutput -join [Environment]::NewLine)"
+    $gitResult = Invoke-GitNative -Root $destination -Arguments (@(
+        "-c", "user.name=Raylight Runtime Deployer",
+        "-c", "user.email=raylight-runtime@localhost",
+        "commit", "--no-verify",
+        "-m", "deploy: runtime from $sourceCommit",
+        "--"
+    ) + $pathspec)
+    if ($gitResult.ExitCode -ne 0) {
+        throw "Unable to commit deployed runtime files: $($gitResult.Lines -join [Environment]::NewLine)"
     }
 }
 elseif ($stagedDiffExit -ne 0) {

@@ -141,3 +141,35 @@ def test_deploy_applies_only_runtime_files_and_leaves_destination_clean(tmp_path
     assert run("git", "status", "--short", cwd=destination).stdout == ""
     marker = destination / ".git" / "raylight-deployed-commit"
     assert marker.read_text(encoding="utf-8-sig").strip() == source_commit
+
+
+def test_deploy_does_not_treat_git_line_ending_warning_as_failure(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    make_repo(source)
+    make_repo(destination)
+    assert run("git", "config", "core.autocrlf", "true", cwd=destination).returncode == 0
+
+    runtime = source / "src" / "raylight" / "runtime.py"
+    runtime.write_bytes(b"SOURCE_RUNTIME = True\n")
+    assert run("git", "add", ".", cwd=source).returncode == 0
+    assert run("git", "commit", "-m", "source LF update", cwd=source).returncode == 0
+    source_commit = run("git", "rev-parse", "HEAD", cwd=source).stdout.strip()
+
+    result = run(
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(DEPLOY_SCRIPT),
+        "-SourceRoot",
+        str(source),
+        "-DestinationRoot",
+        str(destination),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert run("git", "status", "--short", cwd=destination).stdout == ""
+    marker = destination / ".git" / "raylight-deployed-commit"
+    assert marker.read_text(encoding="utf-8-sig").strip() == source_commit

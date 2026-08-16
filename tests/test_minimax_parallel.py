@@ -1,10 +1,12 @@
 import ast
 from pathlib import Path
 
+from tests.path_helpers import comfy_root, repo_root
 
-ROOT = Path(__file__).parents[3]
+
+ROOT = comfy_root()
 CORE = ROOT / "comfy/ldm/minimax/model.py"
-RAYLIGHT = ROOT / "custom_nodes/raylight/src/raylight/diffusion_models/minimax/xdit_context_parallel.py"
+RAYLIGHT = repo_root() / "src/raylight/diffusion_models/minimax/xdit_context_parallel.py"
 
 
 def _module_symbols(path):

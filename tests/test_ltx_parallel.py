@@ -1,9 +1,10 @@
 import ast
 from pathlib import Path
 
+from tests.path_helpers import repo_root
 
-ROOT = Path(__file__).parents[3]
-RAYLIGHT = ROOT / "custom_nodes/raylight/src/raylight/diffusion_models/lightricks/xdit_context_parallel.py"
+
+RAYLIGHT = repo_root() / "src/raylight/diffusion_models/lightricks/xdit_context_parallel.py"
 
 
 def _function(path, function_name):

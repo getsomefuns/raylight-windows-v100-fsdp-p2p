@@ -6,9 +6,11 @@ from pathlib import Path
 
 import torch
 
+from tests.path_helpers import comfy_root, repo_root
 
-ROOT = Path(__file__).parents[3]
-RAYLIGHT = ROOT / "custom_nodes/raylight/src/raylight"
+
+ROOT = comfy_root()
+RAYLIGHT = repo_root() / "src/raylight"
 
 
 def _function(path, function_name, class_name=None):

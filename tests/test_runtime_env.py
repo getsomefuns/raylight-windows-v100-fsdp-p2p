@@ -4,8 +4,10 @@ import sys
 import unittest
 from unittest import mock
 
+from tests.path_helpers import comfy_root
 
-COMFY_ROOT = Path(__file__).parents[3]
+
+COMFY_ROOT = comfy_root()
 RAYLIGHT_SRC = Path(__file__).parents[1] / "src"
 
 

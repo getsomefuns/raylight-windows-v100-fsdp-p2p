@@ -39,10 +39,12 @@ This directory contains the maintained validation summary for MiniMax H3 on nati
 | REF2VA smoke validation | Complete | 608x352, 56-frame, 12-step cold run passes in 268.85 s; preprocessing cleanup barrier prevents rank-0 startup OOM |
 | I2V full validation | Complete | 640x640, 56-frame, 20-step run passes in 642.01 s with FSDP CPU offload |
 | REF2VA full validation | Complete | 864x480, 124-frame, 20-step cold run passes in 1324.98 s with FSDP CPU offload |
+| Checkpoint lifecycle validation | Complete | Different checkpoints recycle both workers and reclaim OS commit; unchanged checkpoints reuse the same PIDs and FSDP shards |
 | INT8 comparison | Pending | Run only after FP8 correctness |
-| Final optimization | In progress | Recycle workers on checkpoint changes, then compare base and official Turbo LoRA variants |
+| Repeatable cold/warm benchmark | In progress | Measure same-checkpoint stability after checkpoint-aware worker recycling passed |
+| Final optimization | Pending | Compare base and official Turbo LoRA variants after repeatable benchmark acceptance |
 
-Accepted runs: [I2V smoke validation](I2V_SMOKE_2026-08-17.md), [REF2VA smoke validation](REF2VA_SMOKE_2026-08-17.md), and [full I2V/REF2VA validation](FULL_WORKFLOWS_2026-08-17.md). MiniMax H3 requires `--reserve-vram 2` in addition to `--disable-cuda-malloc` on this stack. Full workflows default to FSDP CPU offload; smoke workflows keep it disabled. REF2VA also requires the preprocessing-to-worker cleanup barrier recorded in the REF2VA report.
+Accepted runs: [I2V smoke validation](I2V_SMOKE_2026-08-17.md), [REF2VA smoke validation](REF2VA_SMOKE_2026-08-17.md), [full I2V/REF2VA validation](FULL_WORKFLOWS_2026-08-17.md), and [checkpoint recycling validation](CHECKPOINT_RECYCLING_2026-08-17.md). MiniMax H3 requires `--reserve-vram 2` in addition to `--disable-cuda-malloc` on this stack. Full workflows default to FSDP CPU offload; smoke workflows keep it disabled. REF2VA also requires the preprocessing-to-worker cleanup barrier recorded in the REF2VA report.
 
 ## Evidence policy
 
