@@ -65,6 +65,54 @@ class RaySessionCacheTests(unittest.TestCase):
         self.assertIsNone(reused)
         self.assertIsNone(self.nodes._ACTIVE_RAY_SESSION)
 
+    def test_fsdp_model_transition_reuses_only_an_exact_active_model(self):
+        self.assertEqual(
+            self.nodes._fsdp_model_transition(already_loaded=True, model_loaded=True),
+            "reuse",
+        )
+        self.assertEqual(
+            self.nodes._fsdp_model_transition(already_loaded=False, model_loaded=True),
+            "recycle",
+        )
+        self.assertEqual(
+            self.nodes._fsdp_model_transition(already_loaded=False, model_loaded=False),
+            "load",
+        )
+
+    def test_recycle_replaces_cached_payload_workers(self):
+        old_workers = [object(), object()]
+        new_workers = [object(), object()]
+        new_actors = {"workers": new_workers}
+        actor_fn = mock.Mock(return_value=new_actors)
+        payload = [{"workers": old_workers}, actor_fn]
+
+        with mock.patch.object(self.nodes.ray, "kill") as kill:
+            ray_actors, gpu_actors = self.nodes._recycle_ray_actor_payload(payload)
+
+        self.assertIs(ray_actors, new_actors)
+        self.assertIs(gpu_actors, new_workers)
+        self.assertIs(payload[0], new_actors)
+        actor_fn.assert_called_once_with()
+        self.assertEqual(kill.call_count, 2)
+        kill.assert_has_calls(
+            [
+                mock.call(old_workers[0], no_restart=True),
+                mock.call(old_workers[1], no_restart=True),
+            ]
+        )
+
+    def test_recycle_rejects_immutable_payload_before_killing_workers(self):
+        old_workers = [object(), object()]
+        actor_fn = mock.Mock()
+        payload = ({"workers": old_workers}, actor_fn)
+
+        with mock.patch.object(self.nodes.ray, "kill") as kill:
+            with self.assertRaisesRegex(TypeError, "must be mutable"):
+                self.nodes._recycle_ray_actor_payload(payload)
+
+        kill.assert_not_called()
+        actor_fn.assert_not_called()
+
     def test_session_key_changes_with_p2p_environment(self):
         base = {"GPU": 2, "parallel": {"ulysses_degree": 2}}
         with mock.patch.dict(os.environ, {"RAYLIGHT_WINDOWS_P2P": "1"}, clear=False):

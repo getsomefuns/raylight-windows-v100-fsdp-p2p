@@ -325,6 +325,28 @@ def _reuse_active_ray_session(session_key: str, expected_world_size: int):
     return payload
 
 
+def _fsdp_model_transition(*, already_loaded: bool, model_loaded: bool) -> str:
+    if already_loaded:
+        return "reuse"
+    if model_loaded:
+        return "recycle"
+    return "load"
+
+
+def _recycle_ray_actor_payload(ray_actors_init):
+    if not isinstance(ray_actors_init, list):
+        raise TypeError("RAY_ACTORS_INIT payload must be mutable for worker recycling")
+    ray_actors, ray_actor_fn = ray_actors_init
+    old_workers = list(ray_actors["workers"])
+    for actor in old_workers:
+        ray.kill(actor, no_restart=True)
+
+    ray_actors = ray_actor_fn()
+    gpu_actors = ray_actors["workers"]
+    ray_actors_init[0] = ray_actors
+    return ray_actors, gpu_actors
+
+
 def _quant_metadata_checker(unet_path: str) -> bool:
     try:
         from safetensors import safe_open
@@ -1045,8 +1067,23 @@ class RayUNETLoader:
             # Skip the expensive reload — handles MCP re-creating the same
             # workflow and ComfyUI re-executing RayUNETLoader with identical inputs.
             already_loaded = ray.get(gpu_actors[0].check_model_loaded.remote(unet_path, model_options))
-            if already_loaded:
+            model_loaded = ray.get(gpu_actors[0].get_is_model_loaded.remote())
+            transition = _fsdp_model_transition(
+                already_loaded=already_loaded,
+                model_loaded=model_loaded,
+            )
+            if transition == "reuse":
                 return (ray_actors,)
+            if transition == "recycle":
+                print("[Raylight] Diffusion checkpoint changed; recycling Ray workers before loading")
+                ray_actors, gpu_actors = _recycle_ray_actor_payload(ray_actors_init)
+                ray.get([actor.set_lora_list.remote(lora) for actor in gpu_actors])
+                ray.get(
+                    [
+                        actor.set_parallel_dict.remote(parallel_dict)
+                        for actor in gpu_actors
+                    ]
+                )
 
             if num_replicas <= 1:
                 # Single replica — all GPUs share one FSDP-sharded model
