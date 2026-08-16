@@ -54,6 +54,12 @@ function Test-SafetensorsHeader {
     }
 }
 
+function Get-Sha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Model manifest not found: $ManifestPath"
 }
@@ -85,7 +91,15 @@ $files = foreach ($model in $selected) {
         $partBytes = [int64](Get-Item -LiteralPath $partPath).Length
     }
     $expectedBytes = [int64]$model.expected_bytes
-    $status = if ($exists -and $size -eq $expectedBytes) {
+    $expectedSha256 = $null
+    if ($model.PSObject.Properties.Name -contains "sha256") {
+        $expectedSha256 = ([string]$model.sha256).ToLowerInvariant()
+    }
+    $actualSha256 = $null
+    if ($exists -and $size -eq $expectedBytes -and $expectedSha256) {
+        $actualSha256 = Get-Sha256 -Path $targetPath
+    }
+    $status = if ($exists -and $size -eq $expectedBytes -and (-not $expectedSha256 -or $actualSha256 -eq $expectedSha256)) {
         "complete"
     }
     elseif ($exists) {
@@ -101,10 +115,12 @@ $files = foreach ($model in $selected) {
         id = [string]$model.id
         relative_path = $relativePath
         expected_bytes = $expectedBytes
+        expected_sha256 = $expectedSha256
         url = "$baseUrl/$relativePath"
         target_path = $targetPath
         part_path = $partPath
         size_bytes = $size
+        actual_sha256 = $actualSha256
         part_bytes = $partBytes
         status = $status
     }
@@ -147,7 +163,7 @@ foreach ($file in $files) {
         continue
     }
     if ($file.status -eq "invalid") {
-        throw "Existing final file has the wrong size; refusing to overwrite: $($file.target_path)"
+        throw "Existing final file has the wrong size or SHA-256; refusing to overwrite: $($file.target_path)"
     }
     if ($file.part_bytes -ne $null -and [int64]$file.part_bytes -gt [int64]$file.expected_bytes) {
         throw "Partial file is larger than expected; remove or inspect it manually: $($file.part_path)"
@@ -167,6 +183,12 @@ foreach ($file in $files) {
             throw "Downloaded size mismatch for $($file.relative_path): expected $($file.expected_bytes), got $downloadedBytes"
         }
         $null = Test-SafetensorsHeader -Path $file.part_path
+        if ($file.expected_sha256) {
+            $downloadedSha256 = Get-Sha256 -Path $file.part_path
+            if ($downloadedSha256 -ne $file.expected_sha256) {
+                throw "Downloaded SHA-256 mismatch for $($file.relative_path): expected $($file.expected_sha256), got $downloadedSha256"
+            }
+        }
         Move-Item -LiteralPath $file.part_path -Destination $file.target_path
         Write-Host "Validated: $($file.target_path)"
     }

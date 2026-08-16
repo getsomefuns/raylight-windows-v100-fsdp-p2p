@@ -47,7 +47,7 @@ def test_i2v_fp8_plan_uses_only_official_files_and_exact_remote_sizes(tmp_path):
     ]
     assert all(
         item["url"]
-        == "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/" + item["relative_path"]
+        == "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/cec22ac7545ee166df6af79fda42bd41558f8558/" + item["relative_path"]
         for item in plan["files"]
     )
     assert all(item["status"] == "missing" for item in plan["files"])

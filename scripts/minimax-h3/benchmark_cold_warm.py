@@ -25,6 +25,7 @@ import psutil
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_ROOT.parents[1]
+MODEL_MANIFEST = SCRIPT_ROOT / "models.json"
 COMFY_ROOT = Path(os.environ.get("RAYLIGHT_COMFY_ROOT", REPO_ROOT.parent / "ComfyUI"))
 ENV_ROOT = COMFY_ROOT.parent
 PYTHON = Path(os.environ.get("RAYLIGHT_PYTHON", ENV_ROOT / "Python310" / "python.exe"))
@@ -161,12 +162,56 @@ def validate_prompt(prompt: dict) -> None:
     _one_node(prompt, "SaveVideo")
 
 
-def prepare_prompt(template: dict, mode: str, run_index: int) -> dict:
+def configure_prompt_variant(
+    prompt: dict,
+    *,
+    lora_name: str | None = None,
+    steps: int | None = None,
+) -> dict:
+    if steps is not None:
+        if steps < 1:
+            raise ValueError("steps must be positive")
+        _, scheduler = _one_node(prompt, "RayBasicScheduler")
+        scheduler["inputs"]["steps"] = int(steps)
+
+    if lora_name is not None:
+        if not lora_name or Path(lora_name).name != lora_name:
+            raise ValueError("lora_name must be a filename inside the ComfyUI loras directory")
+        existing = _nodes(prompt, "RayLoraLoader")
+        if len(existing) > 1:
+            raise ValueError(f"expected at most one RayLoraLoader, found {len(existing)}")
+        if existing:
+            lora_id, lora_node = existing[0]
+        else:
+            numeric_ids = [int(node_id) for node_id in prompt if str(node_id).isdigit()]
+            lora_id = str(max(numeric_ids, default=0) + 1)
+            lora_node = {"class_type": "RayLoraLoader", "inputs": {}}
+            prompt[lora_id] = lora_node
+        lora_node["inputs"] = {"lora_name": lora_name, "strength_model": 1.0}
+        _, unet = _one_node(prompt, "RayUNETLoader")
+        unet["inputs"]["lora"] = [lora_id, 0]
+    return prompt
+
+
+def prepare_prompt(
+    template: dict,
+    mode: str,
+    run_index: int,
+    *,
+    lora_name: str | None = None,
+    steps: int | None = None,
+    output_tag: str | None = None,
+) -> dict:
     prompt = copy.deepcopy(template)
+    configure_prompt_variant(prompt, lora_name=lora_name, steps=steps)
     _, sampler = _one_node(prompt, "XFuserSamplerCustomAdvanced")
     sampler["inputs"]["noise_seed"] = int(sampler["inputs"]["noise_seed"]) + run_index * SEED_STRIDE
     _, save_video = _one_node(prompt, "SaveVideo")
-    save_video["inputs"]["filename_prefix"] = f"video/raylight_o2/minimax_h3_{mode}_run{run_index}"
+    output_group = "raylight_o3" if output_tag else "raylight_o2"
+    variant = f"_{output_tag}" if output_tag else ""
+    save_video["inputs"]["filename_prefix"] = (
+        f"video/{output_group}/minimax_h3_{mode}{variant}_run{run_index}"
+    )
     validate_prompt(prompt)
     return prompt
 
@@ -543,8 +588,16 @@ def read_deployed_source_commit(marker_path: Path) -> str:
     return value
 
 
+def sha256_file(path: Path, chunk_bytes: int = 8 * 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_bytes):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def hash_input_files(paths: list[Path]) -> dict[str, str]:
-    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    return {str(path): sha256_file(path) for path in paths}
 
 
 def write_prompt_artifact(path: Path, prompt: dict) -> str:
@@ -564,6 +617,58 @@ def benchmark_input_paths(mode: str) -> list[Path]:
         SCRIPT_ROOT / "workflow_to_api.py",
         REPO_ROOT / "example_workflows" / workflow_name,
     ]
+
+
+def resolve_turbo_variant(variant_id: str, mode: str, requested_steps: int | None) -> dict:
+    manifest = json.loads(MODEL_MANIFEST.read_text(encoding="utf-8"))
+    matches = [
+        item
+        for item in manifest.get("models", [])
+        if item.get("id") == variant_id and "turbo" in item.get("groups", [])
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"unknown Turbo variant: {variant_id}")
+    item = matches[0]
+    if item.get("mode") != mode:
+        raise ValueError(
+            f"Turbo variant {variant_id} mode is {item.get('mode')}, not requested mode {mode}"
+        )
+    official_steps = int(item["steps"])
+    if requested_steps is not None and int(requested_steps) != official_steps:
+        raise ValueError(
+            f"Turbo variant {variant_id} requires {official_steps} steps, not {requested_steps}"
+        )
+    relative_path = Path(item["relative_path"])
+    if relative_path.parent.as_posix() != "loras":
+        raise ValueError(f"Turbo variant {variant_id} has an invalid LoRA path")
+    return {
+        "id": variant_id,
+        "lora_name": relative_path.name,
+        "steps": official_steps,
+        "expected_bytes": int(item["expected_bytes"]),
+        "sha256": str(item["sha256"]).lower(),
+        "repository": manifest["repository"],
+        "revision": manifest["revision"],
+    }
+
+
+def lora_asset_identity(lora_name: str | None) -> dict | None:
+    if lora_name is None:
+        return None
+    if not lora_name or Path(lora_name).name != lora_name:
+        raise ValueError("lora_name must be a filename inside the ComfyUI loras directory")
+    lora_root = (COMFY_ROOT / "models" / "loras").resolve()
+    path = (lora_root / lora_name).resolve()
+    if path.parent != lora_root:
+        raise ValueError("lora_name escapes the ComfyUI loras directory")
+    if not path.is_file():
+        raise FileNotFoundError(f"Turbo LoRA not found: {path}")
+    return {
+        "name": lora_name,
+        "path": str(path),
+        "size_bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
 
 
 def collect_runtime_identity() -> dict:
@@ -640,9 +745,20 @@ def run_benchmark(
     port: int,
     timeout: int,
     cpu_offload: bool,
+    turbo_variant: str | None = None,
+    steps: int | None = None,
+    output_tag: str | None = None,
 ) -> Path:
+    turbo_spec = resolve_turbo_variant(turbo_variant, mode, steps) if turbo_variant else None
+    lora_name = turbo_spec["lora_name"] if turbo_spec else None
+    if turbo_spec:
+        steps = turbo_spec["steps"]
+        output_tag = output_tag or turbo_spec["id"]
+    if output_tag is not None and not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", output_tag):
+        raise ValueError("output_tag must use lowercase letters, digits, underscores or hyphens")
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    result_dir = RESULT_ROOT / f"{timestamp}-{mode}-{profile}"
+    tag_suffix = f"-{output_tag}" if output_tag else ""
+    result_dir = RESULT_ROOT / f"{timestamp}-{mode}-{profile}{tag_suffix}"
     result_dir.mkdir(parents=True, exist_ok=False)
     stdout_path = result_dir / "comfyui.out.log"
     stderr_path = result_dir / "comfyui.err.log"
@@ -650,6 +766,14 @@ def run_benchmark(
     base_url = f"http://127.0.0.1:{port}"
     runtime_identity = collect_runtime_identity()
     validate_runtime_identity(runtime_identity)
+    lora_identity = lora_asset_identity(lora_name)
+    if turbo_spec and (
+        lora_identity["size_bytes"] != turbo_spec["expected_bytes"]
+        or lora_identity["sha256"] != turbo_spec["sha256"]
+    ):
+        raise RuntimeError(
+            f"Turbo LoRA does not match pinned manifest identity: {lora_identity['path']}"
+        )
     try:
         request_json(f"{base_url}/system_stats", timeout=2)
     except Exception:
@@ -672,6 +796,10 @@ def run_benchmark(
         "mode": mode,
         "profile": profile,
         "cpu_offload": cpu_offload,
+        "variant": turbo_variant or output_tag or "base",
+        "turbo": turbo_spec,
+        "steps": steps,
+        "lora": lora_identity,
         "runtime_identity": runtime_identity,
         "benchmark_input_hashes": hash_input_files(benchmark_input_paths(mode)),
         "started_ns": time.time_ns(),
@@ -692,12 +820,20 @@ def run_benchmark(
             job = attach_kill_on_close_job(process)
             wait_server(base_url, process)
             template = build_api_prompt(base_url, mode, profile, cpu_offload)
+            configure_prompt_variant(template, lora_name=lora_name, steps=steps)
             report["api_prompt_template_sha256"] = write_prompt_artifact(
                 result_dir / "api-prompt-template.json", template
             )
             sampler_id, _ = _one_node(template, "XFuserSamplerCustomAdvanced")
             for run_index in range(runs):
-                prompt = prepare_prompt(template, mode, run_index)
+                prompt = prepare_prompt(
+                    template,
+                    mode,
+                    run_index,
+                    lora_name=lora_name,
+                    steps=steps,
+                    output_tag=output_tag,
+                )
                 stdout.flush()
                 stderr.flush()
                 prompt_sha256 = write_prompt_artifact(result_dir / f"run{run_index}-prompt.json", prompt)
@@ -780,9 +916,14 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8188)
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--cpu-offload", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--turbo-variant")
+    parser.add_argument("--steps", type=int)
+    parser.add_argument("--output-tag")
     args = parser.parse_args()
     if args.runs < 1:
         raise ValueError("runs must be positive")
+    if args.steps is not None and args.steps < 1:
+        raise ValueError("steps must be positive")
     print(
         run_benchmark(
             mode=args.mode,
@@ -791,6 +932,9 @@ def main() -> int:
             port=args.port,
             timeout=args.timeout,
             cpu_offload=args.cpu_offload,
+            turbo_variant=args.turbo_variant,
+            steps=args.steps,
+            output_tag=args.output_tag,
         )
     )
     return 0

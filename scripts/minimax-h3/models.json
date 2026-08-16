@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "repository": "https://huggingface.co/Comfy-Org/MiniMax-H3",
-  "revision": "main",
+  "revision": "cec22ac7545ee166df6af79fda42bd41558f8558",
   "models": [
     {
       "id": "fl2va-fp8",
@@ -63,6 +63,9 @@
       "id": "fl2v-turbo-4step",
       "relative_path": "loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
       "expected_bytes": 1956192992,
+      "sha256": "c396a9a06f58399e9df9754b18299818d84a2ddd371724ba48fe4a41221437dc",
+      "mode": "i2v",
+      "steps": 4,
       "groups": [
         "turbo"
       ]
@@ -71,6 +74,9 @@
       "id": "fl2v-turbo-8step",
       "relative_path": "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
       "expected_bytes": 1956193000,
+      "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
+      "mode": "i2v",
+      "steps": 8,
       "groups": [
         "turbo"
       ]
@@ -79,6 +85,9 @@
       "id": "ref2v-turbo-4step",
       "relative_path": "loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
       "expected_bytes": 1956193000,
+      "sha256": "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c",
+      "mode": "ref2va",
+      "steps": 4,
       "groups": [
         "turbo"
       ]
