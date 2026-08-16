@@ -42,7 +42,7 @@ RAY_INITIALIZER_WIDGETS = [
     True,
     False,
     "TORCH_EFFICIENT",
-    False,
+    True,
     True,
 ]
 SMOKE_DEFAULTS = {
@@ -69,6 +69,68 @@ def _set_first_widget(node: dict[str, Any], value: Any) -> None:
     widgets[0] = value
 
 
+def _ensure_conditioning_link(workflow: dict[str, Any], mode: str) -> None:
+    source_type = "MiniMaxH3ImageToVideo" if mode == "i2v" else "MiniMaxH3ReferenceToVideo"
+    source = _one_node(workflow, source_type)
+    guider = _one_node(workflow, "RayBasicGuider")
+    source_slot = next(i for i, output in enumerate(source["outputs"]) if output["name"] == "positive")
+    target_slot = next(i for i, input_ in enumerate(guider["inputs"]) if input_["name"] == "conditioning")
+    source_output = source["outputs"][source_slot]
+    target_input = guider["inputs"][target_slot]
+    current_link_id = target_input.get("link")
+
+    if current_link_id is not None:
+        expected = [current_link_id, source["id"], source_slot, guider["id"], target_slot, "CONDITIONING"]
+        if expected not in workflow["links"]:
+            raise ValueError("RayBasicGuider conditioning link does not come from the MiniMax positive output")
+        return
+
+    existing_link_ids = [link[0] for link in workflow.get("links", [])]
+    link_id = max([int(workflow.get("last_link_id", 0)), *existing_link_ids], default=0) + 1
+    workflow["last_link_id"] = link_id
+    workflow.setdefault("links", []).append(
+        [link_id, source["id"], source_slot, guider["id"], target_slot, "CONDITIONING"]
+    )
+    target_input["link"] = link_id
+    source_output.setdefault("links", []).append(link_id)
+
+
+def _ensure_initializer_wait_link(workflow: dict[str, Any], mode: str) -> None:
+    source_type = "MiniMaxH3ImageToVideo" if mode == "i2v" else "MiniMaxH3ReferenceToVideo"
+    source = _one_node(workflow, source_type)
+    initializer = _one_node(workflow, "RayInitializer")
+    source_slot = next(i for i, output in enumerate(source["outputs"]) if output["name"] == "positive")
+    source_output = source["outputs"][source_slot]
+
+    inputs = initializer.setdefault("inputs", [])
+    wait_slots = [i for i, input_ in enumerate(inputs) if input_["name"] == "wait_for"]
+    if len(wait_slots) > 1:
+        raise ValueError("RayInitializer has more than one wait_for input")
+    if wait_slots:
+        target_slot = wait_slots[0]
+        target_input = inputs[target_slot]
+    else:
+        target_slot = len(inputs)
+        target_input = {"name": "wait_for", "type": "*", "link": None}
+        inputs.append(target_input)
+
+    current_link_id = target_input.get("link")
+    if current_link_id is not None:
+        expected = [current_link_id, source["id"], source_slot, initializer["id"], target_slot, "CONDITIONING"]
+        if expected not in workflow["links"]:
+            raise ValueError("RayInitializer wait_for link does not come from the MiniMax positive output")
+        return
+
+    existing_link_ids = [link[0] for link in workflow.get("links", [])]
+    link_id = max([int(workflow.get("last_link_id", 0)), *existing_link_ids], default=0) + 1
+    workflow["last_link_id"] = link_id
+    workflow.setdefault("links", []).append(
+        [link_id, source["id"], source_slot, initializer["id"], target_slot, "CONDITIONING"]
+    )
+    target_input["link"] = link_id
+    source_output.setdefault("links", []).append(link_id)
+
+
 def build_workflow(
     source_path: str | Path,
     *,
@@ -90,6 +152,8 @@ def build_workflow(
 
     source_path = Path(source_path)
     workflow = json.loads(source_path.read_text(encoding="utf-8"))
+    _ensure_conditioning_link(workflow, mode)
+    _ensure_initializer_wait_link(workflow, mode)
 
     initializer = _one_node(workflow, "RayInitializer")
     if len(initializer.get("widgets_values", [])) != len(RAY_INITIALIZER_WIDGETS):

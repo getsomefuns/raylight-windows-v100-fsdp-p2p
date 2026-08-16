@@ -26,6 +26,29 @@ def _nodes(workflow, node_type):
     return [node for node in workflow["nodes"] if node["type"] == node_type]
 
 
+def _assert_conditioning_link(workflow, source_type):
+    source = _node(workflow, source_type)
+    guider = _node(workflow, "RayBasicGuider")
+    source_slot = next(i for i, output in enumerate(source["outputs"]) if output["name"] == "positive")
+    target_slot = next(i for i, input_ in enumerate(guider["inputs"]) if input_["name"] == "conditioning")
+    link_id = guider["inputs"][target_slot]["link"]
+    assert link_id is not None
+    assert link_id in source["outputs"][source_slot]["links"]
+    assert [link_id, source["id"], source_slot, guider["id"], target_slot, "CONDITIONING"] in workflow["links"]
+
+
+def _assert_initializer_wait_link(workflow, source_type):
+    source = _node(workflow, source_type)
+    initializer = _node(workflow, "RayInitializer")
+    source_slot = next(i for i, output in enumerate(source["outputs"]) if output["name"] == "positive")
+    wait_slot = next(i for i, input_ in enumerate(initializer["inputs"]) if input_["name"] == "wait_for")
+    link_id = initializer["inputs"][wait_slot]["link"]
+    assert link_id is not None
+    assert link_id in source["outputs"][source_slot]["links"]
+    assert [link_id, source["id"], source_slot, initializer["id"], wait_slot, "CONDITIONING"] in workflow["links"]
+
+
+
 def test_i2v_builder_enables_the_supported_windows_v100_hybrid_topology():
     builder = _load_builder()
     source_path = WORKFLOW_ROOT / "Minimax_H3_I2V_Raylight.json"
@@ -50,7 +73,7 @@ def test_i2v_builder_enables_the_supported_windows_v100_hybrid_topology():
         True,
         False,
         "TORCH_EFFICIENT",
-        False,
+        True,
         True,
     ]
     assert _node(built, "RayUNETLoader")["widgets_values"][0] == (
@@ -66,7 +89,9 @@ def test_i2v_builder_enables_the_supported_windows_v100_hybrid_topology():
     assert _node(built, "MiniMaxH3ImageToVideo")["widgets_values"][0] == (
         _node(source, "MiniMaxH3ImageToVideo")["widgets_values"][0]
     )
-    assert built["links"] == source["links"]
+    _assert_conditioning_link(built, "MiniMaxH3ImageToVideo")
+    _assert_initializer_wait_link(built, "MiniMaxH3ImageToVideo")
+    assert len(built["links"]) == len(source["links"]) + 2
     assert json.loads(source_path.read_text(encoding="utf-8")) == source
 
 
@@ -94,7 +119,7 @@ def test_ref2va_builder_reuses_the_validation_image_without_changing_the_prompt(
         True,
         False,
         "TORCH_EFFICIENT",
-        False,
+        True,
         True,
     ]
     assert _node(built, "RayUNETLoader")["widgets_values"][0] == (
@@ -113,5 +138,7 @@ def test_ref2va_builder_reuses_the_validation_image_without_changing_the_prompt(
     assert _node(built, "PrimitiveStringMultiline")["widgets_values"][0] == (
         _node(source, "PrimitiveStringMultiline")["widgets_values"][0]
     )
-    assert built["links"] == source["links"]
+    _assert_conditioning_link(built, "MiniMaxH3ReferenceToVideo")
+    _assert_initializer_wait_link(built, "MiniMaxH3ReferenceToVideo")
+    assert len(built["links"]) == len(source["links"]) + 1
     assert json.loads(source_path.read_text(encoding="utf-8")) == source

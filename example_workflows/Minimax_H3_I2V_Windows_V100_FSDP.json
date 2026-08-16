@@ -2,7 +2,7 @@
   "id": "e3f2b845-8f2c-4b5a-9caf-eac1029d3e7e",
   "revision": 0,
   "last_node_id": 145,
-  "last_link_id": 259,
+  "last_link_id": 261,
   "nodes": [
     {
       "id": 119,
@@ -405,7 +405,7 @@
         {
           "name": "conditioning",
           "type": "CONDITIONING",
-          "link": null
+          "link": 260
         }
       ],
       "outputs": [
@@ -889,7 +889,13 @@
       "flags": {},
       "order": 13,
       "mode": 0,
-      "inputs": [],
+      "inputs": [
+        {
+          "name": "wait_for",
+          "type": "*",
+          "link": 261
+        }
+      ],
       "outputs": [
         {
           "name": "ray_actors_init",
@@ -915,7 +921,7 @@
         true,
         false,
         "TORCH_EFFICIENT",
-        false,
+        true,
         true
       ]
     },
@@ -985,7 +991,10 @@
         {
           "name": "positive",
           "type": "CONDITIONING",
-          "links": []
+          "links": [
+            260,
+            261
+          ]
         },
         {
           "name": "LATENT",
@@ -1182,6 +1191,22 @@
       144,
       3,
       "LATENT"
+    ],
+    [
+      260,
+      133,
+      0,
+      145,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      261,
+      133,
+      0,
+      141,
+      0,
+      "CONDITIONING"
     ]
   ],
   "groups": [

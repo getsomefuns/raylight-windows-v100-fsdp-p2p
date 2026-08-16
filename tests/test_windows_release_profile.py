@@ -30,7 +30,8 @@ class WindowsReleaseProfileTests(unittest.TestCase):
 
         self.assertEqual(DEFAULT_WINDOWS_P2P_CAPACITY_BYTES, 134217728)
     def test_validate_only_uses_capacity_required_by_validated_10s_workflow(self):
-        python_path = Path(__file__).parents[4] / "Python310" / "python.exe"
+        python_path = REPO_ROOT.parent / "Python310" / "python.exe"
+        comfy_root = REPO_ROOT.parent / "ComfyUI"
         result = subprocess.run(
             [
                 "powershell.exe",
@@ -41,6 +42,8 @@ class WindowsReleaseProfileTests(unittest.TestCase):
                 str(START_SCRIPT),
                 "-PythonPath",
                 str(python_path),
+                "-ComfyRoot",
+                str(comfy_root),
                 "-ValidateOnly",
             ],
             capture_output=True,
@@ -52,6 +55,7 @@ class WindowsReleaseProfileTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("P2P capacity: 134217728 bytes", result.stdout)
+        self.assertIn("Reserved VRAM: 2 GiB", result.stdout)
 
     def test_example_workflow_enables_mmap_for_quantized_safetensors(self):
         workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))

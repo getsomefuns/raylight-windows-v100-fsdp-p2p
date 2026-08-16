@@ -30,15 +30,18 @@ This directory contains the maintained validation summary for MiniMax H3 on nati
 | Environment and workflow audit | Complete | All 19 executable I2V node types import in ComfyUI 0.31.0 |
 | Original sample mapping | Complete | Spear/portal image maps to I2V; green robots map to both REF2VA reference inputs; SHA-256 matches upstream assets |
 | FP8 model inventory | Complete | Five-file baseline manifest totals 63,416,617,071 bytes |
-| I2V asset acquisition | In progress | Resumable four-file group totals 42,458,411,463 bytes; byte-size and safetensors-header validation are mandatory |
+| I2V asset acquisition | Complete | All required files pass exact-size and safetensors-header validation |
 | Static FSDP/quant preflight | Complete | 5 MiniMax contracts and 31 related FP8/FSDP/P2P regressions pass |
 | V100 attention preflight | Complete | TORCH_EFFICIENT produces finite FP16 output on both sm_70 GPUs; sync Ulysses is enabled |
 | V100 compute policy | Complete | FP8 is storage-only; MiniMax diffusion compute manual-casts to FP32, not FP16/BF16/FP8 |
-| Runtime I2V FSDP preflight | Pending | Requires all four downloaded I2V assets |
-| I2V smoke/full validation | Pending | Reduced workload precedes upstream 0.4 MP run |
+| Runtime I2V FSDP preflight | Complete | Both ranks register 684 FSDP wrappers; CUDA P2P health is about 58.96 GiB/s per direction |
+| I2V smoke validation | Complete | 448x448, 39-frame, 12-step cold run passes in 214.93 s; tensors are finite and rank outputs match exactly |
+| I2V full validation | Pending | Run the upstream 0.4 MP, 2-second, 20-step profile after REF2VA smoke |
 | REF2VA validation | Pending | First run duplicates the supplied green-robot image |
 | INT8 comparison | Pending | Run only after FP8 correctness |
 | Final optimization | Pending | Compare base and official Turbo LoRA variants |
+
+Latest accepted run: [I2V smoke validation (2026-08-17)](I2V_SMOKE_2026-08-17.md). MiniMax H3 requires `--reserve-vram 2` in addition to `--disable-cuda-malloc` on this stack.
 
 ## Evidence policy
 

@@ -1,5 +1,6 @@
 param(
     [string]$PythonPath = "",
+    [string]$ComfyRoot = "",
     [string]$GlooHost = "",
     [string]$GpuSelect = "0,1",
     [int]$Port = 8188,
@@ -7,14 +8,19 @@ param(
     [long]$P2PCapacityBytes = 134217728,
     [double]$MinimumP2PGiBs = 50,
     [int]$CudaMaxSplitSizeMiB = 128,
+    [double]$ReserveVramGiB = 2,
     [switch]$ValidateOnly
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$customNodesRoot = Split-Path -Parent $repoRoot
-$comfyRoot = Split-Path -Parent $customNodesRoot
+if ([string]::IsNullOrWhiteSpace($ComfyRoot)) {
+    $customNodesRoot = Split-Path -Parent $repoRoot
+    $comfyRoot = Split-Path -Parent $customNodesRoot
+} else {
+    $comfyRoot = (Resolve-Path -LiteralPath $ComfyRoot -ErrorAction Stop).Path
+}
 $environmentRoot = Split-Path -Parent $comfyRoot
 
 if ([string]::IsNullOrWhiteSpace($PythonPath)) {
@@ -28,6 +34,9 @@ if ([string]::IsNullOrWhiteSpace($PythonPath)) {
 
 if (-not (Test-Path -LiteralPath $PythonPath)) {
     throw "Python executable not found: $PythonPath"
+}
+if ($ReserveVramGiB -lt 0) {
+    throw "ReserveVramGiB must not be negative"
 }
 if (-not (Test-Path -LiteralPath (Join-Path $comfyRoot "main.py"))) {
     throw "ComfyUI main.py was not found below: $comfyRoot"
@@ -57,6 +66,7 @@ Write-Host "ComfyUI root: $comfyRoot"
 Write-Host "Python: $PythonPath"
 Write-Host "GPU selection: $GpuSelect"
 Write-Host "P2P capacity: $P2PCapacityBytes bytes; minimum: $MinimumP2PGiBs GiB/s"
+Write-Host "Reserved VRAM: $ReserveVramGiB GiB"
 Write-Host "CUDA allocator: $env:PYTORCH_CUDA_ALLOC_CONF"
 
 if ($ValidateOnly) {
@@ -65,4 +75,9 @@ if ($ValidateOnly) {
 }
 
 Set-Location -LiteralPath $comfyRoot
-& $PythonPath main.py --listen 127.0.0.1 --port $Port --disable-cuda-malloc
+$mainArgs = @("main.py", "--listen", "127.0.0.1", "--port", [string]$Port, "--disable-cuda-malloc")
+if ($ReserveVramGiB -gt 0) {
+    $reserveVramText = $ReserveVramGiB.ToString([Globalization.CultureInfo]::InvariantCulture)
+    $mainArgs += @("--reserve-vram", $reserveVramText)
+}
+& $PythonPath @mainArgs

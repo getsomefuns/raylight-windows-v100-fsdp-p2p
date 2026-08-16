@@ -2,7 +2,7 @@
   "id": "bc095746-718b-4d38-903c-53b2b75141d1",
   "revision": 0,
   "last_node_id": 155,
-  "last_link_id": 296,
+  "last_link_id": 297,
   "nodes": [
     {
       "id": 121,
@@ -351,7 +351,8 @@
           "name": "positive",
           "type": "CONDITIONING",
           "links": [
-            295
+            295,
+            297
           ]
         },
         {
@@ -1033,7 +1034,13 @@
       "flags": {},
       "order": 14,
       "mode": 0,
-      "inputs": [],
+      "inputs": [
+        {
+          "name": "wait_for",
+          "type": "*",
+          "link": 297
+        }
+      ],
       "outputs": [
         {
           "name": "ray_actors_init",
@@ -1059,7 +1066,7 @@
         true,
         false,
         "TORCH_EFFICIENT",
-        false,
+        true,
         true
       ]
     }
@@ -1264,6 +1271,14 @@
       151,
       3,
       "LATENT"
+    ],
+    [
+      297,
+      136,
+      0,
+      146,
+      0,
+      "CONDITIONING"
     ]
   ],
   "groups": [

@@ -539,6 +539,14 @@ class RayInitializer:
                     },
                 ),
             },
+            "optional": {
+                "wait_for": (
+                    any_type,
+                    {
+                        "tooltip": "Optional execution dependency. The value is ignored; actor startup waits for its source node to finish."
+                    },
+                ),
+            },
         }
 
     RETURN_TYPES = ("RAY_ACTORS_INIT",)
@@ -567,6 +575,7 @@ class RayInitializer:
         ray_object_store_gb: float = 2.0,
         ray_dashboard_address: str = "None",
         torch_dist_address: str = "None",
+        wait_for: Any = None,
     ):
         # THIS IS PYTORCH DIST ADDRESS
         # (TODO) Change so it can be use in cluster of nodes. but it is long waaaaay down in the priority list
@@ -848,6 +857,12 @@ class RayInitializerAdvanced(RayInitializer):
                 ),
             },
             "optional": {
+                "wait_for": (
+                    any_type,
+                    {
+                        "tooltip": "Optional execution dependency. The value is ignored; actor startup waits for its source node to finish."
+                    },
+                ),
                 "ray_object_store_gb": (
                     "FLOAT",
                     {
