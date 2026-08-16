@@ -144,3 +144,34 @@ if ($PSCmdlet.ShouldProcess($markerPath, "Record deployed source commit")) {
 }
 
 Write-Host "Deployed Raylight runtime from $sourceCommit"
+$pathspec = @("__init__.py", "icon.png", "src")
+$gitOutput = @(& git.exe -C $destination add -A -- @pathspec 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to stage deployed runtime files: $($gitOutput -join [Environment]::NewLine)"
+}
+
+& git.exe -C $destination diff --cached --quiet -- @pathspec
+$stagedDiffExit = $LASTEXITCODE
+if ($stagedDiffExit -eq 1) {
+    $gitOutput = @(
+        & git.exe -C $destination `
+            -c "user.name=Raylight Runtime Deployer" `
+            -c "user.email=raylight-runtime@localhost" `
+            commit --no-verify `
+            -m "deploy: runtime from $sourceCommit" `
+            -- @pathspec 2>&1
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to commit deployed runtime files: $($gitOutput -join [Environment]::NewLine)"
+    }
+}
+elseif ($stagedDiffExit -ne 0) {
+    throw "Unable to inspect staged runtime deployment (git exit $stagedDiffExit)"
+}
+
+$remainingChanges = Invoke-GitLines -Root $destination -Arguments @(
+    "status", "--porcelain", "--untracked-files=no"
+)
+if ($remainingChanges.Count -gt 0) {
+    throw "Deployment completed but destination is not clean: $($remainingChanges -join ', ')"
+}

@@ -103,3 +103,41 @@ def test_deploy_refuses_tracked_destination_changes(tmp_path):
 
     assert result.returncode != 0
     assert "tracked modifications" in (result.stdout + result.stderr)
+
+
+def test_deploy_applies_only_runtime_files_and_leaves_destination_clean(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    make_repo(source)
+    make_repo(destination)
+    (source / "src" / "raylight" / "runtime.py").write_text(
+        "SOURCE_RUNTIME = True\n", encoding="utf-8"
+    )
+    (source / "tests" / "source_only.py").write_text(
+        "MUST_NOT_DEPLOY = True\n", encoding="utf-8"
+    )
+    assert run("git", "add", ".", cwd=source).returncode == 0
+    assert run("git", "commit", "-m", "source update", cwd=source).returncode == 0
+    source_commit = run("git", "rev-parse", "HEAD", cwd=source).stdout.strip()
+
+    result = run(
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(DEPLOY_SCRIPT),
+        "-SourceRoot",
+        str(source),
+        "-DestinationRoot",
+        str(destination),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (destination / "src" / "raylight" / "runtime.py").read_text(
+        encoding="utf-8"
+    ) == "SOURCE_RUNTIME = True\n"
+    assert not (destination / "tests" / "source_only.py").exists()
+    assert run("git", "status", "--short", cwd=destination).stdout == ""
+    marker = destination / ".git" / "raylight-deployed-commit"
+    assert marker.read_text(encoding="utf-8-sig").strip() == source_commit
