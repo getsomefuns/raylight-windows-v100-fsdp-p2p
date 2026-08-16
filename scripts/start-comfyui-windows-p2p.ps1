@@ -6,6 +6,7 @@ param(
     [int]$MasterPort = 29500,
     [long]$P2PCapacityBytes = 134217728,
     [double]$MinimumP2PGiBs = 50,
+    [int]$CudaMaxSplitSizeMiB = 128,
     [switch]$ValidateOnly
 )
 
@@ -42,6 +43,9 @@ $env:RAY_memory_usage_threshold = "1"
 $env:RAYLIGHT_WINDOWS_P2P = "1"
 $env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = [string]$P2PCapacityBytes
 $env:RAYLIGHT_WINDOWS_P2P_MIN_GIB_S = [string]$MinimumP2PGiBs
+if ([string]::IsNullOrWhiteSpace($env:PYTORCH_CUDA_ALLOC_CONF)) {
+    $env:PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:$CudaMaxSplitSizeMiB"
+}
 $env:CUDA_VISIBLE_DEVICES = $GpuSelect
 
 if (-not [string]::IsNullOrWhiteSpace($GlooHost)) {
@@ -53,6 +57,7 @@ Write-Host "ComfyUI root: $comfyRoot"
 Write-Host "Python: $PythonPath"
 Write-Host "GPU selection: $GpuSelect"
 Write-Host "P2P capacity: $P2PCapacityBytes bytes; minimum: $MinimumP2PGiBs GiB/s"
+Write-Host "CUDA allocator: $env:PYTORCH_CUDA_ALLOC_CONF"
 
 if ($ValidateOnly) {
     Write-Host "Validation-only mode: ComfyUI was not started."

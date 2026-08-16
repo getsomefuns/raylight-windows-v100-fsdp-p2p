@@ -1,4 +1,5 @@
 import logging
+import os
 
 import torch
 import torch.nn.functional as F
@@ -16,6 +17,63 @@ import comfy
 
 
 FSDP_LORA_SIDECAR_ATTACHMENT = "fsdp_lora_sidecar_groups"
+
+
+class DeferredDeviceBypassAdapter(comfy.weight_adapter.WeightAdapterBase):
+    """Keep sidecar adapter payload on CPU until its layer executes."""
+
+    name = "deferred_device_bypass"
+    weights = None
+
+    def __init__(self, adapter):
+        self.adapter = adapter
+        self.loaded_keys = getattr(adapter, "loaded_keys", set())
+
+    def _sync_runtime_attributes(self):
+        for name in (
+            "multiplier",
+            "is_conv",
+            "conv_dim",
+            "kernel_size",
+            "in_channels",
+            "out_channels",
+            "kw_dict",
+        ):
+            if hasattr(self, name):
+                setattr(self.adapter, name, getattr(self, name))
+
+    def h(self, x, base_out):
+        self._sync_runtime_attributes()
+        return self.adapter.h(x, base_out)
+
+    def bypass_forward(self, original_forward, x, *args, **kwargs):
+        self._sync_runtime_attributes()
+        base_out = original_forward(x, *args, **kwargs)
+        chunked_accumulator = getattr(self.adapter, "add_to_base_chunked", None)
+        if chunked_accumulator is not None and not torch.is_grad_enabled():
+            try:
+                max_temp_bytes = max(
+                    1,
+                    int(
+                        os.environ.get(
+                            "RAYLIGHT_FSDP_LORA_CHUNK_BYTES",
+                            str(32 * 1024 * 1024),
+                        )
+                    ),
+                )
+            except ValueError:
+                max_temp_bytes = 32 * 1024 * 1024
+            base_out = chunked_accumulator(x, base_out, max_temp_bytes)
+            return self.adapter.g(base_out)
+        return self.adapter.g(base_out + self.adapter.h(x, base_out))
+
+    def g(self, value):
+        self._sync_runtime_attributes()
+        return self.adapter.g(value)
+
+
+def defer_adapter_device_move(adapter):
+    return DeferredDeviceBypassAdapter(adapter)
 
 
 # I dont really want to implement this, 0.2s / step in Chroma TensorCoreFP8 FSDP
@@ -420,7 +478,14 @@ def load_lora_for_models(model, lora, strength_model):
     return new_modelpatcher
 
 
-def load_lora_for_models_quantized(model, lora, strength_model, dynamic_sidecar=False, fallback_to_patches=False):
+def load_lora_for_models_quantized(
+    model,
+    lora,
+    strength_model,
+    dynamic_sidecar=False,
+    fallback_to_patches=False,
+    defer_device_move=False,
+):
     raw_lora_key_count = len(lora)
     key_map = {}
     if model is not None:
@@ -621,11 +686,16 @@ def load_lora_for_models_quantized(model, lora, strength_model, dynamic_sidecar=
 
     manager = comfy.weight_adapter.BypassInjectionManager()
     loaded_keys = set()
+    deferred_hook_count = 0
     for key, entries in sidecar_groups.items():
         for item in entries:
             loaded_keys.update(item.get("handled_keys", {item["key"]}))
         if not dynamic_sidecar and len(entries) == 1 and entries[0]["offset"] is None:
-            manager.add_adapter(key, entries[0]["adapter"], strength=entries[0]["strength"])
+            adapter = entries[0]["adapter"]
+            if defer_device_move:
+                adapter = defer_adapter_device_move(adapter)
+                deferred_hook_count += 1
+            manager.add_adapter(key, adapter, strength=entries[0]["strength"])
             continue
 
         wrapper_entries = []
@@ -658,7 +728,7 @@ def load_lora_for_models_quantized(model, lora, strength_model, dynamic_sidecar=
         strength_model,
     )
     logging.warning(
-        "[Raylight LoRA][%s] adapters=%s direct_diff=%s other=%s sidecar_lora=%d grouped=%d unsupported=%d hooks=%d",
+        "[Raylight LoRA][%s] adapters=%s direct_diff=%s other=%s sidecar_lora=%d grouped=%d unsupported=%d hooks=%d deferred=%d",
         mode,
         adapter_counts,
         direct_diff_counts,
@@ -667,6 +737,7 @@ def load_lora_for_models_quantized(model, lora, strength_model, dynamic_sidecar=
         len(grouped_adapters),
         len(unsupported_keys),
         hook_count,
+        deferred_hook_count,
     )
     logging.warning(
         "[Raylight LoRA][merged-forward] groups=%d weight_patches=%d bias_patches=%d",
@@ -1057,6 +1128,57 @@ def decode_tiled_3d(self, samples, tile_t=999, tile_x=32, tile_y=32, overlap=(1,
     )
 
 
+def _load_model_weights_preserving_plain_bf16_storage(model, state_dict, prefix, assign=False):
+    """Keep unquantized BF16 checkpoint weights compact after Comfy loads them.
+
+    Comfy's mixed-precision Linear loader converts weights without a quantization
+    descriptor to the device compute dtype. On V100 that dtype is FP32. FSDP
+    would then shard and all-gather the expanded FP32 tensor even though the
+    checkpoint values are BF16. Quantized weights must stay under Comfy's loader,
+    so only descriptor-free BF16 weight entries are restored.
+    """
+    plain_bf16_weights = {}
+    for key, value in state_dict.items():
+        if not isinstance(key, str) or not key.endswith(".weight"):
+            continue
+        if not isinstance(value, torch.Tensor) or value.dtype is not torch.bfloat16:
+            continue
+
+        key_prefix = key[: -len("weight")]
+        quant_companions = (
+            f"{key_prefix}comfy_quant",
+            f"{key_prefix}weight_scale",
+            f"{key_prefix}scale_weight",
+            f"{key_prefix}weight_scale_2",
+        )
+        if any(companion in state_dict for companion in quant_companions):
+            continue
+        plain_bf16_weights[key] = value
+
+    model.load_model_weights(state_dict, prefix, assign=assign)
+
+    restored = 0
+    diffusion_model = model.diffusion_model
+    for key, checkpoint_weight in plain_bf16_weights.items():
+        local_key = key[len(prefix) :] if prefix and key.startswith(prefix) else key
+        module_path, parameter_name = local_key.rsplit(".", 1)
+        try:
+            parent = diffusion_model.get_submodule(module_path)
+        except (AttributeError, KeyError):
+            continue
+        current = getattr(parent, parameter_name, None)
+        if not isinstance(current, torch.Tensor) or current.shape != checkpoint_weight.shape:
+            continue
+        if current.dtype is checkpoint_weight.dtype:
+            continue
+        setattr(
+            parent,
+            parameter_name,
+            torch.nn.Parameter(checkpoint_weight, requires_grad=False),
+        )
+        restored += 1
+    return restored
+
 ##################################################
 # TEMPORARY FOR PREVIOUS Fp8 forward, MODIFIYING HERE
 ##################################################
@@ -1130,7 +1252,14 @@ def fsdp_load_diffusion_model_stat_dict(sd, rank, device_mesh, is_cpu_offload, m
         device_mesh=device_mesh,
         is_cpu_offload=is_cpu_offload,
     )
-    model.load_model_weights(new_sd, "", assign=model_patcher.is_dynamic())
+    # Quantized Comfy models intentionally derive manual_cast_dtype from the
+    # device, so preserve an explicit RayUNETLoader BF16 request separately.
+    model_patcher.fsdp_param_dtype = dtype if dtype is torch.bfloat16 else None
+    restored_bf16 = _load_model_weights_preserving_plain_bf16_storage(
+        model, new_sd, "", assign=model_patcher.is_dynamic()
+    )
+    if restored_bf16:
+        logging.info("[Raylight FSDP] Preserved BF16 storage for %d plain weights", restored_bf16)
     if not model_management.is_device_cpu(offload_device):
         model.to(offload_device)
     left_over = sd.keys()

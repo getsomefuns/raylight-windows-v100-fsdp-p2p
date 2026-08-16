@@ -1,0 +1,13 @@
+test_id,date,category,status,target,key_conditions,key_result,evidence
+F2-P2P-001,2026-08-16,transport,PASS,FSDP all-gather chunk correctness,"64-384 MiB; FP32/FP16/BF16/uint8; sync and async","boundary and tail correct; maximum error 0",docs/windows-v100-fsdp-phase-f2-results.md
+F2-FSDP-001,2026-08-16,sharding,PASS,512 MiB nested FSDP,"two V100; 256 MiB local shard per rank","resharded after forward; five sessions finite; maximum error 0",docs/windows-v100-fsdp-phase-f2-results.md
+F3-COMM-001,2026-08-16,transport,PASS,LTX FSDP CUDA P2P,"dual V100 TCC","about 51.6 GiB/s scored; about 59 GiB/s workflow health",docs/WINDOWS_V100_FSDP_TESTING.md
+F3-MEM-001,2026-08-16,memory,PASS,LTX weight sharding,"2999 FSDP wrappers","about 11203 MiB persistent model payload per rank",docs/WINDOWS_V100_FSDP_TESTING.md
+F3-OUT-001,2026-08-16,output,FAIL,early FSDP visual output,"H264/AAC; 121 frames; no NaN/Inf","playable but visually noise; previous PASS invalidated",docs/WINDOWS_V100_FSDP_TESTING.md
+F4-FIX-001,2026-08-16,numerics,PASS,FP8 mmap scale preservation,"actual 4096x4096 checkpoint layer","about 3e-8 max dequant error; Ray single and Ulysses visuals valid",tests/test_lazy_quantized_safetensor_ops.py
+F4-FIX-002,2026-08-16,numerics,PASS,FP8 gathered logical shape,"two-rank quantized FSDP linear","hardware probe maximum error 0; full workflow still noise before RMSNorm fix",tests/test_fp8_fsdp_gather_shape.py
+F4-DIAG-002,2026-08-16,synchronization,PASS,rank result equality,"both LTX sampling stages","video and audio latents exact across ranks; sample_max_abs 0",tests/test_rank_sampling_diagnostics.py
+F4-DIAG-003,2026-08-16,output,FAIL,FSDP without LoRA control,"same model prompt image seeds; LoRA removed","476.72 s; bright colored noise",docs/WINDOWS_V100_FSDP_TESTING.md
+F4-FIX-003,2026-08-16,numerics,PASS,preserve RMSNorm residual input,"16 MiB chunk budget","standard-equivalent output; original input unchanged",tests/test_chunked_rms_norm.py
+F4-OUT-001,2026-08-16,output,PASS,FSDP without LoRA after RMSNorm fix,"121 frames; 1280x704; H264/AAC","479.83 s; coherent multi-frame scene",docs/WINDOWS_V100_FSDP_TESTING.md
+F4-OUT-002,2026-08-16,output,PASS,FSDP with original BF16 LoRA after fix,"121 frames; 1280x704; H264/AAC","551.82 s; coherent multi-frame scene; rank exact",docs/WINDOWS_V100_FSDP_TESTING.md

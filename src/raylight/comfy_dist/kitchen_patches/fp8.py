@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import os
 from typing import Any, cast
 
 import torch
@@ -12,6 +13,137 @@ _ORIG_LAYOUT_METHODS = {}
 _PATCHED_LAYOUTS = ()
 _ORIG_QT_PRE = _MISSING
 _ORIG_QT_POST = _MISSING
+_OUTPUT_ALLOC_RETRY_LOGGED = False
+
+
+def allocate_output_with_cache_retry(shape, *, device, dtype):
+    """Retry one final-output allocation after releasing fragmented cache blocks."""
+    global _OUTPUT_ALLOC_RETRY_LOGGED
+    try:
+        return torch.empty(shape, device=device, dtype=dtype)
+    except torch.OutOfMemoryError:
+        if not _OUTPUT_ALLOC_RETRY_LOGGED:
+            print(
+                "[Raylight][V100][fp8] output allocation OOM; "
+                "releasing cached CUDA blocks and retrying once"
+            )
+            _OUTPUT_ALLOC_RETRY_LOGGED = True
+        torch.cuda.empty_cache()
+        return torch.empty(shape, device=device, dtype=dtype)
+
+
+def should_use_v100_chunked_fp8(tensor) -> bool:
+    """Return True when unsupported FP8 scaled-mm must be bypassed eagerly."""
+    if not getattr(tensor, "is_cuda", False):
+        return False
+    try:
+        major, _minor = torch.cuda.get_device_capability(tensor.device)
+    except (RuntimeError, ValueError):
+        return False
+    return major == 7
+
+
+def fp8_linear_fallback_chunked(
+    input_tensor: torch.Tensor,
+    weight_qdata: torch.Tensor,
+    scale,
+    bias,
+    out_dtype: torch.dtype,
+    max_temp_bytes: int | None = None,
+) -> torch.Tensor:
+    """Run V100 FP8 fallback without materializing the full BF16 weight."""
+    if input_tensor.ndim < 1 or weight_qdata.ndim != 2:
+        raise ValueError("chunked FP8 linear fallback requires a 2D weight")
+    if input_tensor.shape[-1] != weight_qdata.shape[-1]:
+        raise ValueError("FP8 weight input dimension does not match linear input")
+
+    if max_temp_bytes is None:
+        try:
+            max_temp_bytes = max(
+                1,
+                int(os.environ.get("RAYLIGHT_FP8_FALLBACK_CHUNK_BYTES", str(32 * 1024 * 1024))),
+            )
+        except ValueError:
+            max_temp_bytes = 32 * 1024 * 1024
+
+    dtype = out_dtype or input_tensor.dtype
+    output_features = weight_qdata.shape[0]
+    output_shape = (*input_tensor.shape[:-1], output_features)
+    output = allocate_output_with_cache_retry(
+        output_shape,
+        device=input_tensor.device,
+        dtype=dtype,
+    )
+
+    input_rows = input_tensor.numel() // input_tensor.shape[-1]
+    temp_bytes_per_output = max(
+        1,
+        (weight_qdata.shape[-1] + input_rows) * torch.empty((), dtype=dtype).element_size(),
+    )
+    outputs_per_chunk = max(1, max_temp_bytes // temp_bytes_per_output)
+    scale_value = scale
+    if isinstance(scale_value, torch.Tensor):
+        scale_value = scale_value.to(device=weight_qdata.device, dtype=dtype)
+
+    for start in range(0, output_features, outputs_per_chunk):
+        end = min(start + outputs_per_chunk, output_features)
+        weight_chunk = weight_qdata[start:end].to(dtype=dtype, copy=True)
+        weight_chunk.mul_(scale_value)
+        bias_chunk = None
+        if bias is not None:
+            bias_chunk = bias[start:end].to(device=input_tensor.device, dtype=dtype)
+        output_chunk = torch.nn.functional.linear(input_tensor, weight_chunk, bias_chunk)
+        output[..., start:end].copy_(output_chunk)
+
+    return output
+
+
+def fp8_addmm_fallback_chunked(
+    bias: torch.Tensor,
+    left: torch.Tensor,
+    right_qdata: torch.Tensor,
+    scale,
+    out_dtype: torch.dtype,
+    max_temp_bytes: int | None = None,
+) -> torch.Tensor:
+    """Run V100 FP8 addmm fallback by dequantizing RHS column chunks."""
+    if left.ndim != 2 or right_qdata.ndim != 2:
+        raise ValueError("chunked FP8 addmm fallback requires 2D matrices")
+    if left.shape[1] != right_qdata.shape[0]:
+        raise ValueError("FP8 RHS input dimension does not match addmm LHS")
+
+    if max_temp_bytes is None:
+        try:
+            max_temp_bytes = max(
+                1,
+                int(os.environ.get("RAYLIGHT_FP8_FALLBACK_CHUNK_BYTES", str(32 * 1024 * 1024))),
+            )
+        except ValueError:
+            max_temp_bytes = 32 * 1024 * 1024
+
+    dtype = out_dtype or left.dtype
+    output_columns = right_qdata.shape[1]
+    output = allocate_output_with_cache_retry(
+        (left.shape[0], output_columns), device=left.device, dtype=dtype
+    )
+    temp_bytes_per_output = max(
+        1,
+        (right_qdata.shape[0] + left.shape[0]) * torch.empty((), dtype=dtype).element_size(),
+    )
+    columns_per_chunk = max(1, max_temp_bytes // temp_bytes_per_output)
+    scale_value = scale
+    if isinstance(scale_value, torch.Tensor):
+        scale_value = scale_value.to(device=right_qdata.device, dtype=dtype)
+
+    for start in range(0, output_columns, columns_per_chunk):
+        end = min(start + columns_per_chunk, output_columns)
+        right_chunk = right_qdata[:, start:end].to(dtype=dtype, copy=True)
+        right_chunk.mul_(scale_value)
+        bias_chunk = bias[..., start:end].to(device=left.device, dtype=dtype)
+        output_chunk = torch.addmm(bias_chunk, left, right_chunk)
+        output[:, start:end].copy_(output_chunk)
+
+    return output
 
 
 def _get_op(path: str) -> Any:
@@ -111,10 +243,18 @@ def install_fp8_patches() -> None:
             weight_qdata, scale_b = _get_plain_tensors(weight)
             out_dtype = kwargs.get("out_dtype", input_tensor._params.orig_dtype)
         elif isinstance(input_tensor, torch.Tensor) and isinstance(weight, QuantizedTensor):
-            input_qdata, input_params = _quantize_like(input_tensor, weight)
-            scale_a = input_params.scale
             weight_qdata, scale_b = _get_plain_tensors(weight)
             out_dtype = kwargs.get("out_dtype", input_tensor.dtype)
+            if should_use_v100_chunked_fp8(input_tensor):
+                return fp8_linear_fallback_chunked(
+                    input_tensor,
+                    weight_qdata,
+                    scale_b,
+                    bias,
+                    out_dtype,
+                )
+            input_qdata, input_params = _quantize_like(input_tensor, weight)
+            scale_a = input_params.scale
         else:
             return torch.nn.functional.linear(*dequantize_args((input_tensor, weight, bias)))
 
@@ -130,6 +270,14 @@ def install_fp8_patches() -> None:
         except (RuntimeError, TypeError) as e:
             if isinstance(e, torch.OutOfMemoryError):
                 raise
+            if isinstance(input_tensor, torch.Tensor) and isinstance(weight, QuantizedTensor):
+                return fp8_linear_fallback_chunked(
+                    input_tensor,
+                    weight_qdata,
+                    scale_b,
+                    bias,
+                    out_dtype,
+                )
             return torch.nn.functional.linear(*dequantize_args((input_tensor, weight, bias)))
 
     @maybe_register(torch.ops.aten.mm.default)
@@ -164,10 +312,18 @@ def install_fp8_patches() -> None:
             b_qdata, scale_b = _get_plain_tensors(b)
             out_dtype = kwargs.get("out_dtype", a._params.orig_dtype)
         elif isinstance(a, torch.Tensor) and isinstance(b, QuantizedTensor):
-            a_qdata, a_params = _quantize_like(a, b)
-            scale_a = a_params.scale
             b_qdata, scale_b = _get_plain_tensors(b)
             out_dtype = kwargs.get("out_dtype", a.dtype)
+            if should_use_v100_chunked_fp8(a):
+                return fp8_addmm_fallback_chunked(
+                    bias,
+                    a,
+                    b_qdata,
+                    scale_b,
+                    out_dtype,
+                )
+            a_qdata, a_params = _quantize_like(a, b)
+            scale_a = a_params.scale
         else:
             return torch.addmm(*dequantize_args(args))
 
@@ -176,6 +332,14 @@ def install_fp8_patches() -> None:
         except (RuntimeError, TypeError) as e:
             if isinstance(e, torch.OutOfMemoryError):
                 raise
+            if isinstance(a, torch.Tensor) and isinstance(b, QuantizedTensor):
+                return fp8_addmm_fallback_chunked(
+                    bias,
+                    a,
+                    b_qdata,
+                    scale_b,
+                    out_dtype,
+                )
             return torch.addmm(*dequantize_args(args))
 
     def pre_all_gather(qtensor: QuantizedTensor, mesh):
@@ -199,7 +363,10 @@ def install_fp8_patches() -> None:
     ):
         (data,) = all_gather_outputs
         (scale,) = metadata
-        orig_shape = tuple(qtensor._params.orig_shape)
+        # FSDP calls this hook on a local shard, but data is the fully gathered
+        # FP8 storage.  The returned wrapper must therefore expose the global
+        # logical shape; preserving the local shard shape silently truncates rows.
+        orig_shape = tuple(data.shape)
 
         expected_numel = 1
         for dim in orig_shape:

@@ -1,4 +1,5 @@
 import gc
+import hashlib
 import json
 import os
 import time
@@ -14,6 +15,28 @@ import comfy.utils
 from .ray_patch_decorator import ray_patch_with_return
 
 from raylight.distributed_worker.utils import Noise_EmptyNoise, Noise_RandomNoise
+
+
+def _release_main_cuda_for_ray_sampling():
+    comfy.model_management.unload_all_models()
+    gc.collect()
+    comfy.model_management.soft_empty_cache()
+    if os.environ.get("RAYLIGHT_RANK_DIAG", "0") == "1" and torch.cuda.is_available():
+        device = torch.cuda.current_device()
+        print(
+            "[RAYLIGHT_MAIN_CUDA_DIAG] "
+            + json.dumps(
+                {
+                    "allocated": torch.cuda.memory_allocated(device),
+                    "reserved": torch.cuda.memory_reserved(device),
+                    "device": device,
+                    "event": "released_before_ray_sampling",
+                    "time_ns": time.time_ns(),
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
 
 
 def _make_ray_guider(ray_actors, guider_type, **kwargs):
@@ -48,6 +71,87 @@ def _split_advanced_results(results: list):
         outputs.append(output)
         denoised_outputs.append(denoised_output)
     return outputs, denoised_outputs
+
+
+def _sampling_streams(value):
+    samples = value.get("samples") if isinstance(value, dict) else value
+    if getattr(samples, "is_nested", False):
+        return list(samples.unbind())
+    return [samples]
+
+
+def _sampled_tensor_values(tensor: torch.Tensor, limit: int = 4096) -> torch.Tensor:
+    flat = tensor.detach().cpu().reshape(-1)
+    if flat.numel() <= limit:
+        return flat.float().contiguous()
+    stride = max(1, flat.numel() // limit)
+    return flat[::stride][:limit].float().contiguous()
+
+
+def _tensor_fingerprint(tensor):
+    if not isinstance(tensor, torch.Tensor):
+        return {"type": type(tensor).__name__}
+    sampled = _sampled_tensor_values(tensor)
+    finite = torch.isfinite(sampled)
+    finite_values = sampled[finite]
+    return {
+        "shape": list(tensor.shape),
+        "dtype": str(tensor.dtype),
+        "finite": bool(finite.all().item()),
+        "sample_count": int(sampled.numel()),
+        "sample_min": float(finite_values.min().item()) if finite_values.numel() else None,
+        "sample_max": float(finite_values.max().item()) if finite_values.numel() else None,
+        "sample_mean": float(finite_values.mean().item()) if finite_values.numel() else None,
+        "sample_std": float(finite_values.std(unbiased=False).item()) if finite_values.numel() else None,
+        "sha256": hashlib.sha256(sampled.numpy().tobytes()).hexdigest(),
+    }
+
+
+def summarize_rank_sampling_results(results):
+    """Compare worker-returned latents before rank zero is selected."""
+    summary = {"rank_count": len(results), "outputs": []}
+    for output_index in (0, 1):
+        rank_streams = [_sampling_streams(result[output_index]) for result in results]
+        baseline = rank_streams[0] if rank_streams else []
+        output_summary = {
+            "name": "output" if output_index == 0 else "denoised_output",
+            "streams": [_tensor_fingerprint(tensor) for tensor in baseline],
+            "comparisons": [],
+        }
+        for rank in range(1, len(rank_streams)):
+            current = rank_streams[rank]
+            stream_count = max(len(baseline), len(current))
+            for stream_index in range(stream_count):
+                left = baseline[stream_index] if stream_index < len(baseline) else None
+                right = current[stream_index] if stream_index < len(current) else None
+                exact = (
+                    isinstance(left, torch.Tensor)
+                    and isinstance(right, torch.Tensor)
+                    and left.shape == right.shape
+                    and left.dtype == right.dtype
+                    and torch.equal(left, right)
+                )
+                row = {
+                    "rank": rank,
+                    "stream": stream_index,
+                    "exact": exact,
+                    "rank_fingerprint": _tensor_fingerprint(right),
+                }
+                if (
+                    isinstance(left, torch.Tensor)
+                    and isinstance(right, torch.Tensor)
+                    and left.shape == right.shape
+                ):
+                    left_sample = _sampled_tensor_values(left)
+                    right_sample = _sampled_tensor_values(right)
+                    row["sample_max_abs"] = (
+                        float((left_sample - right_sample).abs().max().item())
+                        if left_sample.numel()
+                        else 0.0
+                    )
+                output_summary["comparisons"].append(row)
+        summary["outputs"].append(output_summary)
+    return summary
 
 
 def _normalize_grouped_inputs(values: list, expected_length: int, label: str):
@@ -443,9 +547,7 @@ class XFuserSamplerCustomAdvanced:
     CATEGORY = "Raylight/extra/custom_sampling/samplers"
 
     def ray_sample(self, add_noise, noise_seed, guider, sampler, sigmas, latent_image):
-        gc.collect()
-        comfy.model_management.unload_all_models()
-        comfy.model_management.soft_empty_cache()
+        _release_main_cuda_for_ray_sampling()
         ray_actors = _extract_ray_actors_from_guider(guider)
         gpu_actors = ray_actors["workers"]
         diag_enabled = os.environ.get("RAYLIGHT_RANK_DIAG", "0") == "1"
@@ -478,6 +580,12 @@ class XFuserSamplerCustomAdvanced:
                     flush=True,
                 )
         results = ray.get(futures)
+        if diag_enabled:
+            print(
+                "[RAYLIGHT_RESULT_DIAG] "
+                + json.dumps(summarize_rank_sampling_results(results), sort_keys=True),
+                flush=True,
+            )
         _clear_ray_worker_vram_after_sampling(ray_actors)
         output, denoised_output = results[0]
         return (output, denoised_output, ray_actors)

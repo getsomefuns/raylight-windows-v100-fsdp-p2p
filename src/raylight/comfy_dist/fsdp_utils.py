@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections import Counter
+from contextlib import contextmanager
 import json
 from dataclasses import replace
+from types import MethodType
 from typing import Any, cast
 
 import torch
-from torch.distributed.fsdp import fully_shard
+from torch.distributed.fsdp import FSDPModule, fully_shard
 from torch.distributed.tensor import DTensor
 
 try:
@@ -14,6 +17,126 @@ except Exception:  # pragma: no cover
     from comfy_kitchen.tensor import QuantizedTensor, get_layout_class  # type: ignore
 
     QUANT_ALGOS = {}
+
+
+@contextmanager
+def quantized_state_dict_zero_copy():
+    """Avoid redundant QuantizedTensor clones during assign=True FSDP loading."""
+    try:
+        import comfy_kitchen.tensor.base as kitchen_base
+    except Exception:
+        yield
+        return
+
+    op = torch.ops.aten._to_copy.default
+    dispatch_table = getattr(kitchen_base, "_DISPATCH_TABLE", None)
+    original = dispatch_table.get(op) if dispatch_table is not None else None
+    if original is None:
+        yield
+        return
+
+    def reuse_identical(qt, args, kwargs):
+        target_device, target_dtype = kitchen_base._parse_to_args(args, kwargs)
+        if isinstance(target_device, str):
+            target_device = torch.device(target_device)
+        same_device = target_device is None or target_device == qt._qdata.device
+        same_dtype = target_dtype is None or target_dtype == qt._params.orig_dtype
+        if same_device and same_dtype:
+            return qt
+        return original(qt, args, kwargs)
+
+    dispatch_table[op] = reuse_identical
+    try:
+        yield
+    finally:
+        if dispatch_table.get(op) is reuse_identical:
+            dispatch_table[op] = original
+
+
+def _state_value_is_quantized(value: Any) -> bool:
+    local = value
+    if isinstance(local, DTensor):
+        local = local._local_tensor
+    return isinstance(local, QuantizedTensor)
+
+
+@contextmanager
+def plain_bf16_state_dict_assign(model: torch.nn.Module, state_dict: dict[str, Any]):
+    """Assign plain BF16 shards without Comfy recasting them to FP32.
+
+    MixedPrecisionOps.Linear uses a custom state-dict loader that casts every
+    descriptor-free weight to its compute dtype. FSDP has already created the
+    correctly typed shard at this point, so that second cast only expands the
+    shard and can OOM. Patch only the individual plain-BF16 module instances;
+    quantized modules keep their custom loader.
+    """
+    patched = []
+    seen = set()
+
+    def direct_assign(
+        module,
+        incoming,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        return torch.nn.Module._load_from_state_dict(
+            module,
+            incoming,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+
+    for key, value in state_dict.items():
+        if not isinstance(key, str) or not key.endswith(".weight"):
+            continue
+        if not isinstance(value, torch.Tensor) or value.dtype is not torch.bfloat16:
+            continue
+        if _state_value_is_quantized(value):
+            continue
+        key_prefix = key[: -len("weight")]
+        if f"{key_prefix}comfy_quant" in state_dict:
+            continue
+        parent, _ = _get_parent_module_and_name(model, key)
+        if parent in seen:
+            continue
+        class_loader = getattr(type(parent), "_load_from_state_dict", None)
+        if class_loader is torch.nn.Module._load_from_state_dict:
+            continue
+        seen.add(parent)
+        had_instance_loader = "_load_from_state_dict" in parent.__dict__
+        instance_loader = parent.__dict__.get("_load_from_state_dict")
+        parent._load_from_state_dict = MethodType(direct_assign, parent)
+        patched.append((parent, had_instance_loader, instance_loader))
+
+    try:
+        yield len(patched)
+    finally:
+        for parent, had_instance_loader, instance_loader in reversed(patched):
+            if had_instance_loader:
+                parent._load_from_state_dict = instance_loader
+            else:
+                del parent.__dict__["_load_from_state_dict"]
+
+
+
+def enable_low_peak_fsdp_unshard(model: torch.nn.Module) -> int:
+    """Avoid implicit forward all-gather double buffering during inference."""
+    if not isinstance(model, FSDPModule):
+        return 0
+
+    wrappers = sum(1 for module in model.modules() if isinstance(module, FSDPModule))
+    # Use the default stream and free each all-gather result immediately.
+    model._set_unshard_async_op(True)
+    return wrappers
+
 
 
 """
@@ -88,21 +211,11 @@ def _is_descendant(path: str, ancestor: str) -> bool:
 
 def _collect_leaf_parent_targets(model: torch.nn.Module) -> set[str]:
     named = dict(model.named_modules())
-    all_names = [name for name in named.keys() if name != ""]
-
-    structural_groups: set[str] = set()
-    for name in all_names:
-        children = _children_with_params(name, named[name], named)
-        if len(children) >= 2:
-            structural_groups.add(name)
-
-    targets: set[str] = set(structural_groups)
-    for name in all_names:
-        if _module_has_direct_params(named[name]):
-            if not any(_is_descendant(name, group_name) for group_name in structural_groups):
-                targets.add(name)
-
-    return targets
+    return {
+        name
+        for name, module in named.items()
+        if name and _module_has_direct_params(module)
+    }
 
 
 def _add_ancestors_to_root(targets: set[str]) -> set[str]:
@@ -133,11 +246,235 @@ def collect_bottom_up_shard_order(model: torch.nn.Module) -> list[tuple[str, tor
     out: list[tuple[str, torch.nn.Module]] = []
     for name in ordered_names:
         module = model if name == "" else named[name]
+        if name and type(module) is torch.nn.Sequential:
+            continue
         if _supports_fully_shard(module):
             out.append((name, module))
     return out
 
 
+def validate_inference_shard_order(shard_order: list[tuple[str, torch.nn.Module]]) -> int:
+    """Reject a root-only FSDP topology that would retain full params after forward.
+
+    Returns the number of non-root parameter-bearing wrappers so callers can
+    include the value in compact diagnostics.
+    """
+    root_positions = [index for index, (name, _module) in enumerate(shard_order) if name == ""]
+    if root_positions != [len(shard_order) - 1]:
+        raise ValueError("FSDP inference topology must contain exactly one root wrapper, placed last")
+
+    non_root_count = sum(
+        1
+        for name, module in shard_order
+        if name and _module_has_subtree_params(module)
+    )
+    if non_root_count == 0:
+        raise ValueError(
+            "FSDP inference root-only topology is unsafe because root FSDP may retain full parameters after forward"
+        )
+    return non_root_count
+
+
+def _dtype_name(dtype: Any) -> str:
+    value = str(dtype)
+    return value.removeprefix("torch.")
+
+
+def _layout_name(tensor: Any) -> str | None:
+    layout = getattr(tensor, "_layout_cls", None)
+    if layout is None:
+        return None
+    if isinstance(layout, str):
+        return layout
+    return getattr(layout, "__name__", str(layout))
+
+
+def _storage_tensor(tensor: Any) -> Any:
+    qdata = getattr(tensor, "_qdata", None)
+    return qdata if qdata is not None else tensor
+
+
+def _tensor_bytes(tensor: Any) -> int:
+    return int(tensor.numel()) * int(tensor.element_size())
+
+def summarize_all_gather_inputs(
+    inputs: list[torch.Tensor],
+    world_size: int,
+) -> list[dict[str, Any]]:
+    """Describe the real storage buffers FSDP will allocate for all-gather."""
+    return [
+        {
+            "shape": list(tensor.shape),
+            "dtype": _dtype_name(tensor.dtype),
+            "input_bytes": _tensor_bytes(tensor),
+            "output_bytes": _tensor_bytes(tensor) * int(world_size),
+        }
+        for tensor in inputs
+    ]
+
+
+
+def summarize_fsdp_parameters(model: torch.nn.Module) -> dict[str, Any]:
+    """Summarize FSDP parameter placement without copying tensor payloads."""
+    parameter_count = 0
+    dtensor_count = 0
+    logical_parameter_bytes = 0
+    local_payload_bytes = 0
+    unsharded_parameter_bytes = 0
+    layouts: Counter[str] = Counter()
+    logical_dtypes: Counter[str] = Counter()
+    storage_dtypes: Counter[str] = Counter()
+
+    for param in model.parameters():
+        parameter_count += 1
+        logical_parameter_bytes += _tensor_bytes(param)
+        logical_dtypes[_dtype_name(getattr(param, "dtype", "unknown"))] += 1
+
+        is_dtensor = isinstance(param, DTensor)
+        local = param.to_local() if is_dtensor else param
+        if is_dtensor:
+            dtensor_count += 1
+
+        layout_name = _layout_name(local)
+        if layout_name is not None:
+            layouts[layout_name] += 1
+
+        storage = _storage_tensor(local)
+        payload_bytes = _tensor_bytes(storage)
+        local_payload_bytes += payload_bytes
+        storage_dtypes[_dtype_name(getattr(storage, "dtype", "unknown"))] += 1
+        if not is_dtensor:
+            unsharded_parameter_bytes += payload_bytes
+
+    return {
+        "parameter_count": parameter_count,
+        "dtensor_count": dtensor_count,
+        "logical_parameter_bytes": logical_parameter_bytes,
+        "local_payload_bytes": local_payload_bytes,
+        "unsharded_parameter_bytes": unsharded_parameter_bytes,
+        "layouts": dict(sorted(layouts.items())),
+        "logical_dtypes": dict(sorted(logical_dtypes.items())),
+        "storage_dtypes": dict(sorted(storage_dtypes.items())),
+    }
+
+
+def _format_counts(values: dict[str, int]) -> str:
+    if not values:
+        return "none"
+    return ",".join(f"{name}:{count}" for name, count in sorted(values.items()))
+
+
+def format_fsdp_diagnostics(diagnostics: dict[str, Any]) -> str:
+    mib = 1024 * 1024
+    return (
+        f"params={diagnostics['parameter_count']} dtensors={diagnostics['dtensor_count']} "
+        f"logical={diagnostics['logical_parameter_bytes'] / mib:.2f}MiB "
+        f"local_payload={diagnostics['local_payload_bytes'] / mib:.2f}MiB "
+        f"unsharded={diagnostics['unsharded_parameter_bytes'] / mib:.2f}MiB "
+        f"layouts={_format_counts(diagnostics['layouts'])} "
+        f"logical_dtypes={_format_counts(diagnostics['logical_dtypes'])} "
+        f"storage_dtypes={_format_counts(diagnostics['storage_dtypes'])}"
+    )
+
+
+def select_mixed_dtype_ignored_params(
+    params: list[torch.nn.Parameter],
+    ignored_params: set[torch.nn.Parameter],
+) -> set[torch.nn.Parameter]:
+    """Keep each FSDP unit dtype-uniform without casting auxiliary parameters."""
+    dtype_groups: dict[torch.dtype, list[torch.nn.Parameter]] = {}
+    for param in params:
+        if param in ignored_params or isinstance(param, DTensor):
+            continue
+        dtype_groups.setdefault(param.dtype, []).append(param)
+
+    if len(dtype_groups) <= 1:
+        return set()
+
+    primary_dtype = max(
+        dtype_groups,
+        key=lambda dtype: (
+            sum(_tensor_bytes(param) for param in dtype_groups[dtype]),
+            str(dtype),
+        ),
+    )
+    return {
+        param for dtype, dtype_params in dtype_groups.items() if dtype != primary_dtype for param in dtype_params
+    }
+
+def summarize_selected_parameters(
+    model: torch.nn.Module,
+    params: set[torch.nn.Parameter],
+    largest_limit: int = 12,
+) -> dict[str, Any]:
+    names_by_id = {id(param): name for name, param in model.named_parameters()}
+    dtype_stats: dict[str, dict[str, int]] = {}
+    suffix_counts: Counter[str] = Counter()
+    rows = []
+
+    for param in params:
+        name = names_by_id.get(id(param), "<unnamed>")
+        param_bytes = _tensor_bytes(param)
+        dtype_name = str(param.dtype).removeprefix("torch.")
+        stats = dtype_stats.setdefault(dtype_name, {"count": 0, "bytes": 0})
+        stats["count"] += 1
+        stats["bytes"] += param_bytes
+        suffix_counts[name.rsplit(".", 1)[-1]] += 1
+        rows.append(
+            {
+                "name": name,
+                "dtype": dtype_name,
+                "shape": list(param.shape),
+                "bytes": param_bytes,
+            }
+        )
+
+    rows.sort(key=lambda row: (-row["bytes"], row["name"]))
+    return {
+        "parameter_count": len(params),
+        "parameter_bytes": sum(row["bytes"] for row in rows),
+        "dtypes": {name: dtype_stats[name] for name in sorted(dtype_stats)},
+        "suffixes": dict(sorted(suffix_counts.items())),
+        "largest": rows[: max(0, largest_limit)],
+    }
+
+
+
+_FP8_LAYOUT_NAMES = {
+    "TensorCoreFP8Layout",
+    "TensorCoreFP8E4M3Layout",
+    "TensorCoreFP8E5M2Layout",
+}
+
+
+def align_fp8_logical_dtype(
+    model: torch.nn.Module,
+    target_dtype: torch.dtype,
+) -> int:
+    """Align FP8 wrapper metadata for an explicit FSDP inference dtype.
+
+    The FP8 payload is reused without copying. Only the wrapper and immutable
+    layout params are replaced so FSDP may group the quantized weight with its
+    same-dtype bias instead of replicating every bias.
+    """
+    aligned_count = 0
+    for name, param in list(model.named_parameters()):
+        if not isinstance(param, QuantizedTensor):
+            continue
+        if getattr(param, "_layout_cls", None) not in _FP8_LAYOUT_NAMES:
+            continue
+        if param.dtype is target_dtype:
+            continue
+
+        aligned_params = replace(param._params, orig_dtype=target_dtype)
+        aligned_tensor = param._copy_with(params=aligned_params, clone_params=False)
+        parent, leaf_name = _get_parent_module_and_name(model, name)
+        parent.register_parameter(
+            leaf_name,
+            torch.nn.Parameter(aligned_tensor, requires_grad=False),
+        )
+        aligned_count += 1
+    return aligned_count
 def collect_scale_ignored_params(module: torch.nn.Module) -> set[torch.nn.Parameter]:
     ignored: set[torch.nn.Parameter] = set()
     for param_name, param in module.named_parameters(recurse=True):
@@ -283,6 +620,9 @@ def fully_shard_bottom_up(
     if ignored_modules:
         shard_order = [(n, m) for n, m in shard_order if id(m) not in ignored_module_ids]
 
+    validate_inference_shard_order(shard_order)
+
+    mixed_dtype_ignored_params: set[torch.nn.Parameter] = set()
     num_layers_sharded = 0
     for _name, module in shard_order:
         kwargs = dict(fsdp_kwargs)
@@ -295,6 +635,12 @@ def fully_shard_bottom_up(
         ignored_params |= collect_odd_dim0_ignored_params(module)
 
         subtree_params = set(module.parameters())
+        ignored_params |= (mixed_dtype_ignored_params & subtree_params)
+        unmanaged_params = [param for param in module.parameters() if not isinstance(param, DTensor)]
+        newly_ignored = select_mixed_dtype_ignored_params(unmanaged_params, ignored_params)
+        mixed_dtype_ignored_params |= newly_ignored
+        ignored_params |= newly_ignored
+
         ignored_params |= (excluded_params & subtree_params)
 
         if ignored_params:
@@ -302,6 +648,24 @@ def fully_shard_bottom_up(
 
         fully_shard(module, **kwargs)
         num_layers_sharded += 1
+
+    low_peak_wrappers = enable_low_peak_fsdp_unshard(model)
+    if low_peak_wrappers:
+        print(
+            f"[FSDP] Enabled low-peak default-stream unshard for "
+            f"{low_peak_wrappers} wrappers"
+        )
+
+    if mixed_dtype_ignored_params:
+        replicated_bytes = sum(_tensor_bytes(param) for param in mixed_dtype_ignored_params)
+        print(
+            f"[FSDP] Replicating {len(mixed_dtype_ignored_params)} auxiliary mixed-dtype params ({replicated_bytes / (1024 * 1024):.2f}MiB)"
+        )
+        detail = summarize_selected_parameters(model, mixed_dtype_ignored_params)
+        print(
+            f"[FSDP] Mixed-dtype replicated detail "
+            f"{json.dumps(detail, sort_keys=True)}"
+        )
 
     if num_layers_sharded == 0:
         raise ValueError("No layer modules were sharded. Please check if shard conditions are working as expected.")
@@ -706,6 +1070,7 @@ def load_from_full_model_state_dict(
         sharded_sd[param_name] = sharded_tensor if is_buffer else torch.nn.Parameter(sharded_tensor)
         if release_sd:
             full_sd[param_name] = None
-    out = model.load_state_dict(sharded_sd, strict=strict, assign=True)
+    with quantized_state_dict_zero_copy(), plain_bf16_state_dict_assign(model, sharded_sd):
+        out = model.load_state_dict(sharded_sd, strict=strict, assign=True)
     _materialize_missing_ignored_params(model, full_sd, device, strict, cpu_offload, release_sd)
     return out

@@ -1,15 +1,18 @@
-# Raylight Windows 双 V100 CUDA P2P
+# Raylight Windows 双 V100 FSDP + CUDA P2P
 
 [简体中文](README.md) | [English](README_EN.md)
 
 > **实验性 Preview**
 > 面向原生 Windows、双 Tesla V100-SXM2-16GB、TCC 与 NVLink 的 Raylight
-> CUDA IPC/P2P 通信分支。它不是通用 NCCL 替代，也不提供 Windows FSDP。
+> FSDP2 权重分片与 CUDA IPC/P2P 通信分支。
 
-本项目让 Raylight 在符合条件的双卡 Ulysses
-`torch.distributed.all_to_all_single` 调用中，绕开 Gloo 的 CPU 主存数据中转，
-通过 CUDA IPC、跨进程 CUDA Event 和 GPU P2P 访问传输张量。Gloo/TCPStore
-仍负责初始化、控制、barrier 以及不符合快速路径条件的通信。
+本项目在上一阶段 Windows P2P/Ulysses 实现的基础上，增加了 FSDP2 所需的
+`all_gather_into_tensor` CUDA 数据路径。经过验证的 LTX 2.3 Diffusion Model
+会在两张 V100 之间真正分片；聚合权重和 Ulysses 张量通过 CUDA IPC、跨进程
+CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建组和控制面。
+
+当前实现不是完整的 Windows NCCL，也不是通用 PyTorch `ProcessGroup`。它是针对
+单机、双 rank、Windows V100 推理所需 collective 的定向兼容层。
 
 ## 上游与作者声明
 
@@ -21,8 +24,10 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
 - 许可证：Apache License 2.0
-- 分支修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
-- 持续测试记录：[docs/TESTING.md](docs/TESTING.md)
+- 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
+- FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
+- FSDP 测试与验收：[docs/WINDOWS_V100_FSDP_TESTING.md](docs/WINDOWS_V100_FSDP_TESTING.md)
+- P2P/Ulysses 历史测试：[docs/TESTING.md](docs/TESTING.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -35,15 +40,16 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 
 - 必须使用原生 Windows，不希望迁移到 WSL/Linux。
 - 使用两张 Tesla V100-SXM2-16GB，并已切换到 TCC 模式。
-- 两卡之间有可用 NVLink/CUDA P2P，希望 Raylight 的序列并行通信实际走 GPU
-  P2P，而不是通过 CPU 主存中转。
+- 两卡之间有可用 NVLink/CUDA P2P，希望 LTX 2.3 的 FSDP 权重聚合与序列并行
+  通信实际走 GPU P2P，而不是通过 CPU 主存中转。
 - 接受 Ray 在 Windows 上仍属于 Beta、功能与性能弱于 Linux + NCCL。
 - 愿意固定经过验证的软件版本，并在运行工作流前执行完整自检。
 
 ### 它解决什么
 
-- 为 Raylight 的双 rank、同步、等分 CUDA `all_to_all_single` 提供专用 P2P
-  快速路径。
+- 让 LTX 2.3 Diffusion Model 的持久权重分片保存在两张 16GB V100 上。
+- 为 FSDP2 的 CUDA `all_gather_into_tensor` 和 Ulysses 的
+  `all_to_all_single` 提供专用 P2P 快速路径。
 - 保留 Gloo 作为 Windows 可用的进程组、控制面和兼容回退。
 - 启动时同时验证元素正确性和真实 P2P 带宽。
 - 在配置不变时复用健康的 Ray worker，减少重复初始化开销。
@@ -53,9 +59,157 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 
 - 不是 yunchang 的替代或 fork。yunchang 仍负责 Ulysses attention 与张量拆分。
 - 不是完整的 Windows NCCL 实现。
-- 不是通用 PyTorch `ProcessGroup`。
-- 不支持 Windows FSDP，也不能把两张 16GB 显卡简单等同为一张 32GB 显卡。
-- USP 主要拆分序列计算；模型权重通常仍会在每张卡各保留一份。
+- 不是通用 PyTorch `ProcessGroup` 或完整的 ProcessGroupNCCL 替代。
+- 不能把两张 16GB 显卡简单等同为一张透明的 32GB 显卡。
+- 不会自动分片整个 ComfyUI 工作流；当前 FSDP 范围是通过 `RayUNETLoader`
+  加载的 Diffusion Model。
+- 当前不支持 GGUF + FSDP、多于两个 rank、多机和训练反向传播。
+
+## 当前 FSDP 实现与能力边界
+
+### 当前结论
+
+当前 `windows-v100-fsdp-p2p` 分支已经实现并验证：
+
+> 在原生 Windows、双 V100 TCC、NVLink 环境下，用 PyTorch FSDP2 对
+> LTX 2.3 Diffusion Model 做真实权重分片，并用自定义 CUDA IPC/P2P
+> all-gather 替代 NCCL 的关键数据通信路径。
+
+这不表示整个 ComfyUI 工作流中的所有模型都会自动分片，也不表示两张 16GB GPU
+变成了一张透明的 32GB GPU。当前主要解决的是 22B Diffusion Model 的单卡显存容量问题。
+
+### 两张 GPU 是否参与计算
+
+是。最终通过视觉验收的 FSDP + 原始 BF16 LoRA 运行中：
+
+- GPU0 峰值：16,224 MiB、100%、354.54W。
+- GPU1 峰值：16,156 MiB、100%、348.43W。
+- 487 个监控样本中，189 个样本两卡利用率同时超过 80%，284 个样本同时超过 50%。
+- 双卡高负载样本的平均利用率约为 94.8% / 95.0%。
+- 两个 rank 在两阶段采样返回的视频/音频 latent 逐元素完全一致。
+
+两卡不是在工作流的每个阶段都同时满载：
+
+| 工作流阶段 | GPU0 | GPU1 | 当前原因 |
+|---|---:|---:|---|
+| 文本编码、图片预处理 | 主要工作 | 多数空闲 | 普通 ComfyUI 节点，没有 FSDP |
+| Diffusion Sampler 1 | 高负载 | 高负载 | FSDP 双 rank 采样 |
+| Latent Upscale | 主要工作 | 多数空闲 | 普通 Upscaler 节点 |
+| Diffusion Sampler 2 | 高负载 | 高负载 | FSDP 双 rank 采样 |
+| Video/Audio VAE 解码 | 主要工作 | 多数空闲 | 当前工作流使用普通 VAE 节点 |
+
+所以准确表述是：**FSDP 扩散采样阶段双卡共同运算；整个工作流并非始终双卡满载。**
+
+### 权重如何分片和计算
+
+当前实现不是“前一半层在 GPU0，后一半层在 GPU1”，而是：
+
+1. 每个 FSDP 权重张量分成两份，两个 rank 各长期保存一份。
+2. 当前层计算前，两份权重通过 CUDA P2P/NVLink 临时 all-gather。
+3. 两张 GPU 都得到当前层的完整临时权重并执行 forward。
+4. 当前层完成后释放完整临时权重，重新只保留各自分片。
+5. 对下一层重复上述过程。
+
+LTX 2.3 实测注册了 2,999 个 FSDP wrapper、2,620 个 DTensor；每个 rank
+长期保存的 Diffusion Model payload 约为 11,203 MiB。每张 GPU 仍需为当前完整层、
+激活张量、LoRA、128 MiB P2P 缓冲区和 CUDA 工作区保留临时显存，因此峰值仍可能接近 16GB。
+
+### 哪些模型会被分片
+
+| 模型或组件 | 当前是否 FSDP 分片 | 说明 |
+|---|---|---|
+| LTX 2.3 Diffusion Model | 是 | 通过 `RayUNETLoader` 进入 FSDP |
+| Diffusion Model 内的视频/音频 Transformer | 是 | 属于 LTXAV Diffusion Model 本体 |
+| Text Encoder | 否 | `DualCLIPLoader + CLIPTextEncode` 是普通 ComfyUI 路径 |
+| Video VAE | 否 | 当前使用普通 `VAELoader + VAEDecodeTiled` |
+| Audio VAE | 否 | 当前使用普通 `VAELoader + LTXVAudioVAEDecode` |
+| Spatial Latent Upscaler | 否 | 当前使用普通 `LatentUpscaleModelLoader` |
+| Temporal Upscaler | 默认否 | 只有未来作为 Diffusion Model 单独接入并验证后才可能分片 |
+| Distilled LoRA | 支持，但不是基础权重式分片 | 作为延迟 CPU sidecar，在两个 worker 上应用 |
+| GGUF Diffusion Model | 否 | 当前明确禁止 GGUF + FSDP |
+
+Distilled LoRA 不会像主模型权重一样长期一分为二。其 payload 主要保留在 CPU，
+在相应层执行时再传入并计算，所以会增加物理内存、传输量和运行时间。当前 BF16
+Distilled LoRA 已通过 121 帧视频、音频和双 rank 一致性验收。
+
+### FSDP 与 NCCL 的关系
+
+FSDP 与 NCCL 不是二选一：
+
+- **FSDP** 决定模型权重如何切分、何时聚合以及何时重新分片。
+- **NCCL** 是 Linux/NVIDIA 常用的 GPU collective 通信实现。
+
+原版 Raylight 的典型路径是：
+
+```text
+PyTorch FSDP2
+    -> ProcessGroupNCCL
+    -> NCCL AllGather / ReduceScatter / AlltoAll
+    -> NVLink / PCIe / 多机网络
+```
+
+本 Windows 分支的路径是：
+
+```text
+PyTorch FSDP2
+    -> torch.distributed.all_gather_into_tensor
+    -> Windows 定向 collective 路由
+    -> CUDA IPC / P2P / NVLink
+```
+
+Gloo/TCPStore 仍承担 rendezvous、进程组建立、控制和少量不符合快速路径条件的操作；
+已经匹配的 FSDP 权重 payload 不经过 CPU 主存。当前实现覆盖 Raylight Windows
+双卡推理所需的关键 collective，但没有实现 NCCL 的完整能力：
+
+- 仅单机、严格两个 rank。
+- 当前按推理验证，没有训练、反向传播和通用 reduce-scatter/all-reduce 后端。
+- 没有多机、任意 GPU 数量和 NCCL 的自动拓扑算法。
+- 仅对满足约束的 CUDA 连续张量进入快速路径。
+- 不支持 GGUF + FSDP，量化格式和模型类型仍需逐项验证。
+
+### 与原版和上一阶段 P2P 版比较
+
+| 项目 | 原版 Raylight | `raylight-windows-v100-p2p` | 当前 FSDP 分支 |
+|---|---|---|---|
+| 主要平台 | Linux + NCCL | Windows 双 V100 | Windows 双 V100 |
+| 主要并行方式 | USP/FSDP/CFG/DP | Ulysses USP | FSDP2 |
+| 模型权重 | FSDP 时分片 | 每卡完整一份 | Diffusion Model 真正分片 |
+| 计算方式 | 可组合多种并行 | 拆分序列计算 | 当前两个 rank 执行同一模型 forward |
+| CUDA 数据通信 | NCCL | P2P `all_to_all` | P2P `all_gather`，并保留 `all_to_all` |
+| 支持规模 | NCCL 支持多卡、多机 | 严格双卡、单机 | 严格双卡、单机 |
+| 主要价值 | 通用性和标准实现 | 提升已有模型的采样速度 | 让单卡装不下的模型可以运行 |
+| 当前性能状态 | 随上游模型/硬件而异 | 热对热约快 10.28% | 正确性通过，20% 加速目标未通过 |
+
+原版 Raylight 当前把 LTX 2/2.3/2.5 的 FSDP 标记为“逻辑支持、等待测试”。
+本分支则完成了 Windows + 双 V100 + LTX 2.3 的实际输出验收，但适用范围更窄。
+
+### 与物理内存和虚拟内存的关系
+
+最终 FSDP + LoRA 运行记录：
+
+| 指标 | 峰值/结果 |
+|---|---:|
+| 物理内存 | 64,108.9 MiB，约 62.6 GiB |
+| Windows 提交内存 | 112,649.9 MiB，约 110 GiB |
+| 页面文件实际使用 | 约 476 MiB 降至约 466 MiB |
+| FSDP CPU Offload | false |
+| safetensors mmap | true |
+
+这次成功运行没有依靠页面文件搬运 FSDP 权重。高内存来自 ComfyUI 主进程、
+两个 Ray worker、模型结构和元数据、Text Encoder/VAE/Upscaler 的普通加载与卸载、
+LoRA CPU sidecar、mmap 映射和文件缓存。
+
+- **物理内存**是真正驻留 RAM 的数据。
+- **提交内存**是 Windows 对进程内存作出的可用性承诺，不等于已经写入页面文件。
+- **页面文件使用量**才是实际占用磁盘交换空间的部分。
+- mmap 允许文件页在需要时读取并被系统回收，避免每个 worker 都急切复制完整权重。
+
+如果物理内存不足，mmap 文件页可能被丢弃后重新从模型文件读取，普通匿名内存和
+CPU offload 数据可能进入页面文件。页面文件可以推迟 OOM，但换页会导致 rank
+停顿、采样显著变慢，严重时触发 P2P 协调超时。它不是性能扩展方案。
+
+完整条件、失败历史、根因和视觉验收见
+[Windows 双 V100 FSDP 测试记录](docs/WINDOWS_V100_FSDP_TESTING.md)。
 
 ## 支持范围
 
@@ -69,9 +223,9 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 | 驱动模式 | 两卡均为 TCC；WDDM 未支持、未验证 |
 | GPU 通信 | CUDA peer access、CUDA IPC、跨进程 CUDA Event 可用 |
 | Ray worker | 两个 worker / 两个 rank |
-| 并行配置 | Ulysses=2，Ring=1，CFG=1，DP=1 |
-| Collective | 同步、CUDA、连续张量、等分 `all_to_all_single` |
-| FSDP | 必须关闭 |
+| 已验收 FSDP 配置 | FSDP=true，CPU Offload=false，Ulysses/Ring/CFG=0，DP=1 |
+| Collective | 双 rank CUDA `all_gather_into_tensor` 与 `all_to_all_single` |
+| FSDP 范围 | LTX 2.3 Diffusion Model；Text Encoder、VAE、Upscaler 不分片 |
 
 物理上是否通过同一个 PCIe 插槽、载板或桥接芯片连接，不是代码判断条件。
 真正的准入标准是 CUDA P2P 能否工作，以及完整探针的正确性与带宽是否达标。
@@ -119,8 +273,8 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 ```powershell
 $PY = "<你的 Python 3.10.11 路径>\python.exe"
 cd <ComfyUI>\custom_nodes
-git clone --branch windows-v100-p2p `
-  https://github.com/getsomefuns/raylight-windows-v100-p2p.git raylight
+git clone `
+  https://github.com/getsomefuns/raylight-windows-v100-fsdp-p2p.git raylight
 
 & $PY -m pip install -r .\raylight\requirements-windows-v100.txt
 & $PY -m pip install -e .\raylight
@@ -209,7 +363,7 @@ Gloo 默认自动选择本机 IPv4。如果 Windows 选中了 VPN、Hyper-V、WS
 
 示例工作流：
 
-[example_workflows/LTX2_3_i2v_Raylight_Windows_P2P.json](example_workflows/LTX2_3_i2v_Raylight_Windows_P2P.json)
+[example_workflows/LTX2_3_i2v_Raylight_Windows_FSDP_5s.json](example_workflows/LTX2_3_i2v_Raylight_Windows_FSDP_5s.json)
 
 模型与自定义节点清单：
 
@@ -219,7 +373,7 @@ Gloo 默认自动选择本机 IPv4。如果 Windows 选中了 VPN、Hyper-V、WS
 
 [example_workflows/LTX2_3_i2v_Raylight.jpg](example_workflows/LTX2_3_i2v_Raylight.jpg)
 
-原版与 Windows P2P 版 LTX 工作流都包含测试提示词，并引用这个图片文件名。运行前请将
+原版、Windows P2P 版与 FSDP 版 LTX 工作流都包含测试提示词，并引用这个图片文件名。运行前请将
 该图片复制到 ComfyUI 的 `input` 目录，或在 `Load Image` 节点中重新选择它。仓库仍不
 包含模型权重；模型文件需要从模型作者认可的来源另行取得。
 
@@ -228,13 +382,13 @@ RayInitializer 使用以下设置：
 | 设置 | 值 |
 |---|---:|
 | GPU | 2 |
-| ulysses_degree | 2 |
-| ring_degree | 1 |
-| cfg_degree | 1 |
+| ulysses_degree | 0 |
+| ring_degree | 0 |
+| cfg_degree | 0 |
 | dp_degree | 1 |
 | sync_ulysses | true |
 | clear_vram_after_sampling | true |
-| FSDP / FSDP_CPU_OFFLOAD | false / false |
+| FSDP / FSDP_CPU_OFFLOAD | true / false |
 | XFuser_attention | TORCH_EFFICIENT |
 | skip_comm_test | true |
 | use_mmap | true |
@@ -286,26 +440,20 @@ CUDA P2P 正确性和带宽检查。
 ```mermaid
 flowchart LR
     A["ComfyUI 工作流"] --> B["Raylight Ray workers"]
-    B --> C["xFuser / yunchang Ulysses"]
-    C --> D["torch.distributed.all_to_all_single"]
-    D --> E{"双 rank、同步、CUDA、等分？"}
-    E -->|是| F["CUDA IPC / P2P / NVLink 快速路径"]
-    E -->|否| G["Gloo 兼容路径"]
-    H["TCPStore + Gloo"] --> B
-    H --> I["初始化、控制、barrier 与其他 collective"]
+    B --> C{"并行调用"}
+    C --> D["FSDP2 all_gather_into_tensor"]
+    C --> E["Ulysses all_to_all_single"]
+    D --> F["CUDA IPC / P2P / NVLink 快速路径"]
+    E --> F
+    G["TCPStore + Gloo"] --> B
+    G --> H["初始化、建组、控制与其他 collective"]
 ```
 
-yunchang/xFuser 继续调用标准 `torch.distributed.all_to_all_single`。Ray worker
-内部安装的路由器只拦截符合以下条件的调用：
-
-- input/output 都在 CUDA。
-- `async_op=False`。
-- 没有显式 `input_split_sizes` 或 `output_split_sizes`。
-- group world size 为 2。
-- 张量连续、dtype 和元素数量一致，远端半块不超过缓冲区容量。
-
-其他调用保留原 Gloo 实现。已匹配快速路径的调用如果发生 P2P 错误，会 poison 当前
-endpoint，阻止在通信状态不一致时继续执行。
+FSDP2 继续调用标准 `torch.distributed.all_gather_into_tensor`，yunchang/xFuser
+继续调用标准 `torch.distributed.all_to_all_single`。Ray worker 内部路由器只拦截
+双 rank、CUDA、连续张量和受支持参数组合。大于 128 MiB staging buffer 的 FSDP
+分片会分块传输。已匹配快速路径一旦发生错误会 poison 当前 endpoint，不会静默改用
+CPU 主存后继续假装使用 NVLink；其他不匹配调用仍保留 Gloo 兼容路径。
 
 ### P2P 实现
 
@@ -325,8 +473,9 @@ endpoint，阻止在通信状态不一致时继续执行。
 - Windows named shared memory + event 控制面。
 - 单独 CUDA stream、递增 operation ID、超时和 poison 状态。
 
-发送方先把本 rank 需要发送的半块写入持久缓冲区并记录 ready event；对端在确认双方
-operation ID 和尺寸一致后，等待 CUDA Event 并直接从 peer buffer 复制到输出张量。
+对于 Ulysses all-to-all，发送方把本 rank 需要发送的半块写入持久缓冲区；对于 FSDP
+all-gather，则把本地权重分片按 128 MiB 容量切块写入。对端确认 operation ID 和尺寸后，
+等待 CUDA Event，并直接从 peer buffer 复制到目标 CUDA 张量。
 
 ### Gloo 仍然负责什么
 
@@ -362,7 +511,7 @@ key。配置相同且 worker 健康时复用现有 actor；配置改变或健康
 
 ### 发布前验证
 
-- Windows P2P、trace、session、runtime、mmap、metadata、模型加载同步和发布配置测试均纳入持续测试；当前结果以 [测试记录](docs/TESTING.md) 与实际测试命令输出为准。
+- Windows P2P、trace、session、runtime、mmap、metadata、模型加载同步和发布配置测试均纳入持续测试；当前结果以 [FSDP 测试记录](docs/WINDOWS_V100_FSDP_TESTING.md)、[P2P/Ulysses 历史记录](docs/TESTING.md) 与实际测试命令输出为准。
 - 真实 LTX 张量尺寸：516,096、8,388,608、28,835,840 和
   115,343,360 字节。
 - 两个 rank、全部尺寸：`0 mismatch / 0 maximum error`。
@@ -372,7 +521,7 @@ key。配置相同且 worker 健康时复用现有 actor；配置改变或健康
 
 ### LTX 2.3 端到端基准
 
-同一模型、输入、提示词、工作流规模下：
+上一阶段 Windows P2P/Ulysses 结果：
 
 | 场景 | 端到端耗时 |
 |---|---:|
@@ -380,29 +529,30 @@ key。配置相同且 worker 健康时复用现有 actor；配置改变或健康
 | 单 V100 热启动 | 316.60 s |
 | 双 V100 P2P 复用会话中位数 | 284.06 s |
 
-公平的热对热提升：
+P2P/Ulysses 的公平热对热提升为 10.28%，但它仍在每张 GPU 保存完整模型。
 
-```text
-(316.60 - 284.06) / 316.60 = 10.28%
-```
+当前 FSDP 最终正确性基线：
 
-量化 safetensors 现在可在 `use_mmap=true` 时保留 metadata 并延迟映射；两个 rank 使用共同的最小显存预算加载模型，并在加载后同步。10 秒工作流仍以严格 10 秒通信超时验证，不通过放宽超时掩盖 rank 偏差。
+| 场景 | 冷端到端 | Sampler 1 | Sampler 2 | GPU0/1 峰值显存 | 视觉结果 |
+|---|---:|---:|---:|---:|---|
+| FSDP 无 LoRA | 479.83 s | 约 11.0 s/it | 约 41.7 s/it | 16,218/16,208 MiB | 连贯，PASS |
+| FSDP + 原 BF16 LoRA | 551.82 s | 约 15.0 s/it | 约 45.6 s/it | 16,224/16,156 MiB | 连贯，PASS |
 
-当前版本已经证明真实双 GPU 工作、正确 CUDA P2P 数据路径和稳定生成，但尚未达到
-项目希望的“比单卡热启动快至少 20%”目标。文档不会用单卡冷启动作为基线夸大收益。
+FSDP 当前证明的是显存分片、双卡计算和输出正确性，不是性能验收。带 LoRA 的冷端到端
+仍慢于正确的 Ray/Ulysses 速度路径，尚未达到“快于公平单卡 20%”的最终目标。
 
 ## 已知限制
 
-- 只支持单机、两个 rank、等分同步 all-to-all 快速路径。
-- WDDM 未验证；发行门槛要求 TCC。
-- FSDP 在此 Windows 路径中必须关闭。
-- GGUF 不能通过此实现获得 FSDP 权重分片。
+- 只支持单机、严格两个 rank；当前不支持多机、任意 GPU 数量或训练反向传播。
+- WDDM 未作为发行配置验收；FSDP/NVLink 发布门槛要求 TCC。
+- 只有通过 `RayUNETLoader` 加载的 Diffusion Model 获得 FSDP 权重分片。
+- GGUF 不能通过当前实现获得 FSDP 权重分片。
 - LTX/LTXAV 应保持 ComfyUI 默认 BF16/FP32 推理范围；实测强制全局 FP16 会产生全黑视频和音频 NaN/Inf。
-- 不支持多 GPU 文本编码、VAE 编码/解码。
-- 模型权重通常每卡一份，显存不是简单相加。
-- 小张量的 Python、named control、同步和 event 开销仍明显。
+- Text Encoder、Video/Audio VAE 和 Spatial/Temporal Upscaler 当前不做 FSDP 权重分片。
+- VAE 编解码与文本编码当前不会自动使用两张 GPU。
+- FSDP 仍需要当前完整层、激活、P2P buffer、LoRA 和 CUDA 工作区的临时显存。
 - Ray Windows 支持仍为 Beta，进程启动和内存开销高于 Linux。
-- 其他 GPU、驱动和 NVLink 拓扑必须自行通过完整自检，不能仅凭型号推断兼容。
+- 其他 GPU、驱动、量化格式和模型必须自行通过完整自检与视觉验收。
 
 ## 常见问题
 
@@ -422,7 +572,7 @@ Invoke-WebRequest http://127.0.0.1:8188/ -UseBasicParsing
 使用仓库启动脚本。它会设置 `USE_LIBUV=0`，同时显式使用
 `TCPStore(..., use_libuv=False)`。
 
-### Gloo 连接 `WorkStudio` 或错误网卡
+### Gloo 显示主机名或选择了错误网卡
 
 使用 `-GlooHost <物理网卡 IPv4>`。不要把某台机器的局域网 IP 写进公共脚本。
 
@@ -437,36 +587,43 @@ Invoke-WebRequest http://127.0.0.1:8188/ -UseBasicParsing
 
 ### 启用了 FSDP 后报错
 
-这是预期保护。Windows P2P 分支不实现 FSDP；将 FSDP 与 CPU Offload 都关闭。
+先确认当前检出的是 `windows-v100-fsdp-p2p`，而不是已发布的上一阶段 P2P/Ulysses
+分支。使用 FSDP 示例工作流，保持 GPU=2、FSDP=true、FSDP_CPU_OFFLOAD=false、
+Ulysses/Ring/CFG=0、DP=1，并查看
+[Windows FSDP 测试记录](docs/WINDOWS_V100_FSDP_TESTING.md)中的准入条件和已知限制。
 
 ## 仓库结构
 
 ```text
 raylight/
-├─ src/raylight/                         Raylight 与 Windows P2P 实现
+├─ src/raylight/                         Raylight、Windows P2P 与 FSDP 适配
 ├─ scripts/
 │  ├─ start-comfyui-windows-p2p.ps1     通用启动脚本
 │  └─ verify-windows-v100.ps1           环境和真实 P2P 自检
 ├─ tests/                                单元测试与独立探针
-├─ example_workflows/                    LTX 2.3 示例工作流
+├─ example_workflows/                    LTX 2.3 ComfyUI 示例工作流
+├─ benchmark_payloads/                   可直接用于 API 基准的 5 秒 payload
 ├─ docs/
-│  ├─ windows-v100-p2p.md               Windows 专项技术指南
+│  ├─ WINDOWS_V100_FSDP_TESTING.md       FSDP 测试、失败历史与验收
+│  ├─ windows-v100-p2p.md                上一阶段 Windows P2P 技术指南
 │  ├─ ltx23-model-manifest.md            模型与节点清单
-│  ├─ TESTING.md                         持续测试与验证总表
-│  └─ test-results-2026-08.csv           精简测试数据附件
+│  ├─ TESTING.md                         P2P/Ulysses 历史测试
+│  └─ windows-v100-fsdp-test-results-2026-08.csv  FSDP 精简数据
 ├─ environment-windows-v100.json         机器可读验证矩阵
 ├─ requirements-windows-v100.txt         锁定依赖
-└─ WINDOWS_P2P_CHANGES.md                相对上游的修改说明
+├─ WINDOWS_P2P_CHANGES.md                上一阶段 P2P 修改说明
+└─ WINDOWS_FSDP_CHANGES.md               当前 FSDP 修改说明
 ```
 
 ## 后续优化方向
 
-- 把热对热端到端提升推进到 20% 以上。
-- 分析微基准约 108 GiB/s 与项目通信约 59 GiB/s 的差距。
-- 降低小 collective 的 Python、控制面和同步开销。
-- 评估多 buffer/ring slot、批量控制和更深流水。
-- 在保持严格正确性与超时保护的前提下减少额外本地 copy。
-- 在获得真实硬件验证后扩展支持矩阵，而不是只增加未经测试的型号声明。
+- 在保持 FSDP 输出正确的前提下，把公平端到端性能推进到快于单卡 20%。
+- 分析 CUDA P2P 微基准约 108 GiB/s、项目探针约 59 GiB/s 与 FSDP 实际 all-gather 的差距。
+- 降低 FSDP 逐层 all-gather、LoRA sidecar、Python 控制面和同步开销。
+- 评估多 buffer/ring slot、批量控制、预取和通信/计算重叠。
+- 评估 FSDP + Ulysses 组合，但在正式验收前不声明支持。
+- 分别评估 Text Encoder、VAE 和 Upscaler 的多 GPU 路径，而不是把它们误称为已分片。
+- 在获得真实硬件和视觉验证后扩展模型与 GPU 支持矩阵。
 
 ## 安全与可再分发内容
 

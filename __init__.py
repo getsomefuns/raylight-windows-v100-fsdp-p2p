@@ -12,9 +12,16 @@ src_dir = os.path.join(this_dir, "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
-comfy_dir = os.path.abspath(os.path.join(this_dir, "../../comfy"))
-if comfy_dir not in sys.path:
-    sys.path.insert(0, comfy_dir)
+# When imported as a regular package (for example by pytest), Python binds
+# this custom-node root as `raylight` before the src package is visible.
+# Extend the package search path so `raylight.nodes` resolves consistently.
+source_package_dir = os.path.join(src_dir, "raylight")
+if "__path__" in globals() and source_package_dir not in __path__:
+    __path__.append(source_package_dir)
+
+comfy_root = os.path.abspath(os.path.join(this_dir, "../.."))
+if comfy_root not in sys.path:
+    sys.path.insert(0, comfy_root)
 
 from raylight.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 

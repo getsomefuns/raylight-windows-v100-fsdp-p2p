@@ -33,6 +33,7 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             "RAYLIGHT_WINDOWS_P2P_MIN_GIB_S": "50",
             "RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS": "10",
             "RAYLIGHT_RANK_DIAG": "1",
+            "RAYLIGHT_P2P_PROFILE": "1",
         }
         with mock.patch.dict(os.environ, expected, clear=False):
             runtime_env = nodes._build_local_runtime_env(
@@ -44,6 +45,43 @@ class RuntimeEnvironmentTests(unittest.TestCase):
         env_vars = runtime_env["env_vars"]
         for key, value in expected.items():
             self.assertEqual(env_vars[key], value)
+
+    def test_local_runtime_env_explicitly_forwards_native_allocator_tuning(self):
+        sys.path[:0] = [str(COMFY_ROOT), str(RAYLIGHT_SRC)]
+        try:
+            from raylight import nodes
+        finally:
+            del sys.path[:2]
+
+        with mock.patch.dict(
+            os.environ,
+            {"PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"},
+            clear=True,
+        ):
+            runtime_env = nodes._build_local_runtime_env(
+                RAYLIGHT_SRC / "raylight",
+                COMFY_ROOT,
+                RAYLIGHT_SRC / "_ray_runtime_env",
+            )
+
+        self.assertEqual(
+            runtime_env["env_vars"]["PYTORCH_CUDA_ALLOC_CONF"],
+            "max_split_size_mb:128",
+        )
+
+    def test_worker_allocator_tuning_keeps_native_options_when_async_is_removed(self):
+        sys.path[:0] = [str(COMFY_ROOT), str(RAYLIGHT_SRC)]
+        try:
+            from raylight import nodes
+        finally:
+            del sys.path[:2]
+
+        with mock.patch.dict(
+            os.environ,
+            {"PYTORCH_CUDA_ALLOC_CONF": "backend:cudaMallocAsync,max_split_size_mb:128"},
+            clear=True,
+        ):
+            self.assertEqual(nodes._sanitized_worker_alloc_conf(), "max_split_size_mb:128")
 
 
 if __name__ == "__main__":

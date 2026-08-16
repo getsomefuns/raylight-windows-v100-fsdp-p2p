@@ -16,14 +16,13 @@ from comfy.cli_args import args as comfy_args
 from yunchang.kernels import AttnType
 
 # For naming style with comfyui equivalent nodes use "[Name of Nodes] (Ray)"
-# Must manually insert comfy package or ray cannot import raylight to cluster
-from comfy import sd, sample, utils  # type: ignore
 
 from .distributed_worker.ray_worker import (
     make_ray_actor_fn,
     ensure_fresh_actors,
     ray_nccl_tester,
 )
+from .distributed_worker.parallel_group_manager import validate_hybrid_topology
 from .distributed_worker.ray_worker_vae import combine_dist_vae_partials, combine_seedvr2_vae_partials
 
 
@@ -123,7 +122,7 @@ def _sanitized_worker_alloc_conf():
     parts = [part.strip() for part in conf.split(",") if part.strip()]
     kept = [part for part in parts if part != "backend:cudaMallocAsync"]
     if len(kept) == len(parts):
-        return None
+        return conf
 
     print(
         "[Raylight] Removing backend:cudaMallocAsync from Ray worker "
@@ -159,6 +158,7 @@ def _build_local_runtime_env(module_dir: Path, repo_root: Path, runtime_workdir:
         "RAYLIGHT_WINDOWS_P2P_MIN_GIB_S",
         "RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS",
         "RAYLIGHT_RANK_DIAG",
+        "RAYLIGHT_P2P_PROFILE",
     )
     for key in forwarded_keys:
         value = os.environ.get(key)
@@ -271,6 +271,7 @@ def _ray_session_key(configuration: dict[str, Any]) -> str:
             "RAYLIGHT_WINDOWS_P2P_MIN_GIB_S",
         "RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS",
         "RAYLIGHT_RANK_DIAG",
+            "RAYLIGHT_P2P_PROFILE",
             "MASTER_ADDR",
             "MASTER_PORT",
             "RAYLIGHT_GLOO_HOST",
@@ -660,6 +661,13 @@ class RayInitializer:
             final_dp = self.parallel_dict["dp_degree"]
             self.parallel_dict["shard_size"] = world_size // final_dp
             self.parallel_dict["use_group_process_group"] = final_dp > 1
+
+        if os.environ.get("RAYLIGHT_WINDOWS_P2P", "0") == "1":
+            validate_hybrid_topology(
+                world_size,
+                self.parallel_dict["shard_size"],
+                self.parallel_dict,
+            )
 
         if ray_dashboard_address != "None":
             dashboard_host, dashboard_port = ray_dashboard_address.rsplit(":", 1)
@@ -1507,6 +1515,33 @@ class DPKSamplerAdvanced:
         return (results, ray_actors)
 
 
+class RayFSDPPreflight:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "ray_actors": (
+                    "RAY_ACTORS",
+                    {"tooltip": "Patch the loaded model with FSDP on every rank and return compact diagnostics without sampling."},
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("RAY_ACTORS",)
+    RETURN_NAMES = ("ray_actors",)
+    FUNCTION = "preflight"
+    CATEGORY = "Raylight/diagnostics"
+
+    def preflight(self, ray_actors):
+        gpu_actors = ray_actors["workers"]
+        if not gpu_actors:
+            raise ValueError("FSDP preflight requires at least one Ray worker")
+        results = ray.get([actor.fsdp_preflight.remote() for actor in gpu_actors])
+        results = sorted(results, key=lambda result: result["rank"])
+        print(f"[Raylight][FSDP_PREFLIGHT] {json.dumps(results, sort_keys=True)}", flush=True)
+        return (ray_actors,)
+
+
 class RayKill:
     @classmethod
     def INPUT_TYPES(cls):
@@ -1961,6 +1996,7 @@ NODE_CLASS_MAPPINGS = {
     "XFuserKSamplerAdvanced": XFuserKSamplerAdvanced,
     "UnifiedParallelSampler": UnifiedParallelSampler,
     "DPKSamplerAdvanced": DPKSamplerAdvanced,
+    "RayFSDPPreflight": RayFSDPPreflight,
     "RayKill": RayKill,
     "RayUNETLoader": RayUNETLoader,
     "RayLoraLoader": RayLoraLoader,
@@ -1981,6 +2017,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "XFuserKSamplerAdvanced": "XFuser KSampler (Advanced)",
     "UnifiedParallelSampler": "Unified Parallel Sampler (Advance)",
     "DPKSamplerAdvanced": "Data Parallel KSampler (Advanced)",
+    "RayFSDPPreflight": "FSDP Preflight (Raylight)",
     "RayKill": "Kill Ray",
     "RayUNETLoader": "Load Diffusion Model (Ray)",
     "RayLoraLoader": "Load Lora Model (Ray)",

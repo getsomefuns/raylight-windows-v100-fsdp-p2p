@@ -13,8 +13,11 @@ from torch.distributed.fsdp import FSDPModule
 
 ROOT = Path(__file__).resolve().parents[3]
 RAYLIGHT_SRC = ROOT / "custom_nodes" / "raylight" / "src"
-KITCHEN_REPO = Path("/home/kxn/comfy-kitchen-distributed")
-for candidate in (str(RAYLIGHT_SRC), str(KITCHEN_REPO), str(ROOT)):
+KITCHEN_REPO = os.environ.get("COMFY_KITCHEN_REPO")
+import_paths = [str(RAYLIGHT_SRC), str(ROOT)]
+if KITCHEN_REPO:
+    import_paths.insert(1, str(Path(KITCHEN_REPO).expanduser().resolve()))
+for candidate in import_paths:
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
 

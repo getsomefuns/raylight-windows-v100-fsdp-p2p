@@ -12,7 +12,7 @@ RAYLIGHT = ROOT / "custom_nodes/raylight/src/raylight"
 
 
 def _function(path, function_name, class_name=None):
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     nodes = tree.body
     if class_name is not None:
         nodes = next(node.body for node in nodes if isinstance(node, ast.ClassDef) and node.name == class_name)
@@ -52,7 +52,7 @@ def _source_defines(path, name, seen=None):
     if path in seen:
         return False
     seen.add(path)
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
             return True
@@ -121,7 +121,7 @@ def test_scail_forward_signature_matches_usp_forward():
 
 def test_boogu_injector_imports_exist_in_source_files():
     usp_path = RAYLIGHT / "distributed_modules/usp.py"
-    tree = ast.parse(usp_path.read_text())
+    tree = ast.parse(usp_path.read_text(encoding="utf-8"))
     injector = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_inject_boogu")
     imports = [node for node in ast.walk(injector) if isinstance(node, ast.ImportFrom)]
 

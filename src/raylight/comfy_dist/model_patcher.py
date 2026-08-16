@@ -3,11 +3,12 @@ from __future__ import annotations
 import collections
 import logging
 import gc
+import os
 from typing import TYPE_CHECKING
 
 import torch
 import torch.distributed as dist
-from torch.distributed.fsdp import FSDPModule
+from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy
 from torch.distributed.checkpoint.state_dict import StateDictOptions, set_model_state_dict
 from torch.distributed.utils import _free_storage
 from torch.distributed.tensor import DTensor
@@ -17,7 +18,16 @@ from comfy.patcher_extension import CallbacksMP
 from comfy.model_patcher import get_key_weight, string_to_seed, move_weight_functions
 
 from raylight import comfy_dist
-from .fsdp_utils import freeze_and_detect_qt, fully_shard_bottom_up, load_from_full_model_state_dict, materialize_excluded_params
+from .fsdp_utils import (
+    format_fsdp_diagnostics,
+    align_fp8_logical_dtype,
+    freeze_and_detect_qt,
+    fully_shard_bottom_up,
+    load_from_full_model_state_dict,
+    materialize_excluded_params,
+    summarize_fsdp_parameters,
+    summarize_all_gather_inputs,
+)
 
 if TYPE_CHECKING:
     from raylight.distributed_worker.parallel_group_manager import XFuserParallelContext
@@ -163,6 +173,70 @@ def _unwrap_base_model(model):
     return getattr(model, "model", model)
 
 
+def select_fsdp_mixed_precision_policy(model):
+    """Use BF16 for FSDP unshard/forward only when the loader requested it."""
+    base_model = _unwrap_base_model(model)
+    dtype = getattr(model, "fsdp_param_dtype", None)
+    dtype = dtype if dtype is not None else getattr(base_model, "manual_cast_dtype", None)
+    if dtype is None:
+        get_dtype = getattr(base_model, "get_dtype", None)
+        if callable(get_dtype):
+            dtype = get_dtype()
+
+    if dtype is not torch.bfloat16:
+        return None
+    return MixedPrecisionPolicy(
+        param_dtype=torch.bfloat16,
+        output_dtype=None,
+        cast_forward_inputs=True,
+    )
+
+
+def _align_dense_meta_dtypes_from_state_dict(
+    model: torch.nn.Module,
+    full_sd: dict,
+) -> int:
+    """Preserve dense checkpoint storage dtype before FSDP builds its shards."""
+    changed = 0
+    supported = {torch.float16, torch.bfloat16, torch.float32, torch.float64}
+
+    for name, param in list(model.named_parameters()):
+        if not getattr(param, "is_meta", False):
+            continue
+        full_tensor = full_sd.get(name)
+        if not isinstance(full_tensor, torch.Tensor):
+            continue
+        if _is_quantized_tensor_like(full_tensor):
+            continue
+
+        if name.endswith("weight"):
+            prefix = name[: -len("weight")]
+            if any(
+                key in full_sd
+                for key in (
+                    f"{prefix}comfy_quant",
+                    f"{prefix}weight_scale",
+                    f"{prefix}scale_weight",
+                )
+            ):
+                continue
+
+        target_dtype = full_tensor.dtype
+        if target_dtype not in supported or target_dtype == param.dtype:
+            continue
+
+        parent_module, leaf_name = _get_parent_module_and_name(model, name)
+        parent_module.register_parameter(
+            leaf_name,
+            torch.nn.Parameter(
+                torch.empty(tuple(param.shape), device="meta", dtype=target_dtype),
+                requires_grad=param.requires_grad,
+            ),
+        )
+        changed += 1
+    return changed
+
+
 def _promote_nonfloating_params_to_meta(model: torch.nn.Module, target_dtype: torch.dtype) -> int:
     replaced = 0
     for name, param in list(model.named_parameters()):
@@ -245,10 +319,31 @@ def patch_fsdp(self):
         raise ValueError("FSDP state_dict is None. Call set_fsdp_state_dict before patch_fsdp.")
 
     diffusion_model = self.model.diffusion_model
+    dense_dtype_aligned = _align_dense_meta_dtypes_from_state_dict(
+        diffusion_model, self.fsdp_state_dict
+    )
+    if dense_dtype_aligned:
+        print(
+            f"[Rank {self.rank}] Preserved checkpoint dtype for {dense_dtype_aligned} dense FSDP parameters"
+        )
+
     fsdp_kwargs = {"reshard_after_forward": True}
+    mp_policy = select_fsdp_mixed_precision_policy(self)
+    if mp_policy is not None:
+        fsdp_kwargs["mp_policy"] = mp_policy
+        print("[FSDP] BF16 mixed-precision policy enabled for parameter all-gather and forward")
+
     has_qt_runtime = freeze_and_detect_qt(diffusion_model)
     has_quant_sd = _state_dict_has_quant_payload(self.fsdp_state_dict)
     use_quant_loader = has_qt_runtime or has_quant_sd
+
+    if use_quant_loader and mp_policy is not None:
+        aligned = align_fp8_logical_dtype(diffusion_model, torch.bfloat16)
+        if aligned > 0:
+            print(
+                f"[Rank {self.rank}] Aligned {aligned} FP8 logical dtypes to "
+                "BF16 for FSDP bias sharding"
+            )
 
     if use_quant_loader:
         base_model = _unwrap_base_model(self.model)
@@ -262,7 +357,7 @@ def patch_fsdp(self):
         print(f"[Rank {self.rank}] Excluding {len(excluded_modules)} ControlNet-shared modules from FSDP: "
               f"{[n for n, m in diffusion_model.named_modules() if m in excluded_modules]}")
 
-    fully_shard_bottom_up(
+    num_wrappers = fully_shard_bottom_up(
         diffusion_model,
         fsdp_kwargs=fsdp_kwargs,
         native_ignore_scale=not use_quant_loader,
@@ -304,7 +399,46 @@ def patch_fsdp(self):
         if count > 0:
             print(f"[Rank {self.rank}] Materialized {count} excluded ControlNet-shared params on {target_device}")
 
+    diagnostics = format_fsdp_diagnostics(summarize_fsdp_parameters(diffusion_model))
+    cuda_memory = ""
+    if target_device.type == "cuda":
+        allocated_mib = torch.cuda.memory_allocated(target_device) / (1024 * 1024)
+        reserved_mib = torch.cuda.memory_reserved(target_device) / (1024 * 1024)
+        cuda_memory = f" cuda_allocated={allocated_mib:.2f}MiB cuda_reserved={reserved_mib:.2f}MiB"
+    print(
+        f"[Rank {self.rank}][FSDP_DIAG] wrappers={num_wrappers} "
+        f"non_root_wrappers={num_wrappers - 1} {diagnostics}{cuda_memory}"
+    )
+
     _pre_init_fsdp(diffusion_model)
+    if os.environ.get("RAYLIGHT_RANK_DIAG", "0") == "1":
+        adaln = getattr(diffusion_model, "adaln_single", None)
+        linear = getattr(adaln, "linear", None)
+        if isinstance(linear, FSDPModule):
+            state = linear._get_fsdp_state()
+            group = state._fsdp_param_group
+            rows = []
+            if group is not None:
+                world_size = int(group.mesh_info.mesh.size())
+                for fsdp_param in group.fsdp_params:
+                    inner = fsdp_param._sharded_local_tensor
+                    inputs = fsdp_param.all_gather_inputs
+                    rows.append(
+                        {
+                            "param": fsdp_param._module_info.param_name,
+                            "inner_type": type(inner).__name__,
+                            "inner_dtype": str(inner.dtype),
+                            "has_pre_all_gather": hasattr(inner, "fsdp_pre_all_gather"),
+                            "orig_dtype": str(fsdp_param.orig_dtype),
+                            "param_dtype": str(fsdp_param.param_dtype),
+                            "gather": summarize_all_gather_inputs(inputs, world_size),
+                        }
+                    )
+            print(
+                f"[Rank {self.rank}][FSDP_GATHER_PLAN] module=adaln_single.linear rows={rows}",
+                flush=True,
+            )
+
     self.fsdp_state_dict = None
 
     print("FSDP registered successfully.")
@@ -336,6 +470,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
         self.device_mesh = device_mesh
         self.is_cpu_offload = is_cpu_offload
         self._has_quantized_dtensor_shards: bool | None = None
+        self.fsdp_param_dtype: torch.dtype | None = None
         self.patch_fsdp = patch_fsdp.__get__(self, FSDPModelPatcher)
 
     def is_dynamic(self):
@@ -453,6 +588,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
         n.device_mesh = self.device_mesh
         n.is_cpu_offload = self.is_cpu_offload
         n._has_quantized_dtensor_shards = self._has_quantized_dtensor_shards
+        n.fsdp_param_dtype = self.fsdp_param_dtype
 
         return n
 

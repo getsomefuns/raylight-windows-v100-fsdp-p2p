@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "raylight"
 version = "1.9.0"
-description = "Enable tensor split multi gpu capability in Comfy UI"
+description = "Experimental native-Windows dual-V100 FSDP2 and CUDA P2P support for Raylight"
 authors = [
   {name = "Micko Lesmana", email = "mickolesmana@gmail.com"}
 ]
@@ -29,17 +29,10 @@ dev = [
 ]
 
 [project.urls]
-bugs = "https://github.com/komikndr/raylight/issues"
-homepage = "https://github.com/komikndr/raylight"
-Repository = "https://github.com/komikndr/raylight"
-
-
-[tool.comfy]
-PublisherId = "komikndr"
-DisplayName = "raylight"
-repository = "https://github.com/komikndr/raylight"
-Icon = "https://github.com/komikndr/raylight/blob/main/icon.png?raw=true"
-
+Issues = "https://github.com/getsomefuns/raylight-windows-v100-fsdp-p2p/issues"
+Homepage = "https://github.com/getsomefuns/raylight-windows-v100-fsdp-p2p"
+Repository = "https://github.com/getsomefuns/raylight-windows-v100-fsdp-p2p"
+Upstream = "https://github.com/komikndr/raylight"
 
 [tool.setuptools.package-data]
 "*" = ["*.*"]

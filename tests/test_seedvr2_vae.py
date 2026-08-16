@@ -4,9 +4,15 @@ import types
 from unittest.mock import patch
 from contextlib import nullcontext
 
+import os
+from pathlib import Path
 import sys
-sys.path.insert(0, "/home/pandaemon/ComfyUI/custom_nodes/raylight")
-sys.path.insert(0, "/home/pandaemon/ComfyUI")
+
+RAYLIGHT_ROOT = Path(__file__).resolve().parents[1]
+COMFY_ROOT = Path(os.environ.get("RAYLIGHT_COMFY_ROOT", RAYLIGHT_ROOT.parents[1]))
+for candidate in (str(RAYLIGHT_ROOT), str(COMFY_ROOT)):
+    if candidate not in sys.path:
+        sys.path.insert(0, candidate)
 
 from src.raylight.distributed_worker.ray_worker_vae import (
     ray_vae_decode_partial_impl,

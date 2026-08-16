@@ -5,6 +5,7 @@ import json
 import logging
 import functools
 import time
+import statistics
 from datetime import timedelta
 
 import torch
@@ -34,6 +35,7 @@ from raylight.distributed_worker.pipefusion_state import (
 from raylight.distributed_worker.parallel_group_manager import (
     initialize_xfuser_parallel,
     requires_xfuser_parallel,
+    validate_hybrid_topology,
 )
 from raylight.distributed_worker.a2a_trace import create_a2a_tracer, trace_a2a_capture
 from raylight.distributed_worker.ray_worker_controlnet import (
@@ -56,15 +58,128 @@ from raylight.distributed_worker.windows_p2p import (
     CudaP2PAllToAll,
     DEFAULT_WINDOWS_P2P_CAPACITY_BYTES,
     WindowsSpinControl,
-    make_all_to_all_router,
+    install_collective_routers,
+    restore_collective_routers,
     should_use_safetensors_mmap,
     synchronized_model_load,
 )
 from raylight.comfy_dist.quant_ops import patch_temp_fix_ck_ops
+from raylight.comfy_dist.fsdp_utils import summarize_fsdp_parameters
 from ray.exceptions import RayActorError
 
 
 _WORKER_AIMDO_INIT_ATTEMPTED = False
+
+def windows_p2p_health_iterations(
+    size_bytes,
+    target_remote_bytes=100 * 1024**3,
+    minimum_iterations=100,
+):
+    if size_bytes <= 0 or size_bytes % 2:
+        raise ValueError(f"health-check size must be a positive even byte count, got {size_bytes}")
+    if target_remote_bytes < 0:
+        raise ValueError("target_remote_bytes cannot be negative")
+    if minimum_iterations < 1:
+        raise ValueError("minimum_iterations must be positive")
+    remote_bytes_per_iteration = size_bytes // 2
+    target_iterations = (
+        target_remote_bytes + remote_bytes_per_iteration - 1
+    ) // remote_bytes_per_iteration
+    return max(minimum_iterations, target_iterations)
+
+
+def windows_p2p_warmup_ready(checks, minimum_gib_s):
+    if minimum_gib_s < 0:
+        raise ValueError("minimum_gib_s cannot be negative")
+    ranks = []
+    values = []
+    for check in checks:
+        ranks.append(int(check["rank"]))
+        values.append(float(check["remote_gib_s"]))
+    if len(ranks) != 2 or set(ranks) != {0, 1}:
+        raise ValueError(
+            f"Windows P2P warmup requires exactly ranks 0 and 1, found {sorted(ranks)}"
+        )
+    return all(value >= minimum_gib_s for value in values)
+
+
+def summarize_windows_p2p_health(check_trials):
+    if not check_trials:
+        raise ValueError("at least one Windows P2P health trial is required")
+
+    samples_by_rank = {}
+    expected_ranks = None
+    for trial_index, checks in enumerate(check_trials):
+        trial_ranks = set()
+        for check in checks:
+            rank = int(check["rank"])
+            if rank in trial_ranks:
+                raise ValueError(
+                    f"duplicate Windows P2P health rank {rank} in trial {trial_index}"
+                )
+            trial_ranks.add(rank)
+            samples_by_rank.setdefault(rank, []).append(float(check["remote_gib_s"]))
+        if expected_ranks is None:
+            expected_ranks = trial_ranks
+        elif trial_ranks != expected_ranks:
+            raise ValueError(
+                f"Windows P2P health rank mismatch in trial {trial_index}: "
+                f"expected {sorted(expected_ranks)}, found {sorted(trial_ranks)}"
+            )
+
+    return [
+        {
+            "rank": rank,
+            "samples_gib_s": samples,
+            "median_gib_s": statistics.median(samples),
+            "min_gib_s": min(samples),
+            "max_gib_s": max(samples),
+        }
+        for rank, samples in sorted(samples_by_rank.items())
+    ]
+
+
+def trace_windows_p2p_profile(function):
+    """Emit one aggregate P2P profile line around a sampler invocation."""
+
+    @functools.wraps(function)
+    def wrapped(worker, *args, **kwargs):
+        endpoint = getattr(worker, "_windows_p2p", None)
+        if endpoint is None:
+            return function(worker, *args, **kwargs)
+        initial = endpoint.profile_snapshot(reset=True)
+        if not initial.get("enabled", False):
+            return function(worker, *args, **kwargs)
+
+        started_ns = time.perf_counter_ns()
+        status = "success"
+        error_type = None
+        try:
+            return function(worker, *args, **kwargs)
+        except BaseException as exc:
+            status = "error"
+            error_type = type(exc).__name__
+            raise
+        finally:
+            profile = endpoint.profile_snapshot(reset=True)
+            payload = {
+                "elapsed_ns": time.perf_counter_ns() - started_ns,
+                "invocation": int(getattr(worker, "_sampler_invocation", 0)),
+                "pid": os.getpid(),
+                "profile": profile,
+                "rank": int(worker.local_rank),
+                "sampler": function.__name__,
+                "status": status,
+                "time_ns": time.time_ns(),
+            }
+            if error_type is not None:
+                payload["error_type"] = error_type
+            print(
+                f"[RAYLIGHT_P2P_PROFILE] {json.dumps(payload, sort_keys=True)}",
+                flush=True,
+            )
+
+    return wrapped
 
 
 def _raylight_rank_diag_enabled():
@@ -98,6 +213,14 @@ def _raylight_rank_diag(worker, invocation, event, **fields):
         payload["cuda_reserved"] = torch.cuda.memory_reserved()
     payload.update(fields)
     print(f"[RAYLIGHT_RANK_DIAG] {json.dumps(payload, ensure_ascii=False, sort_keys=True)}", flush=True)
+
+
+def prepare_sampling_with_cuda_trim(fn, *args, **kwargs):
+    """Run Comfy preparation, then return cached blocks to CUDA before forward."""
+    result = fn(*args, **kwargs)
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+    return result
 
 
 # Developer reminder, Checking model parameter outside ray actor is very expensive (e.g Comfy main thread)
@@ -420,6 +543,15 @@ def _build_ray_guider(model, guider_spec):
     return guider
 
 
+def validate_windows_p2p_launch(world_size, shard_size, parallel_dict):
+    """Validate the fixed two-rank Windows P2P topology for USP or FSDP inference."""
+    if world_size != 2 or shard_size != 2:
+        raise ValueError(
+            "RAYLIGHT_WINDOWS_P2P=1 requires two ranks and shard_size=2"
+        )
+
+    validate_hybrid_topology(world_size, shard_size, parallel_dict)
+
 class RayWorker:
     def __init__(self, local_rank, device_id, parallel_dict):
         worker_cli_args = _apply_worker_comfy_cli_args_from_env()
@@ -449,7 +581,7 @@ class RayWorker:
         self.pipefusion_stage = None
         self.xfuser_parallel = None
         self._windows_p2p = None
-        self._original_all_to_all_single = None
+        self._windows_p2p_original_collectives = None
         self._sampler_invocation = 0
 
         self.is_model_loaded = False
@@ -576,6 +708,22 @@ class RayWorker:
 
                 synchronized_load._raylight_model_load_sync_wrapped = True
                 comfy_model_management.LoadedModel.model_load = synchronized_load
+            if self.parallel_dict.get("is_fsdp", False):
+                import comfy.sampler_helpers as comfy_sampler_helpers
+
+                original_prepare = comfy_sampler_helpers.prepare_sampling
+                if not getattr(original_prepare, "_raylight_cuda_trim_wrapped", False):
+
+                    @functools.wraps(original_prepare)
+                    def prepare_with_cuda_trim(*args, **kwargs):
+                        return prepare_sampling_with_cuda_trim(
+                            original_prepare, *args, **kwargs
+                        )
+
+                    prepare_with_cuda_trim._raylight_cuda_trim_wrapped = True
+                    comfy_sampler_helpers.prepare_sampling = prepare_with_cuda_trim
+                    print("[FSDP] CUDA cache trim enabled after prepare_sampling")
+
 
         if not _raylight_rank_diag_enabled():
             return
@@ -614,8 +762,6 @@ class RayWorker:
             raise RuntimeError("Windows CUDA P2P backend is only available on Windows")
         if self.global_world_size != 2 or self.shard_size != 2:
             raise ValueError("Windows CUDA P2P backend currently requires exactly two ranks")
-        if self.parallel_dict.get("is_fsdp"):
-            raise ValueError("Windows CUDA P2P backend does not support FSDP")
         self._windows_p2p_control = WindowsSpinControl(group_name, self.local_rank)
         self._windows_p2p = CudaP2PAllToAll(
             self.local_rank,
@@ -664,19 +810,18 @@ class RayWorker:
     def enable_windows_p2p(self):
         if self._windows_p2p is None:
             raise RuntimeError("Windows CUDA P2P backend is not connected")
-        if self._original_all_to_all_single is None:
-            self._original_all_to_all_single = dist.all_to_all_single
-            dist.all_to_all_single = make_all_to_all_router(
+        if getattr(self, "_windows_p2p_original_collectives", None) is None:
+            self._windows_p2p_original_collectives = install_collective_routers(
                 self._windows_p2p,
-                self._original_all_to_all_single,
+                dist,
             )
         return True
 
     def disable_windows_p2p(self):
-        original = getattr(self, "_original_all_to_all_single", None)
-        if original is not None:
-            dist.all_to_all_single = original
-            self._original_all_to_all_single = None
+        originals = getattr(self, "_windows_p2p_original_collectives", None)
+        if originals is not None:
+            restore_collective_routers(dist, originals)
+            self._windows_p2p_original_collectives = None
         return True
 
     def get_meta_model(self):
@@ -817,6 +962,32 @@ class RayWorker:
             self.active_request_key = None
             self.is_model_loaded = False
             raise
+
+    def fsdp_preflight(self):
+        if not self.parallel_dict.get("is_fsdp", False):
+            raise ValueError("FSDP preflight requires RayInitializer FSDP=true")
+        if self.model is None:
+            raise ValueError("FSDP preflight requires RayUNETLoader to load a model first")
+
+        self._patch_fsdp_for_sampling()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        base_model = getattr(self.model, "model", self.model)
+        diffusion_model = base_model.diffusion_model
+        diagnostics = summarize_fsdp_parameters(diffusion_model)
+        endpoint = getattr(self, "_windows_p2p", None)
+        result = {
+            "rank": int(self.local_rank),
+            "world_size": int(self.global_world_size),
+            "is_fsdp_module": isinstance(diffusion_model, FSDPModule),
+            "p2p_next_operation_id": int(getattr(endpoint, "_operation_id", 0)),
+            "cuda_allocated_bytes": int(torch.cuda.memory_allocated()) if torch.cuda.is_available() else 0,
+            "cuda_reserved_bytes": int(torch.cuda.memory_reserved()) if torch.cuda.is_available() else 0,
+            **diagnostics,
+        }
+        print(f"[Rank {self.local_rank}][FSDP_PREFLIGHT] {json.dumps(result, sort_keys=True)}", flush=True)
+        return result
 
     def _normalize_model_options(self, model_options):
         if not model_options:
@@ -1251,6 +1422,7 @@ class RayWorker:
                         lora_model,
                         strength_model,
                         dynamic_sidecar=dynamic_sidecar,
+                        defer_device_move=True,
                         fallback_to_patches=not self.parallel_dict["is_quant"],
                     )
                 else:
@@ -1312,6 +1484,7 @@ class RayWorker:
     @patch_ray_tqdm
     @patch_enable_comfy_kitchen_fsdp
     @trace_a2a_capture
+    @trace_windows_p2p_profile
     def custom_sampler_advanced(
         self,
         add_noise,
@@ -1428,6 +1601,7 @@ class RayWorker:
     @patch_ray_tqdm
     @patch_enable_comfy_kitchen_fsdp
     @trace_a2a_capture
+    @trace_windows_p2p_profile
     def custom_sampler(
         self,
         add_noise,
@@ -1566,6 +1740,7 @@ class RayWorker:
     @patch_ray_tqdm
     @patch_enable_comfy_kitchen_fsdp
     @trace_a2a_capture
+    @trace_windows_p2p_profile
     def common_ksampler(
         self,
         seed,
@@ -1759,14 +1934,27 @@ def make_ray_actor_fn(world_size, parallel_dict):
         for actor in ray_actors["workers"]:
             ray.get(actor.__ray_ready__.remote())
         if is_windows() and os.environ.get("RAYLIGHT_WINDOWS_P2P") == "1":
-            if world_size != 2 or shard_size != 2 or parallel_dict.get("is_fsdp"):
-                raise ValueError(
-                    "RAYLIGHT_WINDOWS_P2P=1 requires two ranks, shard_size=2, and FSDP disabled"
-                )
+            validate_windows_p2p_launch(world_size, shard_size, parallel_dict)
             capacity_bytes = int(
                 os.environ.get("RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES", str(DEFAULT_WINDOWS_P2P_CAPACITY_BYTES))
             )
             health_check_bytes = min(capacity_bytes * 2, 115_343_360)
+            health_target_gib = float(
+                os.environ.get("RAYLIGHT_WINDOWS_P2P_HEALTH_REMOTE_GIB", "100")
+            )
+            health_iterations = windows_p2p_health_iterations(
+                health_check_bytes,
+                target_remote_bytes=int(health_target_gib * 2**30),
+                minimum_iterations=max(1, int(os.environ.get("RAYLIGHT_WINDOWS_P2P_HEALTH_MIN_ITERATIONS", "100"))),
+            )
+            warmup_target_gib = float(
+                os.environ.get("RAYLIGHT_WINDOWS_P2P_WARMUP_REMOTE_GIB", "20")
+            )
+            warmup_iterations = windows_p2p_health_iterations(
+                health_check_bytes,
+                target_remote_bytes=int(warmup_target_gib * 2**30),
+                minimum_iterations=max(1, int(os.environ.get("RAYLIGHT_WINDOWS_P2P_HEALTH_MIN_ITERATIONS", "100"))),
+            )
             group_name = f"raylight_{os.getpid()}_{time.time_ns()}"
             metadata = ray.get(
                 [
@@ -1780,17 +1968,49 @@ def make_ray_actor_fn(world_size, parallel_dict):
                     for rank in range(2)
                 ]
             )
-            checks = ray.get(
-                [actor.check_windows_p2p.remote(health_check_bytes) for actor in ray_actors["workers"]]
-            )
             minimum_gib_s = float(os.environ.get("RAYLIGHT_WINDOWS_P2P_MIN_GIB_S", "50"))
-            slow = [check for check in checks if check["remote_gib_s"] < minimum_gib_s]
+            warmup_trials = max(
+                1, int(os.environ.get("RAYLIGHT_WINDOWS_P2P_WARMUP_TRIALS", "5"))
+            )
+            warmup_checks = []
+            for _ in range(warmup_trials):
+                checks = ray.get(
+                    [
+                        actor.check_windows_p2p.remote(health_check_bytes, warmup_iterations)
+                        for actor in ray_actors["workers"]
+                    ]
+                )
+                warmup_checks.append(checks)
+                if windows_p2p_warmup_ready(checks, minimum_gib_s):
+                    break
+            health_trials = max(
+                1, int(os.environ.get("RAYLIGHT_WINDOWS_P2P_HEALTH_TRIALS", "5"))
+            )
+            check_trials = [
+                ray.get(
+                    [
+                        actor.check_windows_p2p.remote(health_check_bytes, health_iterations)
+                        for actor in ray_actors["workers"]
+                    ]
+                )
+                for _ in range(health_trials)
+            ]
+            health = summarize_windows_p2p_health(check_trials)
+            slow = [check for check in health if check["median_gib_s"] < minimum_gib_s]
             if slow:
                 raise RuntimeError(
-                    f"Windows CUDA P2P health check below {minimum_gib_s} GiB/s: {checks}"
+                    f"Windows CUDA P2P median health check below {minimum_gib_s} "
+                    f"GiB/s: health={health}, trials={check_trials}"
                 )
             ray.get([actor.enable_windows_p2p.remote() for actor in ray_actors["workers"]])
-            print(f"[Raylight] Windows CUDA P2P enabled: {checks}")
+            print(
+                f"[Raylight] Windows CUDA P2P enabled: health={health}, "
+                f"iterations_per_trial={health_iterations}, "
+                f"target_remote_gib={health_target_gib}, "
+                f"warmup_iterations_per_trial={warmup_iterations}, "
+                f"warmup_target_remote_gib={warmup_target_gib}, warmup={warmup_checks}, "
+                f"trials={check_trials}"
+            )
         return ray_actors
 
     return _init_ray_actor

@@ -14,6 +14,8 @@ import time
 import torch
 import torch.distributed as dist
 from torch.multiprocessing.reductions import rebuild_cuda_tensor, reduce_tensor
+from raylight.distributed_worker.collective_profile import create_collective_profiler
+
 
 
 DEFAULT_WINDOWS_P2P_CAPACITY_BYTES = 128 * 1024 * 1024
@@ -34,6 +36,25 @@ def synchronized_model_load(local_budget, load_model, reduce_min, barrier):
 
 class P2PGroupError(RuntimeError):
     """The endpoint is no longer safe to use after a collective failure."""
+
+
+class CudaEventWork(dist.Work):
+    """Torch Work handle backed by a CUDA completion event."""
+
+    def __init__(self, event, device):
+        super().__init__()
+        self._event = event
+        self._device = device
+
+    def wait(self, timeout=None):
+        torch.cuda.current_stream(self._device).wait_event(self._event)
+        return True
+
+    def is_completed(self):
+        return self._event.query()
+
+    def synchronize(self):
+        return self.wait()
 
 
 def export_cuda_tensor_ipc(tensor):
@@ -114,6 +135,62 @@ def make_all_to_all_router(endpoint, fallback):
     return all_to_all_single
 
 
+def make_all_gather_into_tensor_router(endpoint, fallback):
+    """Route supported two-rank CUDA all-gather operations to P2P."""
+
+    def all_gather_into_tensor(
+        output_tensor,
+        input_tensor,
+        group=None,
+        async_op=False,
+    ):
+        if (
+            output_tensor.is_cuda
+            and input_tensor.is_cuda
+            and dist.get_world_size(group) == 2
+        ):
+            return endpoint.all_gather_into_tensor(
+                output_tensor,
+                input_tensor,
+                async_op=async_op,
+            )
+        if output_tensor.is_cuda or input_tensor.is_cuda:
+            raise RuntimeError(
+                "Windows P2P all-gather refuses CUDA fallback to Gloo"
+            )
+        return fallback(
+            output_tensor,
+            input_tensor,
+            group=group,
+            async_op=async_op,
+        )
+
+    return all_gather_into_tensor
+
+
+def install_collective_routers(endpoint, dist_module=dist):
+    """Install the Windows P2P data-plane routers and return originals."""
+    originals = {
+        "all_to_all_single": dist_module.all_to_all_single,
+        "all_gather_into_tensor": dist_module.all_gather_into_tensor,
+    }
+    dist_module.all_to_all_single = make_all_to_all_router(
+        endpoint,
+        originals["all_to_all_single"],
+    )
+    dist_module.all_gather_into_tensor = make_all_gather_into_tensor_router(
+        endpoint,
+        originals["all_gather_into_tensor"],
+    )
+    return originals
+
+
+def restore_collective_routers(dist_module, originals):
+    """Restore torch.distributed collectives previously replaced by P2P routers."""
+    dist_module.all_to_all_single = originals["all_to_all_single"]
+    dist_module.all_gather_into_tensor = originals["all_gather_into_tensor"]
+
+
 def copy_plan(rank: int, total_bytes: int):
     """Return destination/source byte slices for a two-rank equal all-to-all."""
     if rank not in (0, 1):
@@ -125,6 +202,50 @@ def copy_plan(rank: int, total_bytes: int):
         return ((0, half, "input", 0, half), (half, total_bytes, "peer", 0, half))
     return ((0, half, "peer", 0, half), (half, total_bytes, "input", half, total_bytes))
 
+
+def chunk_ranges(total_bytes: int, capacity_bytes: int) -> tuple[tuple[int, int], ...]:
+    """Split a byte payload into ordered half-open ranges."""
+    if total_bytes < 0:
+        raise ValueError("total_bytes must be non-negative")
+    if capacity_bytes <= 0:
+        raise ValueError("capacity_bytes must be positive")
+    return tuple(
+        (start, min(start + capacity_bytes, total_bytes))
+        for start in range(0, total_bytes, capacity_bytes)
+    )
+
+
+def all_gather_copy_plan(rank: int, shard_bytes: int):
+    """Return destination/source byte slices for a two-rank all-gather."""
+    if rank == 0:
+        return ((0, shard_bytes, "input", 0, shard_bytes), (shard_bytes, shard_bytes * 2, "peer", 0, shard_bytes))
+    return ((0, shard_bytes, "peer", 0, shard_bytes), (shard_bytes, shard_bytes * 2, "input", 0, shard_bytes))
+
+def all_gather_chunk_copy_plan(
+    rank: int,
+    shard_bytes: int,
+    chunk_start: int,
+    chunk_end: int,
+):
+    """Return byte copies for one chunk of a two-rank all-gather."""
+    chunk_bytes = chunk_end - chunk_start
+    local_start = rank * shard_bytes + chunk_start
+    peer_start = (1 - rank) * shard_bytes + chunk_start
+    local = (
+        local_start,
+        local_start + chunk_bytes,
+        "input",
+        chunk_start,
+        chunk_end,
+    )
+    peer = (
+        peer_start,
+        peer_start + chunk_bytes,
+        "peer",
+        0,
+        chunk_bytes,
+    )
+    return (local, peer) if rank == 0 else (peer, local)
 
 def send_slice(rank: int, total_bytes: int):
     copy_plan(rank, total_bytes)
@@ -150,6 +271,20 @@ def validate_collective(output, input_tensor, capacity_bytes: int) -> int:
             f"remote payload {remote_bytes} exceeds P2P buffer capacity {capacity_bytes}"
         )
     return total_bytes
+
+
+def validate_all_gather(output, input_tensor, capacity_bytes: int) -> int:
+    """Return the local shard size for a two-rank all-gather."""
+    if not input_tensor.is_cuda or not output.is_cuda:
+        raise ValueError("Windows CUDA P2P all-gather requires CUDA tensors")
+    if not input_tensor.is_contiguous() or not output.is_contiguous():
+        raise ValueError("Windows CUDA P2P all-gather requires contiguous tensors")
+    if input_tensor.dtype != output.dtype:
+        raise ValueError("all-gather input and output must use the same dtype")
+    if output.numel() != input_tensor.numel() * 2:
+        raise ValueError("all-gather output must contain exactly twice the input elements")
+    shard_bytes = input_tensor.numel() * input_tensor.element_size()
+    return shard_bytes
 
 
 class CudaP2PAllToAll:
@@ -180,6 +315,8 @@ class CudaP2PAllToAll:
         # Zero is reserved for an uninitialized shared-memory control slot.
         self._operation_id = 1
         self._last_call_perf = None
+        self._profiler = create_collective_profiler()
+        self._profile_control_wait_ns = 0
         self._diag_enabled = os.environ.get("RAYLIGHT_RANK_DIAG", "0") == "1"
         self._send_buffer = torch.empty(capacity_bytes, dtype=torch.uint8, device="cuda:0")
         self._ready_event = torch.cuda.Event(interprocess=True)
@@ -238,6 +375,7 @@ class CudaP2PAllToAll:
         operation_id = self._operation_id
         self._operation_id += 1
         call_perf = time.perf_counter()
+        submit_started_ns = time.perf_counter_ns() if self._profiler.enabled else 0
         idle_seconds = None if self._last_call_perf is None else call_perf - self._last_call_perf
         self._last_call_perf = call_perf
         log_boundary = self._diag_enabled and (idle_seconds is None or idle_seconds >= 1.0)
@@ -298,6 +436,15 @@ class CudaP2PAllToAll:
                 self._consumed_event.record(self._stream)
 
             current_stream.wait_event(self._consumed_event)
+            if self._profiler.enabled:
+                self._profiler.record(
+                    "all_to_all",
+                    payload_bytes=total_bytes,
+                    remote_bytes=total_bytes // 2,
+                    chunks=1,
+                    control_wait_ns=int(wait_seconds * 1_000_000_000),
+                    submit_ns=time.perf_counter_ns() - submit_started_ns,
+                )
             return output
         except Exception as exc:
             peer_operation = None
@@ -314,6 +461,110 @@ class CudaP2PAllToAll:
             )
             self._fail(exc)
 
+    def _all_gather_chunk(
+        self,
+        input_bytes,
+        output_bytes,
+        shard_bytes,
+        chunk_start,
+        chunk_end,
+    ):
+        operation_id = self._operation_id
+        self._operation_id += 1
+        chunk_bytes = chunk_end - chunk_start
+
+        with torch.cuda.stream(self._stream):
+            if operation_id > 1:
+                self._stream.wait_event(self._peer_consumed_event)
+            self._send_buffer[:chunk_bytes].copy_(
+                input_bytes[chunk_start:chunk_end],
+                non_blocking=True,
+            )
+            self._ready_event.record(self._stream)
+
+        self.control.publish_ready(self.rank, operation_id, chunk_bytes)
+        wait_started_ns = time.perf_counter_ns() if self._profiler.enabled else 0
+        peer_chunk_bytes = self.control.wait_ready(
+            1 - self.rank,
+            operation_id,
+            timeout_seconds=self.timeout_seconds,
+        )
+        if self._profiler.enabled:
+            self._profile_control_wait_ns += time.perf_counter_ns() - wait_started_ns
+        if peer_chunk_bytes != chunk_bytes:
+            raise ValueError(
+                f"all-gather chunk size mismatch at operation {operation_id}: "
+                f"local={chunk_bytes}, peer={peer_chunk_bytes}"
+            )
+
+        with torch.cuda.stream(self._stream):
+            self._stream.wait_event(self._peer_ready_event)
+            for dst_start, dst_end, source_kind, src_start, src_end in (
+                all_gather_chunk_copy_plan(
+                    self.rank, shard_bytes, chunk_start, chunk_end
+                )
+            ):
+                source = input_bytes if source_kind == "input" else self._peer_buffer
+                output_bytes[dst_start:dst_end].copy_(
+                    source[src_start:src_end], non_blocking=True
+                )
+            self._consumed_event.record(self._stream)
+        return operation_id
+
+    def all_gather_into_tensor(self, output, input_tensor, async_op=False):
+        self._ensure_healthy()
+        if self._peer_buffer is None:
+            raise P2PGroupError("P2P endpoint is not connected")
+
+        shard_bytes = validate_all_gather(output, input_tensor, self.capacity_bytes)
+        operation_id = None
+        submit_started_ns = time.perf_counter_ns() if self._profiler.enabled else 0
+        chunk_count = 0
+        self._profile_control_wait_ns = 0
+        current_stream = torch.cuda.current_stream(0)
+
+        try:
+            input_bytes = input_tensor.view(torch.uint8).reshape(-1)
+            output_bytes = output.view(torch.uint8).reshape(-1)
+
+            self._stream.wait_stream(current_stream)
+            for chunk_start, chunk_end in chunk_ranges(shard_bytes, self.capacity_bytes):
+                chunk_count += 1
+                operation_id = self._all_gather_chunk(
+                    input_bytes, output_bytes, shard_bytes, chunk_start, chunk_end
+                )
+
+            current_stream.wait_event(self._consumed_event)
+            if self._profiler.enabled:
+                self._profiler.record(
+                    "all_gather",
+                    payload_bytes=shard_bytes * 2,
+                    remote_bytes=shard_bytes,
+                    chunks=chunk_count,
+                    control_wait_ns=self._profile_control_wait_ns,
+                    submit_ns=time.perf_counter_ns() - submit_started_ns,
+                )
+            if async_op:
+                return CudaEventWork(self._consumed_event, 0)
+            return None
+        except Exception as exc:
+            peer_operation = None
+            try:
+                peer_operation = self.control.peek_ready(1 - self.rank, operation_id)
+            except Exception:
+                pass
+            self._diag(
+                "all_gather_error",
+                operation_id=operation_id,
+                error=f"{type(exc).__name__}: {exc}",
+                peer_operation=peer_operation,
+                total_bytes=shard_bytes * 2,
+            )
+            self._fail(exc)
+
+    def profile_snapshot(self, reset=False):
+        return self._profiler.snapshot(reset=reset)
+
     def _diag(self, event, **fields):
         if not self._diag_enabled:
             return
@@ -326,7 +577,6 @@ class CudaP2PAllToAll:
         }
         payload.update(fields)
         print(f"[RAYLIGHT_P2P_DIAG] {json.dumps(payload, sort_keys=True)}", flush=True)
-
     def close(self):
         self._peer_buffer = None
         self._peer_ready_event = None

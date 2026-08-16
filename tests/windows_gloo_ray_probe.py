@@ -25,7 +25,7 @@ MODULE_PATH = (
 
 @ray.remote(num_gpus=1)
 class GlooCudaActor:
-    def run(self, rank: int, port: int, module_path: str):
+    def run(self, rank: int, port: int, module_path: str, master_addr: str):
         import torch
         import torch.distributed as dist
 
@@ -39,7 +39,7 @@ class GlooCudaActor:
         host = windows_gloo.init_windows_gloo_process_group(
             rank=rank,
             world_size=2,
-            master_addr="127.0.0.1",
+            master_addr=master_addr,
             port=port,
             timeout=timedelta(seconds=60),
         )
@@ -59,6 +59,8 @@ class GlooCudaActor:
 
 
 if __name__ == "__main__":
+    master_addr = os.environ.get("RAYLIGHT_PROBE_MASTER_ADDR", "127.0.0.1")
+    port = int(os.environ.get("RAYLIGHT_PROBE_PORT", "29660"))
     ray_temp = Path(os.environ["TEMP"]) / "raylight-ray-probe"
     ray.init(
         num_gpus=2,
@@ -69,7 +71,10 @@ if __name__ == "__main__":
     try:
         actors = [GlooCudaActor.remote() for _ in range(2)]
         results = ray.get(
-            [actor.run.remote(rank, 29660, str(MODULE_PATH)) for rank, actor in enumerate(actors)],
+            [
+                actor.run.remote(rank, port, str(MODULE_PATH), master_addr)
+                for rank, actor in enumerate(actors)
+            ],
             timeout=90,
         )
         for result in results:

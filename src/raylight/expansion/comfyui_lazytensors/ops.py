@@ -113,8 +113,62 @@ class SafetensorOps(comfy.ops.manual_cast):
             torch.nn.Module.__init__(self)
             self.in_features = in_features
             self.out_features = out_features
+            self._orig_shape = (out_features, in_features)
+            self.factory_kwargs = {
+                "device": device,
+                "dtype": dtype if dtype is not None else torch.float32,
+            }
+            self._disabled_formats = set()
+            self._full_precision_mm = False
+            self._full_precision_mm_config = False
+            self.quant_format = None
+            self.layout_type = None
             self.weight = None
             self.bias = None
+
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if f"{prefix}comfy_quant" not in state_dict:
+                return SafetensorLayer._load_from_state_dict(
+                    self,
+                    state_dict,
+                    prefix,
+                    local_metadata,
+                    strict,
+                    missing_keys,
+                    unexpected_keys,
+                    error_msgs,
+                )
+
+            if f"{prefix}bias" in state_dict:
+                self.bias = torch.nn.Parameter(
+                    torch.empty(self.out_features, **self.factory_kwargs),
+                    requires_grad=False,
+                )
+
+            def module_load(*args):
+                return torch.nn.Module._load_from_state_dict(self, *args)
+
+            comfy.ops._load_quantized_module(
+                self,
+                module_load,
+                state_dict,
+                prefix,
+                local_metadata,
+                strict,
+                missing_keys,
+                unexpected_keys,
+                error_msgs,
+                load_extra_params=True,
+            )
 
         def forward(self, input):
             weight, bias = self.cast_bias_weight(input)

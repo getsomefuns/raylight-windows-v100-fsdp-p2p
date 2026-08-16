@@ -409,7 +409,6 @@ class RayLTXPerturbedAttentionNode:
             return v
 
         def seg_fn(q, k, v, heads, attn_precision=None, transformer_options=None):
-            del k
             _, _, _ = q.shape
             _, _, frames, height, width = transformer_options["original_shape"]
             q = rearrange(q, "b (f h w) d -> b (f d) w h", h=height, w=width)

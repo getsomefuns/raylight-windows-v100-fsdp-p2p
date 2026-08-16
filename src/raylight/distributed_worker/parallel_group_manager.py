@@ -92,6 +92,29 @@ def requires_xfuser_parallel(parallel_dict: dict) -> bool:
     return bool(parallel_dict.get("is_xdit") or parallel_dict.get("pipefusion_enabled"))
 
 
+def validate_hybrid_topology(world_size: int, shard_size: int, parallel_dict: dict) -> str:
+    """Classify a launch and validate the supported two-V100 hybrid topology."""
+    is_fsdp = bool(parallel_dict.get("is_fsdp"))
+    is_ulysses = bool(parallel_dict.get("is_xdit"))
+    if not is_fsdp:
+        return "ulysses" if is_ulysses else "single"
+    if not is_ulysses:
+        return "fsdp"
+
+    requirements = (
+        (world_size == 2, "Windows P2P hybrid mode requires exactly two workers"),
+        (shard_size == 2, "Windows P2P hybrid mode requires shard_size=2"),
+        (int(parallel_dict.get("dp_degree", 1)) == 1, "Windows P2P hybrid mode requires dp_degree=1"),
+        (int(parallel_dict.get("ulysses_degree", 1)) == 2, "Windows P2P hybrid mode requires ulysses_degree=2"),
+        (int(parallel_dict.get("ring_degree", 1)) == 1, "Windows P2P hybrid mode requires ring_degree=1"),
+        (int(parallel_dict.get("cfg_degree", 1)) == 1, "Windows P2P hybrid mode requires cfg_degree=1"),
+    )
+    for supported, message in requirements:
+        if not supported:
+            raise ValueError(message)
+    return "hybrid"
+
+
 def initialize_xfuser_parallel(local_rank: int, world_size: int, parallel_dict: dict) -> XFuserParallelContext:
     base_config = XFuserParallelConfig.from_parallel_dict(parallel_dict)
     if world_size % base_config.model_parallel_size != 0:

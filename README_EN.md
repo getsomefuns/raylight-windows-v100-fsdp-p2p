@@ -1,99 +1,182 @@
-# Raylight Windows Dual-V100 CUDA P2P
+# Raylight Windows Dual-V100 FSDP + CUDA P2P
 
 [简体中文](README.md) | [English](README_EN.md)
 
 > **Experimental Preview**
-> A Raylight CUDA IPC/P2P communication branch for native Windows systems with
-> two Tesla V100-SXM2-16GB GPUs, TCC mode, and NVLink. It is not a general NCCL
-> replacement and does not provide FSDP on Windows.
+> Native-Windows Raylight branch for two Tesla V100-SXM2-16GB GPUs in TCC mode, with FSDP2 weight sharding and CUDA IPC/P2P communication over NVLink.
 
-This project gives eligible two-GPU Ulysses
-`torch.distributed.all_to_all_single` calls a direct GPU data path. Instead of
-staging CUDA tensors through host memory with Gloo, it transfers them through
-CUDA IPC, interprocess CUDA events, and peer-to-peer GPU access. Gloo/TCPStore
-still handles initialization, control, barriers, and collectives that do not
-qualify for the fast path.
+This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 Diffusion Model is genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
-## Upstream and Authorship
+This is not Windows NCCL and not a general PyTorch `ProcessGroup`. It is a targeted compatibility layer for a single machine, exactly two ranks, Windows V100 inference.
 
-This repository is an experimental branch of
-[Raylight](https://github.com/komikndr/raylight), created and maintained
-upstream by **Komikndr / Micko Lesmana**. Raylight manages multi-GPU ComfyUI
-workers through Ray and integrates parallelism from xDiT/xFuser, yunchang, and
-FSDP.
+## Upstream and authorship
+
+This repository is derived from [Raylight](https://github.com/komikndr/raylight), created and maintained upstream by **Komikndr / Micko Lesmana**. Raylight uses Ray to manage ComfyUI GPU workers and integrates xDiT/xFuser, yunchang, and FSDP parallelism.
 
 - Upstream repository: <https://github.com/komikndr/raylight>
-- Upstream base for this branch: Raylight 1.9.0, commit
-  `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
+- Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
 - License: Apache License 2.0
-- Branch change log: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
-- Maintained test record: [docs/TESTING.md](docs/TESTING.md)
+- Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
+- Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
+- FSDP test and acceptance record: [docs/WINDOWS_V100_FSDP_TESTING.md](docs/WINDOWS_V100_FSDP_TESTING.md)
+- Historical P2P/Ulysses record: [docs/TESTING.md](docs/TESTING.md)
 
-This project preserves the upstream license, copyright, and attribution. The
-Windows P2P compatibility layer, tests, scripts, and documentation are
-experimental additions maintained in this branch. They do not imply support or
-endorsement from the upstream author.
+The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
-## Project Scope
+## What this branch does
 
-### Who this branch is for
+It is intended for users who:
 
-This branch targets users who:
+- must run native Windows rather than WSL or Linux;
+- have two Tesla V100-SXM2-16GB GPUs in TCC mode with working NVLink/CUDA P2P;
+- need the LTX 2.3 Diffusion Model weights split across both 16 GB GPUs;
+- want matched CUDA collectives to travel directly between GPUs instead of through host RAM;
+- accept the narrower scope and higher process overhead of Ray on Windows.
 
-- Must run native Windows and do not want to migrate an established ComfyUI
-  installation to WSL or Linux.
-- Have two Tesla V100-SXM2-16GB GPUs running in TCC mode.
-- Have working NVLink/CUDA peer access and want Raylight sequence-parallel
-  traffic to use GPU P2P instead of host-memory staging.
-- Accept that Ray on Windows is still Beta and remains less capable and often
-  slower than Linux with NCCL.
-- Can pin the validated software versions and run the complete preflight check
-  before starting a workflow.
+It provides:
 
-### What it provides
+- persistent FSDP2 weight sharding for a Diffusion Model loaded by `RayUNETLoader`;
+- a CUDA P2P `all_gather_into_tensor` path for FSDP2;
+- the previous CUDA P2P `all_to_all_single` path for Ulysses;
+- startup correctness and bandwidth gates;
+- bounded V100 compatibility paths for FP8/BF16 model execution;
+- worker-session reuse when topology and configuration are unchanged;
+- checked-in workflow, API payloads, probes, and test records.
 
-- A dedicated P2P fast path for synchronous, equally split, two-rank CUDA
-  `all_to_all_single` calls used by Raylight.
-- Gloo as the Windows-compatible process group, control plane, and fallback.
-- Startup validation of both element correctness and real P2P bandwidth.
-- Reuse of healthy Ray workers when the topology and configuration are
-  unchanged, reducing repeated initialization overhead.
-- Correctness, failure, and performance probes using actual LTX tensor sizes.
+It does not:
 
-### What it is not
+- replace or fork yunchang;
+- implement the complete NCCL API;
+- turn two 16 GB GPUs into a transparent 32 GB device;
+- shard every model or every ComfyUI node;
+- support GGUF with FSDP, training/backward collectives, multi-node execution, or arbitrary GPU counts.
 
-- It is not a replacement or fork of yunchang. yunchang still implements
-  Ulysses attention and tensor partitioning.
-- It is not a complete NCCL implementation for Windows.
-- It is not a general-purpose PyTorch `ProcessGroup`.
-- It does not enable FSDP on Windows, and two 16 GB GPUs do not become one
-  transparent 32 GB device.
-- USP primarily partitions sequence computation; model weights are normally
-  still replicated on both GPUs.
+## Current FSDP capability
 
-## Supported Scope
+### Do both GPUs compute?
 
-### Fast-path requirements
+Yes, during the FSDP diffusion samplers. In the final visually accepted run with the original BF16 distilled LoRA:
+
+- GPU0 peaked at 16,224 MiB, 100% utilization, and about 354.5 W;
+- GPU1 peaked at 16,156 MiB, 100% utilization, and about 348.4 W;
+- both ranks returned element-identical video and audio latents in both sampling stages.
+
+The whole workflow is not dual-GPU at every moment:
+
+| Workflow stage | GPU0 | GPU1 | Reason |
+|---|---:|---:|---|
+| Text encoding and image preprocessing | primary | mostly idle | ordinary ComfyUI nodes |
+| Diffusion sampler 1 | high load | high load | two-rank FSDP sampling |
+| Latent upscale | primary | mostly idle | ordinary upscaler node |
+| Diffusion sampler 2 | high load | high load | two-rank FSDP sampling |
+| Video/audio VAE decode | primary | mostly idle | ordinary VAE nodes |
+
+The precise claim is: **both GPUs compute during the FSDP diffusion stages; the entire workflow is not continuously dual-GPU.**
+
+### How weights are sharded
+
+This is not pipeline parallelism with half the layers on each GPU. For each FSDP weight tensor:
+
+1. each rank persistently owns half of the tensor;
+2. before the layer executes, both halves are temporarily gathered over CUDA P2P/NVLink;
+3. both GPUs execute the layer forward with the temporary full weight;
+4. the full weight is released and each rank returns to its persistent shard;
+5. the process repeats for the next layer.
+
+The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each rank retained about 11,203 MiB of Diffusion Model payload. Each GPU still needs temporary room for the active full layer, activations, LoRA, a 128 MiB P2P buffer, and CUDA workspaces, so peak VRAM can still approach 16 GB.
+
+### What is and is not sharded
+
+| Component | FSDP-sharded now? | Notes |
+|---|---|---|
+| LTX 2.3 Diffusion Model | Yes | loaded through `RayUNETLoader` |
+| Video/audio transformers inside LTXAV | Yes | part of the Diffusion Model |
+| Text Encoder | No | ordinary ComfyUI path |
+| Video VAE | No | ordinary `VAELoader` / tiled decode path |
+| Audio VAE | No | ordinary audio VAE decode path |
+| Spatial latent upscaler | No | ordinary loader/node |
+| Temporal upscaler | No by default | would require separate integration and validation |
+| Distilled LoRA | Supported, but not base-weight sharding | lazy CPU sidecar applied by both workers |
+| GGUF Diffusion Model | No | explicitly rejected with current FSDP |
+
+The original BF16 distilled LoRA passed a 121-frame visual, audio, and rank-consistency acceptance run. It increases host memory, transfer work, and runtime.
+
+### FSDP versus NCCL
+
+FSDP and NCCL serve different roles:
+
+- **FSDP** decides how parameters are sharded, gathered, and resharded.
+- **NCCL** is the common Linux/NVIDIA transport for GPU collectives.
+
+Typical upstream path:
+
+```text
+PyTorch FSDP2
+  -> ProcessGroupNCCL
+  -> NCCL collectives
+  -> NVLink / PCIe / network
+```
+
+This Windows branch:
+
+```text
+PyTorch FSDP2
+  -> torch.distributed.all_gather_into_tensor
+  -> targeted Windows collective router
+  -> CUDA IPC / P2P / NVLink
+```
+
+Gloo/TCPStore still handles rendezvous, group creation, barriers, and unmatched control operations. A matched FSDP CUDA weight payload is not silently downgraded to host-memory Gloo transport. The branch only implements the inference collectives required by the validated two-rank topology; it does not provide NCCL training, multi-node, or general topology capabilities.
+
+### Comparison
+
+| Capability | Upstream Raylight | Previous Windows P2P branch | This FSDP branch |
+|---|---|---|---|
+| Primary platform | Linux + NCCL | Windows dual V100 | Windows dual V100 |
+| Main parallel mode | USP/FSDP/CFG/DP | Ulysses USP | FSDP2 |
+| Persistent model weights | sharded with FSDP | full copy per GPU | Diffusion Model genuinely sharded |
+| CUDA data path | NCCL | P2P all-to-all | P2P all-gather plus all-to-all |
+| Scale | NCCL multi-GPU/multi-node | exactly two ranks | exactly two ranks |
+| Main value | standard general implementation | faster sampling for models that already fit | run a model that does not fit one 16 GB GPU |
+| Current performance status | model/hardware dependent | 10.28% fair warm-to-warm gain | correctness passed; 20% target not passed |
+
+## Host RAM and page file
+
+The final FSDP + LoRA run recorded:
+
+| Metric | Peak/result |
+|---|---:|
+| Physical RAM | about 62.6 GiB |
+| Windows committed memory | about 110 GiB |
+| Actual page-file use | about 476 MiB down to 466 MiB |
+| FSDP CPU offload | false |
+| safetensors mmap | true |
+
+The successful run did not move FSDP weight collectives through the page file. High host usage includes the ComfyUI process, two Ray workers, model structure and metadata, ordinary Text Encoder/VAE/Upscaler loading, the LoRA CPU sidecar, mmap mappings, and filesystem cache.
+
+A page file can delay a host OOM, but paging can stall one rank, slow sampling severely, and eventually trigger P2P coordination timeouts. It is not a performance expansion mechanism.
+
+## Validated platform
+
+### Hard requirements for the supported fast path
 
 | Item | Requirement |
 |---|---|
-| Operating system | Native 64-bit Windows, single host |
-| GPUs | Exactly two visible CUDA GPUs |
+| OS | native 64-bit Windows, one machine |
+| GPUs | exactly two visible CUDA GPUs |
 | Validated model | 2× Tesla V100-SXM2-16GB |
-| Driver mode | Both GPUs in TCC; WDDM is unsupported and untested |
-| GPU communication | CUDA peer access, CUDA IPC, and interprocess CUDA events |
-| Ray workers | Two workers / two ranks |
-| Parallel configuration | Ulysses=2, Ring=1, CFG=1, DP=1 |
-| Collective | Synchronous, CUDA, contiguous, equally split `all_to_all_single` |
-| FSDP | Must be disabled |
+| Driver model | both GPUs in TCC; WDDM is not a release configuration |
+| GPU transport | CUDA peer access, CUDA IPC, and cross-process CUDA events |
+| Ray topology | two workers / two ranks |
+| FSDP topology | FSDP=true, CPU Offload=false, Ulysses/Ring/CFG=0, DP=1 |
+| Supported collectives | two-rank CUDA `all_gather_into_tensor` and `all_to_all_single` |
+| Sharding scope | LTX 2.3 Diffusion Model only |
 
-Whether the GPUs are physically connected through one PCIe slot, a carrier, or
-a bridge chip is not a software admission rule. The actual requirements are
-working CUDA P2P and a passing correctness and bandwidth probe.
+The physical carrier-board or PCIe slot arrangement is not a software condition. The real gate is whether CUDA P2P works and the complete correctness/bandwidth probe passes.
 
-### Validated software matrix
+### Validated versions
 
-| Component | Validated version |
+| Component | Version |
 |---|---|
 | Windows | NT build 22631.6199 / 23H2 |
 | NVIDIA driver | 577.00 |
@@ -106,86 +189,45 @@ working CUDA P2P and a passing correctness and bandwidth probe.
 | xFuser | 0.4.5 |
 | yunchang | 0.6.4 |
 | ComfyUI | 0.31.0, commit `62b3c94bd45154f6486c7abf1b9efcacee96ea69` |
-| Raylight upstream base | 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf` |
-| Attention | `TORCH_EFFICIENT`, without FlashAttention |
+| Attention | `TORCH_EFFICIENT`; no FlashAttention |
 
-See [environment-windows-v100.json](environment-windows-v100.json) for the
-machine-readable matrix and
-[requirements-windows-v100.txt](requirements-windows-v100.txt) for the pinned
-Python dependencies.
+See [environment-windows-v100.json](environment-windows-v100.json) and [requirements-windows-v100.txt](requirements-windows-v100.txt) for machine-readable pins.
 
-## User Guide
+## Installation and use
 
-### 1. Prepare the hardware and driver
+### 1. Prepare the GPUs
 
-Before continuing, confirm that:
-
-1. Both V100 GPUs are in TCC mode.
-2. `nvidia-smi nvlink -s` reports active links.
-3. NVIDIA's `p2pBandwidthLatencyTest` passes peer-access, correctness, and
-   bandwidth tests.
-4. No old ComfyUI or Ray worker process is still occupying either GPU.
-
-The development system exposes six approximately `25.781 GB/s` NVLink links per
-V100. The full project probe measures about `59 GiB/s` of effective one-way
-remote transfer bandwidth. Other topologies may work, but they must pass the
-same preflight checks.
+Confirm that both V100 GPUs use TCC, active NVLink links are visible, NVIDIA's `p2pBandwidthLatencyTest` passes peer access and correctness, and no stale ComfyUI/Ray process owns the GPUs.
 
 ### 2. Install the pinned environment
 
-Use an isolated Python 3.10.11 environment. Do not modify another working
-ComfyUI installation in place.
+Use an isolated Python 3.10.11 environment. Do not modify unrelated ComfyUI installations.
 
 ```powershell
-$PY = "<path to Python 3.10.11>\python.exe"
+$PY = "<Python 3.10.11 path>\python.exe"
 cd <ComfyUI>\custom_nodes
-git clone --branch windows-v100-p2p `
-  https://github.com/getsomefuns/raylight-windows-v100-p2p.git raylight
+git clone `
+  https://github.com/getsomefuns/raylight-windows-v100-fsdp-p2p.git raylight
 
 & $PY -m pip install -r .\raylight\requirements-windows-v100.txt
 & $PY -m pip install -e .\raylight
 ```
 
-Important notes:
+The validated V100 environment is `torch==2.7.0+cu126`, which retains `sm_70`. Do not install FlashAttention for this configuration, and do not replace the wheel with the cu128/cu130 builds used by newer architectures.
 
-- The validated V100 environment is pinned to `torch==2.7.0+cu126`.
-- Do not install FlashAttention for this configuration.
-- Do not substitute cu128 or cu130 PyTorch wheels. This branch is validated
-  against the cu126 wheel that includes `sm_70` support.
-- Upstream Raylight's broad dependency ranges do not guarantee long-term
-  compatibility with the private PyTorch CUDA IPC interfaces used here. Use the
-  pinned dependency file when reproducing this setup.
-
-### 3. Run the environment preflight
-
-First run the basic checks, which do not leave Ray workers active:
+### 3. Run preflight
 
 ```powershell
 cd <ComfyUI>\custom_nodes\raylight
 .\scripts\verify-windows-v100.ps1 -PythonPath $PY
-```
-
-Then run the real two-actor CUDA P2P release gate:
-
-```powershell
 .\scripts\verify-windows-v100.ps1 -PythonPath $PY -RunP2PProbe
 ```
 
-The full probe checks:
-
-- Windows, Python, PyTorch, and key dependency versions.
-- GPU count, model, and TCC mode.
-- Visible NVLink links.
-- Element correctness through CUDA IPC/P2P between two Ray actors.
-- Whether a 115,343,360-byte real-world transfer reaches the default
-  `50 GiB/s` threshold.
-
-Do not start a large workflow if any check fails. Lowering the bandwidth gate
-only removes a safety check; it does not improve the hardware path.
+The full probe verifies versions, both TCC GPUs, NVLink visibility, two-Ray-actor CUDA IPC/P2P correctness, and at least 50 GiB/s on the validated 115,343,360-byte payload. Do not proceed to a large workflow if a gate fails.
 
 ### 4. Start ComfyUI
 
-Validate paths and launch arguments without starting the server:
+Validate paths without starting:
 
 ```powershell
 .\scripts\start-comfyui-windows-p2p.ps1 `
@@ -193,366 +235,185 @@ Validate paths and launch arguments without starting the server:
   -ValidateOnly
 ```
 
-Start ComfyUI:
+Start normally:
 
 ```powershell
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY
 ```
 
-The default address is:
-
-```text
-http://127.0.0.1:8188
-```
-
-The script supplies these key ComfyUI arguments:
+Open <http://127.0.0.1:8188>. The essential ComfyUI command is:
 
 ```text
 main.py --listen 127.0.0.1 --port 8188 --disable-cuda-malloc
 ```
 
-`--disable-cuda-malloc` is required for the validated V100 VAE path to avoid
-`cudaErrorNotSupported / operation not supported`. The default script does not
-currently add `--highvram` or `--disable-smart-memory`.
+`--disable-cuda-malloc` is required by the validated V100 VAE path to avoid `cudaErrorNotSupported / operation not supported`.
 
-### 5. Select the Gloo network interface
-
-Gloo automatically selects a local IPv4 address by default. If Windows chooses
-a VPN, Hyper-V, WSL, or TUN adapter, specify the physical adapter address:
+If Gloo selects a VPN, Hyper-V, WSL, or TUN adapter, specify the physical adapter IPv4:
 
 ```powershell
 .\scripts\start-comfyui-windows-p2p.ps1 `
   -PythonPath $PY `
-  -GlooHost <physical-adapter IPv4>
+  -GlooHost <physical-adapter-ip>
 ```
 
-The repository does not contain the development machine's LAN address.
+### 5. Load the example workflow
 
-### 6. Load the LTX 2.3 example workflow
+- ComfyUI workflow: [example_workflows/LTX2_3_i2v_Raylight_Windows_FSDP_5s.json](example_workflows/LTX2_3_i2v_Raylight_Windows_FSDP_5s.json)
+- Upstream example input image: [example_workflows/LTX2_3_i2v_Raylight.jpg](example_workflows/LTX2_3_i2v_Raylight.jpg)
+- Model and custom-node manifest: [docs/ltx23-model-manifest.md](docs/ltx23-model-manifest.md)
 
-Example workflow:
+Copy the example image into ComfyUI's `input` directory or reselect it in the Load Image node. The workflow contains the test prompt. Model weights are not included.
 
-[example_workflows/LTX2_3_i2v_Raylight_Windows_P2P.json](example_workflows/LTX2_3_i2v_Raylight_Windows_P2P.json)
-
-Model and custom-node manifest:
-
-[docs/ltx23-model-manifest.md](docs/ltx23-model-manifest.md)
-
-The upstream example input image is retained in this repository:
-
-[example_workflows/LTX2_3_i2v_Raylight.jpg](example_workflows/LTX2_3_i2v_Raylight.jpg)
-
-Both the original and Windows P2P LTX workflows contain the test prompt and
-reference this image filename. Before running the workflow, copy the image into
-ComfyUI's `input` directory or select it again in the `Load Image` node. Model
-weights are still not included and must be obtained separately from sources
-approved by their respective authors.
-
-Use these RayInitializer settings:
+Validated `RayInitializer` settings:
 
 | Setting | Value |
 |---|---:|
 | GPU | 2 |
-| ulysses_degree | 2 |
-| ring_degree | 1 |
-| cfg_degree | 1 |
+| ulysses/ring/cfg degree | 0 / 0 / 0 |
 | dp_degree | 1 |
-| sync_ulysses | true |
-| clear_vram_after_sampling | true |
-| FSDP / FSDP_CPU_OFFLOAD | false / false |
+| FSDP / FSDP_CPU_OFFLOAD | true / false |
 | XFuser_attention | TORCH_EFFICIENT |
+| clear_vram_after_sampling | true |
 | skip_comm_test | true |
 | use_mmap | true |
 
-`skip_comm_test=true` skips Raylight's original generic communication test. It
-does not skip this branch's CUDA P2P correctness and bandwidth checks.
+`skip_comm_test=true` skips Raylight's original generic communication tester; it does not skip this branch's CUDA P2P correctness and bandwidth gate.
 
-### 7. Confirm that P2P is active
+### 6. Confirm the fast path
 
-The first initialization should show messages similar to:
+Initial startup should include messages similar to:
 
 ```text
 [Raylight] Windows Gloo init OK ...
 [Raylight] Windows CUDA P2P enabled: ...
 ```
 
-Subsequent jobs with an unchanged configuration should show:
+An unchanged healthy configuration may later report:
 
 ```text
 [Raylight] Reusing 2 live Ray workers for unchanged configuration
 ```
 
-If P2P initialization, correctness, or bandwidth validation fails, the
-supported fast path reports an error. It does not silently stage the same
-supported operation through host memory while claiming that NVLink is active.
+A matched supported CUDA P2P operation fails closed if initialization, correctness, bandwidth, operation IDs, or peer state are invalid; it does not silently continue through host memory while claiming NVLink use.
 
-## What the Start Script Configures
+## Reproducible benchmark inputs
 
-| Setting | Default | Purpose |
-|---|---:|---|
-| `PYTHONUTF8` | `1` | Consistent Windows and Ray log encoding |
-| `PYTHONIOENCODING` | `utf-8` | Prevents corrupted worker output |
-| `USE_LIBUV` | `0` | Uses TCPStore without a libuv dependency |
-| `MASTER_ADDR` | `127.0.0.1` | Local distributed rendezvous |
-| `MASTER_PORT` | `29500` | Rendezvous port |
-| `RAY_DEBUG_DISABLE_MEMORY_MONITOR` | `1` | Prevents Ray from killing workers early under high memory use |
-| `RAY_memory_usage_threshold` | `1` | Raises Ray's memory threshold to 100% |
-| `RAYLIGHT_WINDOWS_P2P` | `1` | Enables the Windows CUDA P2P fast path |
-| `RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES` | `134217728` | Persistent 128 MiB send buffer per rank |
-| `RAYLIGHT_WINDOWS_P2P_MIN_GIB_S` | `50` | Hard startup bandwidth gate |
-| `CUDA_VISIBLE_DEVICES` | `0,1` | Fixes the visible order of the two target GPUs |
+The repository includes 5-second API prompt payloads under `benchmark_payloads/` for:
 
-Disabling Ray's memory monitor can allow the system to enter paging under
-pressure. It prevents premature Ray termination for large workflows; it is not
-a free performance optimization. Monitor system memory and the page file.
+- ordinary single-GPU ComfyUI;
+- Ray single-GPU control;
+- dual-GPU Ulysses;
+- dual-GPU FSDP using the visually accepted configuration.
 
-## Technical Notes
+With the validated folder layout, run for example:
 
-### Data path
-
-```mermaid
-flowchart LR
-    A["ComfyUI workflow"] --> B["Raylight Ray workers"]
-    B --> C["xFuser / yunchang Ulysses"]
-    C --> D["torch.distributed.all_to_all_single"]
-    D --> E{"Two ranks, sync, CUDA, equal split?"}
-    E -->|Yes| F["CUDA IPC / P2P / NVLink fast path"]
-    E -->|No| G["Gloo compatibility path"]
-    H["TCPStore + Gloo"] --> B
-    H --> I["Initialization, control, barriers, other collectives"]
+```powershell
+& $PY .\tests\windows_ltx_mode_benchmark.py --mode fsdp --runs 2 --port 8188
 ```
 
-yunchang/xFuser continues to call standard
-`torch.distributed.all_to_all_single`. A router installed inside each Ray
-worker intercepts only calls that meet all of these conditions:
+Alternative layouts can set `RAYLIGHT_COMFY_ROOT`, `RAYLIGHT_PYTHON`, `RAYLIGHT_BENCHMARK_RESULT_ROOT`, or `RAYLIGHT_BENCHMARK_PAYLOAD_ROOT`. The benchmark starts its own ComfyUI instance, so the selected port must be free.
 
-- Input and output are both CUDA tensors.
-- `async_op=False`.
-- No explicit `input_split_sizes` or `output_split_sizes` are supplied.
-- The process group world size is two.
-- Tensors are contiguous, their dtypes and element counts match, and the remote
-  half fits in the configured buffer.
-
-Other calls keep the original Gloo implementation. If a matched fast-path call
-fails, the endpoint is poisoned to prevent further execution with inconsistent
-communication state.
-
-### P2P implementation
-
-The core implementation is in:
-
-- `src/raylight/distributed_worker/windows_p2p.py`
-- `src/raylight/distributed_worker/windows_gloo.py`
-- `src/raylight/distributed_worker/ray_worker.py`
-- `src/raylight/distributed_worker/parallel_group_manager.py`
-- `src/raylight/nodes.py`
-
-Each rank owns:
-
-- One persistent CUDA send buffer, 128 MiB by default.
-- An exportable CUDA IPC storage handle.
-- Interprocess `ready` and `consumed` CUDA events.
-- A Windows named shared-memory and event control plane.
-- A dedicated CUDA stream, monotonically increasing operation ID, timeout, and
-  poison state.
-
-Each sender writes the remote half into its persistent buffer and records the
-ready event. After both sides agree on the operation ID and transfer size, the
-peer waits for the CUDA event and copies directly from the remote peer buffer
-into its output tensor.
-
-### What Gloo still handles
-
-Gloo/TCPStore on Windows still handles:
-
-- Rendezvous and process-group initialization for the two Ray workers.
-- xFuser subgroup creation.
-- Control, barriers, and collectives outside the fast-path contract.
-- The Windows-compatible path for the communication tester.
-
-The accurate description of this project is therefore a **Raylight Windows CUDA
-P2P data-plane compatibility layer**, not “NCCL for Windows.”
-
-### Ray worker reuse
-
-RayInitializer generates a stable session key from topology, parallel settings,
-GPU selection, and P2P/Gloo configuration. It reuses existing actors when the
-configuration is unchanged and the workers pass health checks. A changed
-configuration or failed health check clears the cache and initializes fresh
-workers. This reduces Ray lifecycle overhead but does not guarantee that all
-model weights remain resident on the GPUs.
-
-## CUDA Version Notes
-
-One machine can report three different CUDA versions:
-
-- `nvidia-smi CUDA Version`: the highest CUDA API level supported by the driver.
-- `nvcc --version`: the locally installed CUDA developer toolkit.
-- `torch.version.cuda`: the CUDA runtime against which the PyTorch wheel was
-  built.
-
-The third value matters most for this project. The validated runtime is CUDA
-12.6 through `torch==2.7.0+cu126`. The Python implementation does not compile a
-custom CUDA extension, so running this branch does not itself require a local
-CUDA Toolkit 12.9 installation. Building NVIDIA CUDA samples does require a
-toolkit.
-
-## Tests and Measured Results
-
-### Release verification
-
-- Windows P2P, trace, session, runtime, mmap, metadata, synchronized model-loading, and release-profile checks are maintained continuously; use the [test record](docs/TESTING.md) and the current test command output as the source of truth.
-- Real LTX tensor sizes: 516,096, 8,388,608, 28,835,840, and 115,343,360 bytes.
-- Both ranks at every size: `0 mismatch / 0 maximum error`.
-- Mismatched operation IDs and absent peers time out as expected in about two
-  seconds.
-- The xFuser two-rank subgroup integration probe passes.
-- A 115,343,360-byte, 100-iteration P2P probe measures approximately
-  `59.27 GiB/s` in each direction.
-
-### LTX 2.3 end-to-end benchmark
-
-Using the same models, input, prompt, and workflow dimensions:
-
-| Scenario | End-to-end time |
-|---|---:|
-| Single V100 cold start | 519.94 s |
-| Single V100 warm start | 316.60 s |
-| Dual V100 P2P, reused-session median | 284.06 s |
-
-The fair warm-to-warm improvement is:
+## Data path and launch settings
 
 ```text
-(316.60 - 284.06) / 316.60 = 10.28%
+ComfyUI -> Raylight workers -> FSDP all-gather / Ulysses all-to-all
+                              -> CUDA IPC/P2P/NVLink data plane
+TCPStore + Gloo -------------> rendezvous, groups, control, unmatched operations
 ```
 
-Quantized safetensors can now preserve metadata while using `use_mmap=true`. Both ranks load with a shared minimum VRAM budget and synchronize after model loading. The 10-second workflow remains validated against the strict 10-second communication timeout; the fix does not hide rank skew by relaxing that limit.
+The launcher sets UTF-8 logging, `USE_LIBUV=0`, localhost rendezvous, Ray memory-monitor overrides, two visible GPUs, a 128 MiB per-rank P2P buffer, and a 50 GiB/s minimum P2P gate. See the Chinese README for the complete environment-variable table.
 
-The current version demonstrates real dual-GPU execution, a correct CUDA P2P
-data path, and stable generation. It has not yet reached the project goal of at
-least 20% improvement over a warm single-GPU run. Cold-start single-GPU time is
-not used to inflate the published speedup.
+The memory-monitor override prevents Ray from terminating a large workflow early. It can allow Windows to enter paging under pressure; monitor physical and committed memory rather than treating it as a free optimization.
 
-## Known Limitations
+## Test results
 
-- Only a single host, two ranks, and equally split synchronous all-to-all use
-  the fast path.
-- WDDM is untested; the release gate requires TCC.
-- FSDP must remain disabled on this Windows path.
-- GGUF cannot gain FSDP weight sharding through this implementation.
-- LTX/LTXAV should retain ComfyUI's default BF16/FP32 inference range; forcing global FP16 produced fully black video and audio NaN/Inf in the validated V100 test.
-- Text encoding and VAE encoding/decoding are not distributed across GPUs.
-- Model weights are generally replicated, so VRAM does not add transparently.
-- Python, named-control, synchronization, and event overhead remain significant
-  for small tensors.
-- Ray's Windows support is still Beta, with higher process startup and memory
-  overhead than Linux.
-- Other GPU models, drivers, and NVLink topologies require full hardware
-  validation; compatibility must not be inferred from the model name alone.
+### Communication and FSDP gates
+
+- Existing all-to-all: about 59.3 GiB/s per rank.
+- FSDP all-gather: about 60.0-61.6 GiB/s per rank for 64-384 MiB synthetic shards.
+- A 256 MiB shard over the 128 MiB staging buffer passed correct two-chunk transfer.
+- FP32, FP16, BF16-as-bytes, and uint8 transport passed, including tail chunks.
+- A 512 MiB synthetic FSDP2 parameter retained 256 MiB per rank and resharded after forward.
+- LTX registered 2,999 FSDP wrappers and retained about 11,203 MiB model payload per rank.
+
+BF16 in the transport test means byte-preserving communication only; it is not a claim that V100 supports native BF16 compute.
+
+### End-to-end LTX 2.3 results
+
+Previous P2P/Ulysses baseline:
+
+| Scenario | End-to-end |
+|---|---:|
+| Single V100 cold | 519.94 s |
+| Single V100 warm | 316.60 s |
+| Dual-V100 P2P reused-session median | 284.06 s |
+
+The fair P2P/Ulysses warm-to-warm gain was 10.28%, but that mode keeps a complete model copy on each GPU.
+
+Current visually accepted FSDP baseline:
+
+| Scenario | Cold end-to-end | Sampler 1 | Sampler 2 | GPU0/1 peak VRAM | Visual result |
+|---|---:|---:|---:|---:|---|
+| FSDP without LoRA | 479.83 s | about 11.0 s/it | about 41.7 s/it | 16,218/16,208 MiB | coherent, PASS |
+| FSDP + original BF16 LoRA | 551.82 s | about 15.0 s/it | about 45.6 s/it | 16,224/16,156 MiB | coherent, PASS |
+
+These results prove sharding, dual-GPU computation, and correct output. They do not pass the separate target of at least 20% faster than a fair single-GPU baseline.
+
+## Important fixes retained in this branch
+
+The early FSDP output could be encoded and remain finite while every frame after the first was colored noise. The final root cause was an in-place chunked RMSNorm path overwriting a tensor still needed as an LTX residual. The corrected path writes to a separate bounded output tensor.
+
+Two additional correctness fixes preserve FP8 quantization scale during Ray mmap loading and restore the full gathered logical shape after FP8 FSDP all-gather. The activation path also distinguishes shape-preserving functions from shape-changing functions such as SwiGLU.
+
+A playable file, non-black pixels, and absence of NaN/Inf are only basic gates. FSDP output acceptance also requires multi-frame visual inspection and rank-consistency checks.
+
+## Known limitations
+
+- One native-Windows machine, exactly two ranks, inference only.
+- TCC is the release mode; WDDM is unsupported for the CUDA IPC/P2P fast path.
+- Only the Diffusion Model loaded through `RayUNETLoader` is FSDP-sharded.
+- Text Encoder, Video/Audio VAE, and upscalers are not automatically sharded or dual-GPU.
+- GGUF does not use this FSDP implementation.
+- Do not force the LTX 2.3 model globally to FP16: the validated experiment produced black video and audio NaN/Inf. Keep the default BF16/FP32 inference policy and the branch's V100 fallbacks.
+- Ray on Windows is Beta and has more startup/host-memory overhead than Linux + NCCL.
+- Models, GPU families, drivers, quantization layouts, and longer workflows outside the validation matrix need independent correctness, memory, and visual acceptance.
 
 ## Troubleshooting
 
-### The web interface does not open
+- Web UI unavailable: confirm the ComfyUI process is still alive and test `Invoke-WebRequest http://127.0.0.1:8188/ -UseBasicParsing`.
+- `use_libuv was requested`: use the repository launcher; it sets `USE_LIBUV=0` and an explicit non-libuv TCPStore.
+- Gloo shows a host name or wrong adapter: pass `-GlooHost <physical-adapter-ip>`; do not hard-code a development-machine address in shared scripts.
+- P2P below 50 GiB/s: check TCC, active NVLink links, peer access, topology, and competing GPU processes.
+- VAE `operation not supported`: retain `--disable-cuda-malloc`.
+- FSDP error: use this repository's FSDP workflow and strict `GPU=2`, `FSDP=true`, `CPU Offload=false`, `Ulysses/Ring/CFG=0`, `DP=1` topology.
 
-Confirm that the launch window is still running, then check:
-
-```powershell
-Invoke-WebRequest http://127.0.0.1:8188/ -UseBasicParsing
-```
-
-No listener usually means that ComfyUI has not finished starting or has already
-exited. Check the startup log before treating a web-interface issue as a
-Raylight/P2P failure.
-
-### `use_libuv was requested`
-
-Use the repository start script. It sets `USE_LIBUV=0` and explicitly creates
-`TCPStore(..., use_libuv=False)`.
-
-### Gloo connects to `WorkStudio` or the wrong adapter
-
-Use `-GlooHost <physical-adapter IPv4>`. Do not hard-code one machine's LAN
-address in public scripts.
-
-### P2P measures below 50 GiB/s
-
-Check TCC mode, active NVLink links, peer access, GPU topology, and competing
-GPU processes. Adjust `-MinimumP2PGiBs` only if you understand the performance
-consequences.
-
-### VAE reports `operation not supported`
-
-Start through the project script and keep `--disable-cuda-malloc` enabled.
-
-### Enabling FSDP causes an error
-
-This is intentional. The Windows P2P branch does not implement FSDP. Disable
-both FSDP and CPU offload.
-
-## Repository Layout
+## Repository layout
 
 ```text
 raylight/
-├─ src/raylight/                         Raylight and Windows P2P implementation
-├─ scripts/
-│  ├─ start-comfyui-windows-p2p.ps1     Reusable start script
-│  └─ verify-windows-v100.ps1           Environment and real P2P preflight
-├─ tests/                                Unit tests and standalone probes
-├─ example_workflows/                    LTX 2.3 example workflow
-├─ docs/
-│  ├─ windows-v100-p2p.md               Windows-specific technical guide
-│  ├─ ltx23-model-manifest.md            Model and custom-node manifest
-│  ├─ TESTING.md                         Maintained validation record
-│  └─ test-results-2026-08.csv           Compact test-data attachment
-├─ environment-windows-v100.json         Machine-readable validation matrix
-├─ requirements-windows-v100.txt         Pinned dependencies
-└─ WINDOWS_P2P_CHANGES.md                Changes relative to upstream
+├─ src/raylight/                         Raylight plus Windows P2P/FSDP layer
+├─ scripts/                              launcher and hardware preflight
+├─ tests/                                unit tests, hardware probes, benchmark tool
+├─ example_workflows/                    ComfyUI workflow and upstream input image
+├─ benchmark_payloads/                   checked-in 5-second API prompts
+├─ docs/                                 technical plans, diagnostics, and results
+├─ environment-windows-v100.json         machine-readable validation matrix
+├─ requirements-windows-v100.txt         pinned Windows V100 dependencies
+├─ WINDOWS_P2P_CHANGES.md                previous-stage changes
+└─ WINDOWS_FSDP_CHANGES.md               current FSDP changes
 ```
 
-## Optimization Roadmap
+## Redistributable content
 
-- Raise the warm-to-warm end-to-end improvement above 20%.
-- Explain and reduce the gap between the approximately 108 GiB/s microbenchmark
-  and approximately 59 GiB/s in-project communication result.
-- Reduce Python, control-plane, and synchronization overhead for small
-  collectives.
-- Evaluate multiple buffers/ring slots, batched control, and deeper pipelining.
-- Reduce extra local copies while retaining strict correctness and timeout
-  protection.
-- Extend the support matrix only after validation on real hardware, rather than
-  listing untested GPU models.
+The repository contains source code, scripts, tests, configuration, workflow JSON, benchmark prompt payloads, and the upstream example workflow images/prompts. It does not contain model weights, LoRA files, VAEs, text encoders, generated videos, or a complete Python/ComfyUI environment snapshot.
 
-## Safe Redistributable Content
+## License and acknowledgements
 
-The repository contains source code, scripts, tests, configuration, and the
-example workflows and companion assets published with the upstream project.
-The original LTX 2.3 workflow, the Windows P2P test workflow, their embedded
-prompt, and the upstream example input image are retained under
-`example_workflows`.
+- Upstream Raylight: [komikndr/raylight](https://github.com/komikndr/raylight)
+- xDiT / xFuser: [xdit-project/xDiT](https://github.com/xdit-project/xDiT)
+- yunchang: [feifeibear/long-context-attention](https://github.com/feifeibear/long-context-attention)
+- Ray: [ray-project/ray](https://github.com/ray-project/ray)
+- PyTorch: [pytorch/pytorch](https://github.com/pytorch/pytorch)
 
-The repository does not include:
-
-- Model weights, LoRAs, VAEs, or text encoders.
-- Generated test-video outputs.
-- A complete Python or ComfyUI environment snapshot.
-
-Users must obtain model weights and any assets not included in this repository
-from authorized sources and comply with their respective licenses.
-
-## License and Acknowledgements
-
-This project continues to use Raylight's Apache License 2.0. See
-[LICENSE](LICENSE).
-
-Thanks to the following projects and their contributors:
-
-- [Raylight](https://github.com/komikndr/raylight) — Komikndr / Micko Lesmana
-- [xDiT / xFuser](https://github.com/xdit-project/xDiT)
-- [yunchang / Long Context Attention](https://github.com/feifeibear/long-context-attention)
-- [Ray](https://github.com/ray-project/ray)
-- [PyTorch](https://github.com/pytorch/pytorch)
-- [ComfyUI](https://github.com/Comfy-Org/ComfyUI)
-
-When reporting an issue, include the environment verification output, relevant
-error logs, RayInitializer settings, and a minimal reproducing workflow. Remove
-tokens, personal paths, images, and model-download credentials first.
+Distributed under the upstream Apache License 2.0 terms. See [LICENSE](LICENSE).

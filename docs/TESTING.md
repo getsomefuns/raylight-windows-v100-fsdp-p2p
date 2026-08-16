@@ -122,6 +122,8 @@ LTX/LTXAV 在当前 ComfyUI 配置中继续只声明 BF16/FP32。V100 擅长 FP1
 | MEM-002 | 验证 ComfyUI 热缓存影响 | 5 秒默认运行出现 385.37 s 冷启动与 145.15 s 下游缓存重跑 | `DIAGNOSTIC`，145.15 s 不是完整热启动基准 |
 | MEM-003 | 验证 mmap 与显存容量 | 量化 safetensors mmap + 128 MiB P2P 缓冲区可完成 10 秒默认精度工作流 | `PASS`，仍需为更大模型保留内存余量 |
 
+> Windows FSDP 分支的计划、失败样本、根因修复与视觉验收已独立维护在 [WINDOWS_V100_FSDP_TESTING.md](WINDOWS_V100_FSDP_TESTING.md)，不再混入本 P2P/Ulysses 历史汇总。
+
 ## 测试总结
 
 - 原生 Windows 无 NCCL，但 Gloo 控制面配合定向 CUDA IPC/P2P 数据面，可以让已匹配的双 rank Ulysses all-to-all 实际使用 NVLink。

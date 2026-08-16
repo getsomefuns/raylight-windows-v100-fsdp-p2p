@@ -74,6 +74,16 @@ class RaySessionCacheTests(unittest.TestCase):
 
         self.assertNotEqual(enabled, disabled)
 
+    def test_session_key_changes_with_collective_profile_setting(self):
+        base = {"GPU": 2, "parallel": {"ulysses_degree": 2}}
+        with mock.patch.dict(os.environ, {"RAYLIGHT_P2P_PROFILE": "1"}, clear=False):
+            enabled = self.nodes._ray_session_key(base)
+        with mock.patch.dict(os.environ, {"RAYLIGHT_P2P_PROFILE": "0"}, clear=False):
+            disabled = self.nodes._ray_session_key(base)
+
+        self.assertNotEqual(enabled, disabled)
+
+
 
 if __name__ == "__main__":
     unittest.main()

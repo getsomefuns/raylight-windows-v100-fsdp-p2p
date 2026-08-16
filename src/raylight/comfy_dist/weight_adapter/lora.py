@@ -96,6 +96,74 @@ class LoRAAdapter(WeightAdapterBase):
         self.loaded_keys = loaded_keys
         self.weights = weights
 
+    def add_to_base_chunked(
+        self,
+        x: torch.Tensor,
+        base_out: torch.Tensor,
+        max_temp_bytes: int,
+    ) -> torch.Tensor:
+        """Accumulate a linear LoRA sidecar without a full-size delta tensor."""
+        if getattr(self, "is_conv", False):
+            return base_out.add_(self.h(x, base_out))
+        if x.ndim == 0 or base_out.ndim == 0:
+            return base_out.add_(self.h(x, base_out))
+        if x.shape[:-1] != base_out.shape[:-1]:
+            return base_out.add_(self.h(x, base_out))
+
+        try:
+            x_rows = x.view(-1, x.shape[-1])
+            output_rows = base_out.view(-1, base_out.shape[-1])
+        except RuntimeError:
+            return base_out.add_(self.h(x, base_out))
+
+        up, down, alpha, mid = self.weights[:4]
+        rank = down.shape[0]
+        scale = alpha / rank if alpha is not None else 1.0
+        scale *= getattr(self, "multiplier", 1.0)
+        scale = float(scale)
+
+        up = comfy.model_management.cast_to_device(up, x.device, x.dtype)
+        down = comfy.model_management.cast_to_device(down, x.device, x.dtype)
+        if mid is not None:
+            mid = comfy.model_management.cast_to_device(mid, x.device, x.dtype)
+
+        bytes_per_output_row = max(
+            1,
+            output_rows.shape[-1] * output_rows.element_size(),
+        )
+        rows_per_chunk = max(1, max_temp_bytes // bytes_per_output_row)
+
+        start = 0
+        while start < output_rows.shape[0]:
+            end = min(start + rows_per_chunk, output_rows.shape[0])
+            hidden = None
+            delta = None
+            try:
+                hidden = F.linear(x_rows[start:end], down)
+                if mid is not None:
+                    hidden = F.linear(hidden, mid)
+                delta = F.linear(hidden, up)
+            except torch.OutOfMemoryError:
+                hidden = None
+                delta = None
+                if rows_per_chunk <= 1:
+                    raise
+                previous_rows = rows_per_chunk
+                rows_per_chunk = max(1, rows_per_chunk // 2)
+                if x.is_cuda:
+                    torch.cuda.empty_cache()
+                logging.warning(
+                    "[Raylight LoRA][V100] temporary OOM; reducing rows per "
+                    "chunk from %d to %d and retrying",
+                    previous_rows,
+                    rows_per_chunk,
+                )
+                continue
+            output_rows[start:end].add_(delta, alpha=scale)
+            start = end
+
+        return base_out
+
     @classmethod
     def create_train(cls, weight, rank=1, alpha=1.0):
         out_dim = weight.shape[0]
