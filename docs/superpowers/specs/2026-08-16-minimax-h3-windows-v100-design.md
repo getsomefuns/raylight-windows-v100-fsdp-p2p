@@ -18,8 +18,9 @@ The result must prioritize, in this order:
 
 - `example_workflows/Minimax_H3_I2V_Raylight.json`
 - `example_workflows/Minimax_H3_REF2VA_Raylight.json`
-- User-provided green-robot image as the I2V input.
-- The same image will initially be supplied to both REF2VA image-reference inputs because the two original pasted source images are not present in the repository. This is a pipeline-validation input, not the final creative reference set.
+- The upstream spear/portal image as the I2V input.
+- The upstream green-robot image connected to both REF2VA reference inputs.
+- Both local files were verified against the upstream sample assets before runtime validation.
 
 The original workflow files remain unchanged. Adapted and benchmark workflows will be stored separately with explicit Windows V100 names.
 

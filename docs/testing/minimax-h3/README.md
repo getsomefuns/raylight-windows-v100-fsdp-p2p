@@ -36,12 +36,13 @@ This directory contains the maintained validation summary for MiniMax H3 on nati
 | V100 compute policy | Complete | FP8 is storage-only; MiniMax diffusion compute manual-casts to FP32, not FP16/BF16/FP8 |
 | Runtime I2V FSDP preflight | Complete | Both ranks register 684 FSDP wrappers; CUDA P2P health is about 58.96 GiB/s per direction |
 | I2V smoke validation | Complete | 448x448, 39-frame, 12-step cold run passes in 214.93 s; tensors are finite and rank outputs match exactly |
-| I2V full validation | Pending | Run the upstream 0.4 MP, 2-second, 20-step profile after REF2VA smoke |
-| REF2VA validation | Pending | First run duplicates the supplied green-robot image |
+| REF2VA smoke validation | Complete | 608x352, 56-frame, 12-step cold run passes in 268.85 s; preprocessing cleanup barrier prevents rank-0 startup OOM |
+| I2V full validation | Pending | First reduce the roughly 16.1 GiB smoke sampling peak, then run the upstream 0.4 MP, 2-second, 20-step profile |
+| REF2VA full validation | Pending | First reduce the roughly 16.2 GiB smoke sampling peak, then scale toward 0.4 MP and 5 seconds |
 | INT8 comparison | Pending | Run only after FP8 correctness |
 | Final optimization | Pending | Compare base and official Turbo LoRA variants |
 
-Latest accepted run: [I2V smoke validation (2026-08-17)](I2V_SMOKE_2026-08-17.md). MiniMax H3 requires `--reserve-vram 2` in addition to `--disable-cuda-malloc` on this stack.
+Accepted runs: [I2V smoke validation](I2V_SMOKE_2026-08-17.md) and [REF2VA smoke validation](REF2VA_SMOKE_2026-08-17.md). MiniMax H3 requires `--reserve-vram 2` in addition to `--disable-cuda-malloc` on this stack. REF2VA also requires the preprocessing-to-worker cleanup barrier recorded in the REF2VA report.
 
 ## Evidence policy
 

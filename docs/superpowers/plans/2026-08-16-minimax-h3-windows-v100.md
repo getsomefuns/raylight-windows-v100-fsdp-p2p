@@ -8,6 +8,12 @@
 
 **Fixed stack:** Windows 23H2, driver 577.00, 2× V100 TCC, Python 3.10.11, torch 2.7.0+cu126, xformers 0.0.30, Ray 2.57.0, yunchang 0.6.4, comfy-kitchen 0.2.30.
 
+## Execution status - 2026-08-17
+
+Tasks 1 through 7 are complete. The reduced I2V gate in Task 8 and reduced REF2VA gate in Task 9 both pass with verified two-rank FSDP and CUDA P2P transport. REF2VA required a tested preprocessing-to-worker execution and cleanup barrier to prevent the unsharded text encoder and video VAE from occupying GPU 0 during actor creation.
+
+The active next stage remains the scaling portion of Tasks 8 and 9. Current smoke sampling peaks are about 15.7 GiB for I2V and 16.2 GiB for REF2VA, so the next experiment must reduce peak VRAM before attempting the upstream 0.4 MP profiles. Task 10 begins only after those full-profile gates or a documented hardware-limit boundary.
+
 ---
 
 ## Task 1: Capture a reproducible MiniMax baseline
