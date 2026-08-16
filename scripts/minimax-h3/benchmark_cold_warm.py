@@ -413,6 +413,32 @@ def summarize_phases(events: list[dict], *, execution_start_ms: int, execution_e
     }
 
 
+def wait_for_phase_diagnostics(
+    read_segment,
+    *,
+    execution_start_ms: int,
+    execution_end_ms: int,
+    timeout: float = 30.0,
+    sleep=time.sleep,
+) -> tuple[dict, str, int]:
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while True:
+        text, end_offset = read_segment()
+        try:
+            phases = summarize_phases(
+                extract_rank_diag(text),
+                execution_start_ms=execution_start_ms,
+                execution_end_ms=execution_end_ms,
+            )
+            return phases, text, end_offset
+        except RuntimeError as exc:
+            last_error = exc
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"rank diagnostics remained incomplete after {timeout:.1f}s") from last_error
+        sleep(0.25)
+
+
 def reject_cached_sampler(history: dict, sampler_node_id: str) -> None:
     for name, payload in history.get("status", {}).get("messages", []):
         if name == "execution_cached" and sampler_node_id in {str(node) for node in payload.get("nodes", [])}:
@@ -696,23 +722,31 @@ def run_benchmark(
                     raise RuntimeError("resource monitor did not stop")
                 validate_monitor_samples(samples, monitor_errors)
                 elapsed = time.perf_counter() - started
-                time.sleep(1)
-                stdout.flush()
-                log_end = stdout_path.stat().st_size
-                with stdout_path.open("rb") as handle:
-                    handle.seek(log_start)
-                    log_segment = handle.read(log_end - log_start).decode("utf-8", errors="replace")
                 reject_cached_sampler(history, sampler_id)
-                phases = summarize_phases(
-                    extract_rank_diag(log_segment),
-                    execution_start_ms=_history_timestamp_ms(history, "execution_start"),
-                    execution_end_ms=_history_timestamp_ms(history, "execution_success"),
+                execution_start_ms = _history_timestamp_ms(history, "execution_start")
+                execution_end_ms = _history_timestamp_ms(history, "execution_success")
+
+                def read_log_segment():
+                    stdout.flush()
+                    current_end = stdout_path.stat().st_size
+                    with stdout_path.open("rb") as handle:
+                        handle.seek(log_start)
+                        segment = handle.read(current_end - log_start).decode("utf-8", errors="replace")
+                    return segment, current_end
+
+                diagnostic_wait_started = time.perf_counter()
+                phases, log_segment, log_end = wait_for_phase_diagnostics(
+                    read_log_segment,
+                    execution_start_ms=execution_start_ms,
+                    execution_end_ms=execution_end_ms,
                 )
+                diagnostic_wait_seconds = time.perf_counter() - diagnostic_wait_started
                 run = {
                     "run_index": run_index,
                     "temperature": "cold" if run_index == 0 else "warm",
                     "prompt_id": prompt_id,
                     "elapsed_seconds": elapsed,
+                    "diagnostic_log_wait_seconds": diagnostic_wait_seconds,
                     "noise_seed": prompt[sampler_id]["inputs"]["noise_seed"],
                     "api_prompt_sha256": prompt_sha256,
                     "phases": phases,
