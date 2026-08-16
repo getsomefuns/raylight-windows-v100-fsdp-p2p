@@ -1040,14 +1040,13 @@ class RayUNETLoader:
             num_replicas = parallel_dict.get("dp_degree", 1)
             shard_size = parallel_dict.get("shard_size", len(gpu_actors))
 
-            # Reuse detection for FSDP non-quant: if the first worker already
-            # has this exact model + lora combo, all workers do (loaded together).
+            # Reuse any unchanged FSDP model: if the first worker already has
+            # this exact model + LoRA combo, all workers do (loaded together).
             # Skip the expensive reload — handles MCP re-creating the same
             # workflow and ComfyUI re-executing RayUNETLoader with identical inputs.
-            if parallel_dict["is_quant"] is False:
-                already_loaded = ray.get(gpu_actors[0].check_model_loaded.remote(unet_path, model_options))
-                if already_loaded:
-                    return (ray_actors,)
+            already_loaded = ray.get(gpu_actors[0].check_model_loaded.remote(unet_path, model_options))
+            if already_loaded:
+                return (ray_actors,)
 
             if num_replicas <= 1:
                 # Single replica — all GPUs share one FSDP-sharded model
