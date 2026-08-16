@@ -11,6 +11,7 @@ from copy import deepcopy
 import ray
 import torch
 import comfy
+import comfy.sample
 import folder_paths
 from comfy.cli_args import args as comfy_args
 from yunchang.kernels import AttnType
