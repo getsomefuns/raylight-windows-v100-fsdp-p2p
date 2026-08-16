@@ -4,12 +4,15 @@ param(
     [ValidateSet("i2v-fp8", "ref2va-fp8", "i2v-int8", "ref2va-int8", "turbo")]
     [string]$Group,
     [string]$ModelRoot = "E:\ComfyUI-aki-v3\ComfyUI\models",
-    [string]$ManifestPath = (Join-Path $PSScriptRoot "models.json"),
+    [string]$ManifestPath,
     [switch]$PlanOnly,
     [switch]$Json
 )
 
 $ErrorActionPreference = "Stop"
+if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
+    $ManifestPath = Join-Path $PSScriptRoot "models.json"
+}
 
 function Test-SafetensorsHeader {
     param(

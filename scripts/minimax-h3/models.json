@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "repository": "https://huggingface.co/Comfy-Org/MiniMax-H3",
+  "revision": "main",
+  "models": [
+    {
+      "id": "fl2va-fp8",
+      "relative_path": "diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
+      "expected_bytes": 20958205608,
+      "groups": [
+        "i2v-fp8"
+      ]
+    },
+    {
+      "id": "text-encoder-nvfp4",
+      "relative_path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "expected_bytes": 15687142551,
+      "groups": [
+        "i2v-fp8"
+      ]
+    },
+    {
+      "id": "video-vae-fp16",
+      "relative_path": "vae/minimax_h3_video_vae_fp16.safetensors",
+      "expected_bytes": 5207808496,
+      "groups": [
+        "i2v-fp8"
+      ]
+    },
+    {
+      "id": "audio-vae-fp32",
+      "relative_path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+      "expected_bytes": 605254808,
+      "groups": [
+        "i2v-fp8"
+      ]
+    },
+    {
+      "id": "ref2va-fp8",
+      "relative_path": "diffusion_models/minimax_h3_ref2va_pruned_fp8_scaled.safetensors",
+      "expected_bytes": 20958205608,
+      "groups": [
+        "ref2va-fp8"
+      ]
+    },
+    {
+      "id": "fl2va-int8",
+      "relative_path": "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "expected_bytes": 20970379616,
+      "groups": [
+        "i2v-int8"
+      ]
+    },
+    {
+      "id": "ref2va-int8",
+      "relative_path": "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "expected_bytes": 20970379616,
+      "groups": [
+        "ref2va-int8"
+      ]
+    },
+    {
+      "id": "fl2v-turbo-4step",
+      "relative_path": "loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+      "expected_bytes": 1956192992,
+      "groups": [
+        "turbo"
+      ]
+    },
+    {
+      "id": "fl2v-turbo-8step",
+      "relative_path": "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "expected_bytes": 1956193000,
+      "groups": [
+        "turbo"
+      ]
+    },
+    {
+      "id": "ref2v-turbo-4step",
+      "relative_path": "loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+      "expected_bytes": 1956193000,
+      "groups": [
+        "turbo"
+      ]
+    }
+  ]
+}
