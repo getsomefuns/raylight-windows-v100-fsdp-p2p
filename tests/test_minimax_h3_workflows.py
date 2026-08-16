@@ -71,7 +71,7 @@ def test_i2v_builder_enables_the_supported_windows_v100_hybrid_topology():
         True,
         False,
         True,
-        False,
+        True,
         "TORCH_EFFICIENT",
         True,
         True,
@@ -117,7 +117,7 @@ def test_ref2va_builder_reuses_the_validation_image_without_changing_the_prompt(
         True,
         False,
         True,
-        False,
+        True,
         "TORCH_EFFICIENT",
         True,
         True,
@@ -142,3 +142,15 @@ def test_ref2va_builder_reuses_the_validation_image_without_changing_the_prompt(
     _assert_initializer_wait_link(built, "MiniMaxH3ReferenceToVideo")
     assert len(built["links"]) == len(source["links"]) + 1
     assert json.loads(source_path.read_text(encoding="utf-8")) == source
+
+
+def test_smoke_profile_keeps_fsdp_cpu_offload_disabled():
+    builder = _load_builder()
+    built = builder.build_workflow(
+        WORKFLOW_ROOT / "Minimax_H3_I2V_Raylight.json",
+        mode="i2v",
+        profile="smoke",
+    )
+
+    initializer_widgets = _node(built, "RayInitializer")["widgets_values"]
+    assert initializer_widgets[9] is True

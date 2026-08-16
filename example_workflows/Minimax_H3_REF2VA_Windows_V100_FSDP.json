@@ -1064,7 +1064,7 @@
         true,
         false,
         true,
-        false,
+        true,
         "TORCH_EFFICIENT",
         true,
         true

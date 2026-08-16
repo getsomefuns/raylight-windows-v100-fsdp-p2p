@@ -45,6 +45,7 @@ RAY_INITIALIZER_WIDGETS = [
     True,
     True,
 ]
+RAY_INITIALIZER_FSDP_CPU_OFFLOAD_INDEX = 10
 SMOKE_DEFAULTS = {
     "i2v": {"megapixels": 0.2, "duration": 1.0, "steps": 12},
     "ref2va": {"megapixels": 0.2, "duration": 2.0, "steps": 12},
@@ -162,7 +163,9 @@ def build_workflow(
             f"expected {len(RAY_INITIALIZER_WIDGETS)} widgets, "
             f"found {len(initializer.get('widgets_values', []))}"
         )
-    initializer["widgets_values"] = list(RAY_INITIALIZER_WIDGETS)
+    initializer_widgets = list(RAY_INITIALIZER_WIDGETS)
+    initializer_widgets[RAY_INITIALIZER_FSDP_CPU_OFFLOAD_INDEX] = profile == "full"
+    initializer["widgets_values"] = initializer_widgets
 
     _set_first_widget(_one_node(workflow, "RayUNETLoader"), DIFFUSION_MODELS[mode])
     _set_first_widget(_one_node(workflow, "SaveVideo"), OUTPUT_PREFIXES[mode])
