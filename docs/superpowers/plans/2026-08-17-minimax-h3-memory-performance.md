@@ -32,7 +32,7 @@ Keep the accepted full I2V and REF2VA workflows correct while making repeated in
 
 ## Phase O2: repeatable cold/warm benchmark
 
-**Status: active.** O1 provides the stable worker lifecycle required for meaningful repeated-run measurements.
+**Status: complete and accepted on 2026-08-17.** I2V and REF2VA each passed one cold and two warm runs. Warm runs reused the same worker PIDs and existing FSDP registrations, both ranks completed, media passed black/frozen-frame checks, and committed memory, pagefile and VRAM did not grow progressively. Results are recorded in `docs/testing/minimax-h3/COLD_WARM_BENCHMARK_2026-08-17.md`.
 
 1. Record one cold and two warm runs for the selected I2V profile.
 2. Record one cold and two warm runs for the selected REF2VA development profile; use one full REF2VA release run after optimization because the full profile is expensive.
@@ -48,9 +48,19 @@ Keep the accepted full I2V and REF2VA workflows correct while making repeated in
 
 ## Phase O3: speed/quality variants
 
+**Status: active.** O2 provides the repeatable matched-run harness and accepted FP8-storage/FP32-compute baseline.
+
 1. Compare the FP8 base checkpoint against a compatible official Turbo LoRA at matched input, seed and output settings.
 2. Evaluate an INT8 checkpoint only after its exact model artifact is available and validated.
 3. Keep FP8 as the default unless another variant passes numerical/media checks and materially improves speed or memory.
+
+### O3 acceptance
+
+- Pin the exact Turbo LoRA artifact, size and SHA-256 before execution; do not infer compatibility from a filename alone.
+- Use the same model, input image(s), dimensions, frame count, steps and seed for baseline and Turbo comparisons, changing only documented LoRA/sampling settings required by the official artifact.
+- Record end-to-end time, sampler time, both-rank participation, peak host commit/pagefile and per-GPU VRAM/utilization.
+- Require finite rank outputs, no rank mismatch, valid video/audio streams, no black interval and temporal variation.
+- Adopt a variant only when its output is valid and its performance or memory benefit is repeatable; otherwise retain the accepted baseline.
 
 ## Documentation and release boundary
 
