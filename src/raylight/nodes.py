@@ -591,6 +591,16 @@ class RayInitializer:
 
         # HF Tokenizer warning when forking
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+        if wait_for is not None:
+            print("[Raylight] Releasing ComfyUI preprocessing models before Ray worker startup")
+            del wait_for
+            comfy.model_management.unload_all_models()
+            comfy.model_management.soft_empty_cache()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+
         self.parallel_dict: dict[str, Any] = dict()
         _monkey()
 

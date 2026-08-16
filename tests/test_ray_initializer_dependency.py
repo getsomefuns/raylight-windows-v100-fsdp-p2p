@@ -25,6 +25,16 @@ def test_ray_initializer_exposes_a_pure_execution_dependency_input():
     assert "wait_for" in argument_names
 
 
+def test_connected_dependency_unloads_preprocessing_models_before_ray_starts():
+    initializer = _class_node("RayInitializer")
+    spawn_actor = ast.unparse(_method_node(initializer, "spawn_actor"))
+
+    assert "if wait_for is not None:" in spawn_actor
+    assert "comfy.model_management.unload_all_models()" in spawn_actor
+    assert "comfy.model_management.soft_empty_cache()" in spawn_actor
+    assert spawn_actor.index("comfy.model_management.unload_all_models()") < spawn_actor.index("ray.init(")
+
+
 def test_advanced_initializer_keeps_the_same_execution_dependency_input():
     initializer = _class_node("RayInitializerAdvanced")
     input_types = ast.unparse(_method_node(initializer, "INPUT_TYPES"))
