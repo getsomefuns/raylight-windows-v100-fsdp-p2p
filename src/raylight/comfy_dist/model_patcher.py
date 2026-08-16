@@ -4,11 +4,12 @@ import collections
 import logging
 import gc
 import os
+import sys
 from typing import TYPE_CHECKING
 
 import torch
 import torch.distributed as dist
-from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy
+from torch.distributed.fsdp import CPUOffloadPolicy, FSDPModule, MixedPrecisionPolicy
 from torch.distributed.checkpoint.state_dict import StateDictOptions, set_model_state_dict
 from torch.distributed.utils import _free_storage
 from torch.distributed.tensor import DTensor
@@ -192,6 +193,24 @@ def select_fsdp_mixed_precision_policy(model):
     )
 
 
+def select_fsdp_cpu_offload_policy(model, *, platform: str | None = None):
+    """Return the FSDP2 runtime offload policy requested by the node."""
+    if not getattr(model, "is_cpu_offload", False):
+        return None
+
+    platform = sys.platform if platform is None else platform
+    configured = os.environ.get("RAYLIGHT_FSDP_CPU_OFFLOAD_PIN_MEMORY")
+    if configured is None:
+        pin_memory = platform != "win32"
+    else:
+        normalized = configured.strip().lower()
+        if normalized not in {"0", "1", "false", "true", "no", "yes", "off", "on"}:
+            raise ValueError("RAYLIGHT_FSDP_CPU_OFFLOAD_PIN_MEMORY must be a boolean value")
+        pin_memory = normalized in {"1", "true", "yes", "on"}
+
+    return CPUOffloadPolicy(pin_memory=pin_memory)
+
+
 def _align_dense_meta_dtypes_from_state_dict(
     model: torch.nn.Module,
     full_sd: dict,
@@ -332,6 +351,12 @@ def patch_fsdp(self):
     if mp_policy is not None:
         fsdp_kwargs["mp_policy"] = mp_policy
         print("[FSDP] BF16 mixed-precision policy enabled for parameter all-gather and forward")
+    offload_policy = select_fsdp_cpu_offload_policy(self)
+    if offload_policy is not None:
+        fsdp_kwargs["offload_policy"] = offload_policy
+        print(
+            f"[FSDP] CPU offload enabled for parameter shards (pin_memory={offload_policy.pin_memory})"
+        )
 
     has_qt_runtime = freeze_and_detect_qt(diffusion_model)
     has_quant_sd = _state_dict_has_quant_payload(self.fsdp_state_dict)

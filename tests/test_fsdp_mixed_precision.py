@@ -1,3 +1,4 @@
+import os
 import types
 import unittest
 from unittest import mock
@@ -7,6 +8,7 @@ import torch
 from raylight.comfy_dist.model_patcher import (
     FSDPModelPatcher,
     _align_dense_meta_dtypes_from_state_dict,
+    select_fsdp_cpu_offload_policy,
     select_fsdp_mixed_precision_policy,
 )
 
@@ -63,6 +65,32 @@ class FSDPMixedPrecisionTests(unittest.TestCase):
             model=types.SimpleNamespace(manual_cast_dtype=torch.float16)
         )
         self.assertIsNone(select_fsdp_mixed_precision_policy(model_patcher))
+
+    def test_cpu_offload_disabled_does_not_install_an_offload_policy(self):
+        model_patcher = types.SimpleNamespace(is_cpu_offload=False)
+
+        self.assertIsNone(select_fsdp_cpu_offload_policy(model_patcher))
+
+    def test_cpu_offload_uses_pageable_memory_by_default_on_windows(self):
+        model_patcher = types.SimpleNamespace(is_cpu_offload=True)
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("RAYLIGHT_FSDP_CPU_OFFLOAD_PIN_MEMORY", None)
+            policy = select_fsdp_cpu_offload_policy(model_patcher, platform="win32")
+
+        self.assertIsNotNone(policy)
+        self.assertFalse(policy.pin_memory)
+
+    def test_cpu_offload_pin_memory_can_be_enabled_explicitly(self):
+        model_patcher = types.SimpleNamespace(is_cpu_offload=True)
+
+        with mock.patch.dict(
+            os.environ,
+            {"RAYLIGHT_FSDP_CPU_OFFLOAD_PIN_MEMORY": "1"},
+        ):
+            policy = select_fsdp_cpu_offload_policy(model_patcher, platform="win32")
+
+        self.assertTrue(policy.pin_memory)
 
     def test_lora_clone_preserves_explicit_fsdp_parameter_dtype(self):
         patcher = object.__new__(FSDPModelPatcher)

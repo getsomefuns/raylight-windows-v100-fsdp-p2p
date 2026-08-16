@@ -239,7 +239,7 @@ class FSDPProbeActor:
         }
 
 
-    def run_quantized_forward(self):
+    def run_quantized_forward(self, cpu_offload=False):
         import json
         import sys
 
@@ -247,12 +247,13 @@ class FSDPProbeActor:
         import torch.nn as nn
 
         source_root = str(REPO_ROOT / "src")
-        comfy_root = str(REPO_ROOT.parents[1])
+        comfy_root = str(REPO_ROOT.parent / "ComfyUI")
         for candidate in (source_root, comfy_root):
             if candidate not in sys.path:
                 sys.path.insert(0, candidate)
 
         from comfy.quant_ops import get_layout_class
+        from torch.distributed.fsdp import CPUOffloadPolicy
         from raylight.comfy_dist.fsdp_utils import (
             fully_shard_bottom_up,
             load_from_full_model_state_dict,
@@ -295,12 +296,15 @@ class FSDPProbeActor:
         }
         install_fp8_patches()
         try:
+            fsdp_kwargs = {
+                "mesh": self.mesh,
+                "reshard_after_forward": True,
+            }
+            if cpu_offload:
+                fsdp_kwargs["offload_policy"] = CPUOffloadPolicy(pin_memory=False)
             fully_shard_bottom_up(
                 model,
-                fsdp_kwargs={
-                    "mesh": self.mesh,
-                    "reshard_after_forward": True,
-                },
+                fsdp_kwargs=fsdp_kwargs,
                 native_ignore_scale=False,
             )
             load_from_full_model_state_dict(
@@ -308,12 +312,13 @@ class FSDPProbeActor:
                 payload,
                 device=torch.device("cuda:0"),
                 strict=False,
-                cpu_offload=False,
+                cpu_offload=cpu_offload,
                 release_sd=True,
             )
             local = model[0].weight.to_local()
             local_qdata_shape = list(local._qdata.shape)
             local_logical_shape = list(local._params.orig_shape)
+            local_qdata_device = str(local._qdata.device)
             with torch.no_grad():
                 actual = model(sample)
             torch.cuda.synchronize()
@@ -321,6 +326,7 @@ class FSDPProbeActor:
             return {
                 "rank": self.rank,
                 "output_shape": list(actual.shape),
+                "local_qdata_device": local_qdata_device,
                 "local_qdata_shape": local_qdata_shape,
                 "local_logical_shape": local_logical_shape,
                 "max_error": max_error,
@@ -349,6 +355,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--large", action="store_true")
     parser.add_argument("--quantized", action="store_true")
+    parser.add_argument("--cpu-offload", action="store_true")
     args = parser.parse_args()
     capacity_bytes = (128 if args.large else 16) * 1024 * 1024
     ray.init(num_gpus=2, include_dashboard=False, ignore_reinit_error=True)
@@ -371,13 +378,15 @@ if __name__ == "__main__":
         )
         if args.quantized:
             results = ray.get(
-                [actor.run_quantized_forward.remote() for actor in actors], timeout=300
+                [actor.run_quantized_forward.remote(args.cpu_offload) for actor in actors], timeout=300
             )
             for result in results:
                 print("[FSDP_QUANT] " + repr(result))
                 if result["output_shape"] != [2, 16]:
                     raise RuntimeError(result)
                 if not result["finite"] or result["max_error"] > 1e-5:
+                    raise RuntimeError(result)
+                if args.cpu_offload and result["local_qdata_device"] != "cpu":
                     raise RuntimeError(result)
                 if result["local_qdata_shape"] != [8, 8]:
                     raise RuntimeError(result)
