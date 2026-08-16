@@ -83,3 +83,38 @@ def test_manifest_keeps_precision_comparisons_in_separate_download_groups():
             "loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
         ],
     }
+
+
+def test_i2v_fp8_plan_can_select_one_model_for_parallel_resume(tmp_path):
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(DOWNLOAD_SCRIPT),
+            "-Group",
+            "i2v-fp8",
+            "-ModelId",
+            "video-vae-fp16",
+            "-ModelRoot",
+            str(tmp_path),
+            "-PlanOnly",
+            "-Json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["group"] == "i2v-fp8"
+    assert plan["model_id"] == "video-vae-fp16"
+    assert plan["total_bytes"] == 5_207_808_496
+    assert [item["relative_path"] for item in plan["files"]] == [
+        "vae/minimax_h3_video_vae_fp16.safetensors"
+    ]
+    assert plan["files"][0]["status"] == "missing"
+    assert not list(tmp_path.rglob("*"))

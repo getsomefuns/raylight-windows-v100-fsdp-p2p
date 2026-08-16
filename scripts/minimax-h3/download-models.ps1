@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("i2v-fp8", "ref2va-fp8", "i2v-int8", "ref2va-int8", "turbo")]
     [string]$Group,
+    [ValidateSet("fl2va-fp8", "text-encoder-nvfp4", "video-vae-fp16", "audio-vae-fp32", "ref2va-fp8", "fl2va-int8", "ref2va-int8", "fl2v-turbo-4step", "fl2v-turbo-8step", "ref2v-turbo-4step")]
+    [string]$ModelId,
     [string]$ModelRoot = "E:\ComfyUI-aki-v3\ComfyUI\models",
     [string]$ManifestPath,
     [switch]$PlanOnly,
@@ -60,6 +62,13 @@ $selected = @($manifest.models | Where-Object { @($_.groups) -contains $Group })
 if ($selected.Count -eq 0) {
     throw "No models found for group: $Group"
 }
+if (-not [string]::IsNullOrWhiteSpace($ModelId)) {
+    $selected = @($selected | Where-Object { [string]$_.id -eq $ModelId })
+    if ($selected.Count -eq 0) {
+        throw "Model $ModelId is not part of group $Group"
+    }
+}
+
 
 $baseUrl = "$($manifest.repository)/resolve/$($manifest.revision)"
 $files = foreach ($model in $selected) {
@@ -109,6 +118,7 @@ $plan = [ordered]@{
     schema_version = 1
     group = $Group
     model_root = $ModelRoot
+    model_id = $ModelId
     total_bytes = $totalBytes
     files = @($files)
 }
