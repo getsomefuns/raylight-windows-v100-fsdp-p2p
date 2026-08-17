@@ -42,9 +42,11 @@ This directory contains the maintained validation summary for MiniMax H3 on nati
 | Checkpoint lifecycle validation | Complete | Different checkpoints recycle both workers and reclaim OS commit; unchanged checkpoints reuse the same PIDs and FSDP shards |
 | INT8 comparison | Pending | Run only after FP8 correctness |
 | Repeatable cold/warm benchmark | Complete | I2V and REF2VA each pass one cold plus two warm runs with stable workers, resources and media |
-| Speed/quality variants | In progress | Compare the FP8-storage baseline with a compatible official Turbo LoRA at matched settings |
+| Speed/quality variants | Complete | Official FL2V 8-step and REF2V 4-step Turbo LoRAs pass; warm end-to-end time improves by 54.9% and 58.9% against 20-step baselines |
+| Full-specification Turbo release validation | Complete | Full I2V and REF2VA Turbo presets pass; cold end-to-end time improves by 39.6% and 68.0% against full 20-step baselines |
+| User-loadable Turbo release candidate | In progress | Package accepted Turbo settings as GUI workflows and concise manual-use instructions |
 
-Accepted runs: [I2V smoke validation](I2V_SMOKE_2026-08-17.md), [REF2VA smoke validation](REF2VA_SMOKE_2026-08-17.md), [full I2V/REF2VA validation](FULL_WORKFLOWS_2026-08-17.md), [checkpoint recycling validation](CHECKPOINT_RECYCLING_2026-08-17.md), and [repeatable cold/warm benchmark](COLD_WARM_BENCHMARK_2026-08-17.md). MiniMax H3 requires `--reserve-vram 2` in addition to `--disable-cuda-malloc` on this stack. Full workflows default to FSDP CPU offload. The original smoke validations kept CPU offload disabled; the O2 repeatability benchmark intentionally enabled it to match the reusable full-workflow operating mode. REF2VA also requires the preprocessing-to-worker cleanup barrier recorded in the REF2VA report.
+Accepted runs: [I2V smoke validation](I2V_SMOKE_2026-08-17.md), [REF2VA smoke validation](REF2VA_SMOKE_2026-08-17.md), [full I2V/REF2VA validation](FULL_WORKFLOWS_2026-08-17.md), [checkpoint recycling validation](CHECKPOINT_RECYCLING_2026-08-17.md), [repeatable cold/warm benchmark](COLD_WARM_BENCHMARK_2026-08-17.md), [speed/quality variants](SPEED_QUALITY_VARIANTS_2026-08-17.md), and [full Turbo release validation](FULL_TURBO_RELEASE_2026-08-17.md). MiniMax H3 requires `--reserve-vram 2` in addition to `--disable-cuda-malloc` on this stack. Full workflows default to FSDP CPU offload. The original smoke validations kept CPU offload disabled; the O2 and O3 repeatability benchmarks intentionally enabled it to match the reusable full-workflow operating mode. REF2VA also requires the preprocessing-to-worker cleanup barrier recorded in the REF2VA report.
 
 ## Evidence policy
 
