@@ -146,7 +146,7 @@ class A2ATraceTests(unittest.TestCase):
         worker = ray_worker.RayWorker.__new__(ray_worker.RayWorker)
         worker._free_cached_aux_models = lambda: events.append("free_aux")
         worker._invalidate_non_fsdp_cache = lambda: events.append("invalidate_cache")
-        worker.model = object()
+        worker._free_current_model = lambda: events.append("free_model")
         worker._a2a_tracer = RecordingTracer()
 
         with (
@@ -166,6 +166,7 @@ class A2ATraceTests(unittest.TestCase):
         self.assertEqual(events, [
             "free_aux",
             "invalidate_cache",
+            "free_model",
             "close_trace",
             "destroy_group",
             "exit_actor",

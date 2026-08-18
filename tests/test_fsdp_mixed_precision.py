@@ -11,6 +11,8 @@ from raylight.comfy_dist.model_patcher import (
     _align_dense_meta_dtypes_from_state_dict,
     _can_release_fsdp_state_dict_during_load,
     patch_fsdp,
+    maybe_register_fsdp_cpu_offload_host_memory,
+    close_fsdp_cpu_offload_host_memory,
     select_fsdp_cpu_offload_policy,
     select_fsdp_mixed_precision_policy,
 )
@@ -95,10 +97,156 @@ class FSDPMixedPrecisionTests(unittest.TestCase):
 
         self.assertTrue(policy.pin_memory)
 
+    def test_windows_cpu_offload_host_registration_is_opt_in(self):
+        model = types.SimpleNamespace()
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER", None)
+            registration = maybe_register_fsdp_cpu_offload_host_memory(
+                model,
+                is_cpu_offload=True,
+                platform="win32",
+            )
+
+        self.assertIsNone(registration)
+        self.assertFalse(hasattr(model, "_raylight_fsdp_host_registration"))
+
+    def test_windows_cpu_offload_host_registration_uses_bounded_capacity(self):
+        model = types.SimpleNamespace()
+        tensors = [torch.empty(4)]
+        registration = types.SimpleNamespace(
+            registered_bytes=256,
+            registered_storages=1,
+            skipped_capacity_bytes=0,
+            failed_storages=0,
+        )
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER": "1",
+                    "RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB": "256",
+                    "RAYLIGHT_FSDP_CPU_OFFLOAD_PIN_MEMORY": "0",
+                },
+            ),
+            mock.patch(
+                "raylight.comfy_dist.model_patcher.collect_fsdp_shard_cpu_tensors",
+                return_value=iter(tensors),
+            ),
+            mock.patch(
+                "raylight.comfy_dist.model_patcher.register_cpu_storages",
+                return_value=registration,
+            ) as register,
+        ):
+            result = maybe_register_fsdp_cpu_offload_host_memory(
+                model,
+                is_cpu_offload=True,
+                platform="win32",
+            )
+
+        self.assertIs(result, registration)
+        self.assertIs(model._raylight_fsdp_host_registration, registration)
+        register.assert_called_once_with(
+            tensors,
+            capacity_bytes=256 * 1024 * 1024,
+        )
+
+    def test_repeated_host_registration_closes_previous_before_registering_again(self):
+        events = []
+        previous = types.SimpleNamespace(
+            close=lambda: events.append("close") is None,
+        )
+        replacement = types.SimpleNamespace(
+            registered_bytes=1,
+            registered_storages=1,
+            skipped_capacity_bytes=0,
+            failed_storages=0,
+        )
+        model = types.SimpleNamespace(_raylight_fsdp_host_registration=previous)
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER": "1",
+                    "RAYLIGHT_FSDP_CPU_OFFLOAD_PIN_MEMORY": "0",
+                },
+            ),
+            mock.patch(
+                "raylight.comfy_dist.model_patcher.collect_fsdp_shard_cpu_tensors",
+                return_value=iter([torch.empty(1)]),
+            ),
+            mock.patch(
+                "raylight.comfy_dist.model_patcher.register_cpu_storages",
+                side_effect=lambda *_args, **_kwargs: events.append("register") or replacement,
+            ),
+        ):
+            result = maybe_register_fsdp_cpu_offload_host_memory(
+                model,
+                is_cpu_offload=True,
+                platform="win32",
+            )
+
+        self.assertIs(result, replacement)
+        self.assertEqual(events, ["close", "register"])
+
+    def test_close_host_registration_is_idempotent_at_model_boundary(self):
+        closed = []
+        diffusion_model = types.SimpleNamespace(
+            _raylight_fsdp_host_registration=types.SimpleNamespace(
+                close=lambda: closed.append(True) is None
+            )
+        )
+        model = types.SimpleNamespace(diffusion_model=diffusion_model)
+
+        close_fsdp_cpu_offload_host_memory(model)
+        close_fsdp_cpu_offload_host_memory(model)
+
+        self.assertEqual(closed, [True])
+        self.assertFalse(hasattr(diffusion_model, "_raylight_fsdp_host_registration"))
+
+    def test_close_host_registration_retains_failed_registration_on_model(self):
+        registration = types.SimpleNamespace(close=lambda: False)
+        diffusion_model = types.SimpleNamespace(
+            _raylight_fsdp_host_registration=registration
+        )
+
+        result = close_fsdp_cpu_offload_host_memory(diffusion_model)
+
+        self.assertFalse(result)
+        self.assertIs(diffusion_model._raylight_fsdp_host_registration, registration)
+
+    def test_host_registration_does_not_stack_with_full_pin_memory_policy(self):
+        model = types.SimpleNamespace()
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER": "1",
+                "RAYLIGHT_FSDP_CPU_OFFLOAD_PIN_MEMORY": "1",
+            },
+        ):
+            registration = maybe_register_fsdp_cpu_offload_host_memory(
+                model,
+                is_cpu_offload=True,
+                platform="win32",
+            )
+
+        self.assertIsNone(registration)
+
     def test_quant_state_dict_is_released_incrementally_without_excluded_modules(self):
         self.assertTrue(_can_release_fsdp_state_dict_during_load(set()))
         self.assertIn("release_sd=release_state_dict", inspect.getsource(patch_fsdp))
         self.assertIn("self.fsdp_state_dict = None", inspect.getsource(patch_fsdp))
+        self.assertIn(
+            "maybe_register_fsdp_cpu_offload_host_memory",
+            inspect.getsource(patch_fsdp),
+        )
+        self.assertIn(
+            "close_fsdp_cpu_offload_host_memory",
+            inspect.getsource(FSDPModelPatcher.free_fsdp_vram),
+        )
 
     def test_quant_state_dict_is_retained_when_excluded_modules_need_it_later(self):
         self.assertFalse(_can_release_fsdp_state_dict_during_load({object()}))

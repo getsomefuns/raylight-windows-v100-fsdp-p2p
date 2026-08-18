@@ -1459,7 +1459,7 @@ class RayWorker:
     def kill(self):
         self._free_cached_aux_models()
         self._invalidate_non_fsdp_cache()
-        self.model = None
+        self._free_current_model()
         self.disable_windows_p2p()
         if getattr(self, "_windows_p2p", None) is not None:
             self._windows_p2p.close()

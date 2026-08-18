@@ -29,6 +29,10 @@ from .fsdp_utils import (
     summarize_fsdp_parameters,
     summarize_all_gather_inputs,
 )
+from .fsdp_host_register import (
+    collect_fsdp_shard_cpu_tensors,
+    register_cpu_storages,
+)
 
 if TYPE_CHECKING:
     from raylight.distributed_worker.parallel_group_manager import XFuserParallelContext
@@ -38,6 +42,9 @@ try:
     from comfy_kitchen.tensor.base import QuantizedTensor as _CKQuantizedTensor
 except Exception:
     _CKQuantizedTensor = ()
+
+
+_RETAINED_FAILED_HOST_REGISTRATIONS = []
 
 
 class LowVramPatch:
@@ -209,6 +216,85 @@ def select_fsdp_cpu_offload_policy(model, *, platform: str | None = None):
         pin_memory = normalized in {"1", "true", "yes", "on"}
 
     return CPUOffloadPolicy(pin_memory=pin_memory)
+
+
+def close_fsdp_cpu_offload_host_memory(model) -> bool:
+    diffusion_model = getattr(model, "diffusion_model", model)
+    registration = getattr(diffusion_model, "_raylight_fsdp_host_registration", None)
+    if registration is None:
+        return True
+    if not registration.close():
+        if not any(item is registration for item in _RETAINED_FAILED_HOST_REGISTRATIONS):
+            _RETAINED_FAILED_HOST_REGISTRATIONS.append(registration)
+        print(
+            "[FSDP_HOST_REGISTER] unregister failed; retaining backing storage for retry",
+            flush=True,
+        )
+        return False
+    _RETAINED_FAILED_HOST_REGISTRATIONS[:] = [
+        item for item in _RETAINED_FAILED_HOST_REGISTRATIONS if item is not registration
+    ]
+    delattr(diffusion_model, "_raylight_fsdp_host_registration")
+    return True
+
+
+def maybe_register_fsdp_cpu_offload_host_memory(
+    model,
+    *,
+    is_cpu_offload: bool,
+    platform: str | None = None,
+):
+    """Optionally page-lock loaded FSDP shards in place on native Windows."""
+    if not is_cpu_offload:
+        return None
+    platform = sys.platform if platform is None else platform
+    if platform != "win32":
+        return None
+
+    configured = os.environ.get("RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER", "0")
+    normalized = configured.strip().lower()
+    if normalized not in {"0", "1", "false", "true", "no", "yes", "off", "on"}:
+        raise ValueError("RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER must be a boolean value")
+    if normalized not in {"1", "true", "yes", "on"}:
+        return None
+
+    pin_configured = os.environ.get("RAYLIGHT_FSDP_CPU_OFFLOAD_PIN_MEMORY", "0")
+    if pin_configured.strip().lower() in {"1", "true", "yes", "on"}:
+        return None
+
+    try:
+        capacity_mib = int(
+            os.environ.get("RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB", "12288")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB must be an integer"
+        ) from exc
+    if capacity_mib <= 0:
+        raise ValueError("RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB must be positive")
+
+    if not close_fsdp_cpu_offload_host_memory(model):
+        return getattr(model, "_raylight_fsdp_host_registration")
+    tensors = list(
+        collect_fsdp_shard_cpu_tensors(
+            model,
+            fsdp_module_type=FSDPModule,
+        )
+    )
+    registration = register_cpu_storages(
+        tensors,
+        capacity_bytes=capacity_mib * 1024 * 1024,
+    )
+    model._raylight_fsdp_host_registration = registration
+    print(
+        "[FSDP_HOST_REGISTER] "
+        f"registered={registration.registered_bytes / (1024 * 1024):.2f}MiB "
+        f"storages={registration.registered_storages} "
+        f"skipped_capacity={registration.skipped_capacity_bytes / (1024 * 1024):.2f}MiB "
+        f"failures={registration.failed_storages}",
+        flush=True,
+    )
+    return registration
 
 
 def _can_release_fsdp_state_dict_during_load(excluded_modules) -> bool:
@@ -470,6 +556,10 @@ def patch_fsdp(self):
             )
 
     self.fsdp_state_dict = None
+    maybe_register_fsdp_cpu_offload_host_memory(
+        diffusion_model,
+        is_cpu_offload=self.is_cpu_offload,
+    )
 
     print("FSDP registered successfully.")
     return self.model
@@ -535,6 +625,8 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
         model = getattr(self, "model", None)
         self._fsdp_full_load_ready = False
         if model is None:
+            return
+        if not close_fsdp_cpu_offload_host_memory(model):
             return
         # Break reference cycle (model.current_patcher -> self -> model)
         if hasattr(model, "current_patcher"):
@@ -791,6 +883,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
                     # (model.current_patcher -> FSDPModelPatcher -> self.model)
                     # so __del__ runs deterministically on del and frees
                     # DTensor shard storage via _safe_free_storage.
+                    close_fsdp_cpu_offload_host_memory(self.model)
                     if hasattr(self.model, "current_patcher"):
                         self.model.current_patcher = None
                 else:
@@ -817,6 +910,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
 
         model = getattr(self, "model", None)
         if model is not None:
+            close_fsdp_cpu_offload_host_memory(model)
             # Break reference cycle so the inner model can be collected
             if hasattr(model, "current_patcher"):
                 model.current_patcher = None
