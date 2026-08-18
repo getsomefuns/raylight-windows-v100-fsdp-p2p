@@ -5,7 +5,7 @@
 > **Experimental Preview**
 > Native-Windows Raylight branch for two Tesla V100-SXM2-16GB GPUs in TCC mode, with FSDP2 weight sharding and CUDA IPC/P2P communication over NVLink.
 
-This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 Diffusion Model is genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
+This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
 This is not Windows NCCL and not a general PyTorch `ProcessGroup`. It is a targeted compatibility layer for a single machine, exactly two ranks, Windows V100 inference.
 
@@ -29,13 +29,14 @@ It is intended for users who:
 
 - must run native Windows rather than WSL or Linux;
 - have two Tesla V100-SXM2-16GB GPUs in TCC mode with working NVLink/CUDA P2P;
-- need the LTX 2.3 Diffusion Model weights split across both 16 GB GPUs;
+- need validated LTX 2.3 or MiniMax H3 Diffusion Model weights split across both 16 GB GPUs;
 - want matched CUDA collectives to travel directly between GPUs instead of through host RAM;
 - accept the narrower scope and higher process overhead of Ray on Windows.
 
 It provides:
 
-- persistent FSDP2 weight sharding for a Diffusion Model loaded by `RayUNETLoader`;
+- persistent FSDP2 weight sharding for a validated LTX 2.3 or MiniMax H3 Diffusion Model loaded by `RayUNETLoader`;
+- MiniMax H3 FP8-scaled checkpoints, CPU offload, official Turbo LoRAs, same-checkpoint reuse, and worker recycling when checkpoints change;
 - a CUDA P2P `all_gather_into_tensor` path for FSDP2;
 - the previous CUDA P2P `all_to_all_single` path for Ulysses;
 - startup correctness and bandwidth gates;
@@ -83,13 +84,14 @@ This is not pipeline parallelism with half the layers on each GPU. For each FSDP
 4. the full weight is released and each rank returns to its persistent shard;
 5. the process repeats for the next layer.
 
-The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each rank retained about 11,203 MiB of Diffusion Model payload. Each GPU still needs temporary room for the active full layer, activations, LoRA, a 128 MiB P2P buffer, and CUDA workspaces, so peak VRAM can still approach 16 GB.
+The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each rank retained about 11,203 MiB of Diffusion Model payload. The validated MiniMax H3 path registered 684 FSDP wrappers per rank. Each GPU still needs temporary room for the active full layer, activations, LoRA, a 128 MiB P2P buffer, and CUDA workspaces, so peak VRAM can still approach 16 GB.
 
 ### What is and is not sharded
 
 | Component | FSDP-sharded now? | Notes |
 |---|---|---|
 | LTX 2.3 Diffusion Model | Yes | loaded through `RayUNETLoader` |
+| MiniMax H3 Diffusion Model | Yes | validated FP8-scaled I2V/REF2VA checkpoints |
 | Video/audio transformers inside LTXAV | Yes | part of the Diffusion Model |
 | Text Encoder | No | ordinary ComfyUI path |
 | Video VAE | No | ordinary `VAELoader` / tiled decode path |
@@ -99,7 +101,7 @@ The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each 
 | Distilled LoRA | Supported, but not base-weight sharding | lazy CPU sidecar applied by both workers |
 | GGUF Diffusion Model | No | explicitly rejected with current FSDP |
 
-The original BF16 distilled LoRA passed a 121-frame visual, audio, and rank-consistency acceptance run. It increases host memory, transfer work, and runtime.
+The original LTX BF16 distilled LoRA passed a 121-frame visual, audio, and rank-consistency acceptance run. The official MiniMax H3 FL2V Turbo8 and REF2V Turbo4 LoRAs also pass FSDP loading, dual-rank sampling, and media checks.
 
 ### FSDP versus NCCL
 
@@ -138,7 +140,7 @@ Gloo/TCPStore still handles rendezvous, group creation, barriers, and unmatched 
 | CUDA data path | NCCL | P2P all-to-all | P2P all-gather plus all-to-all |
 | Scale | NCCL multi-GPU/multi-node | exactly two ranks | exactly two ranks |
 | Main value | standard general implementation | faster sampling for models that already fit | run a model that does not fit one 16 GB GPU |
-| Current performance status | model/hardware dependent | 10.28% fair warm-to-warm gain | correctness passed; 20% target not passed |
+| Current performance status | model/hardware dependent | 10.28% fair warm-to-warm gain | LTX correctness accepted; MiniMax H3 O1-O5/Turbo accepted; new O6 baseline pending |
 
 ## Host RAM and page file
 
@@ -168,9 +170,9 @@ A page file can delay a host OOM, but paging can stall one rank, slow sampling s
 | Driver model | both GPUs in TCC; WDDM is not a release configuration |
 | GPU transport | CUDA peer access, CUDA IPC, and cross-process CUDA events |
 | Ray topology | two workers / two ranks |
-| FSDP topology | FSDP=true, CPU Offload=false, Ulysses/Ring/CFG=0, DP=1 |
+| FSDP topology | LTX uses CPU Offload=false; full MiniMax H3 uses CPU Offload=true; both use FSDP=true, Ulysses/Ring/CFG=0, DP=1 |
 | Supported collectives | two-rank CUDA `all_gather_into_tensor` and `all_to_all_single` |
-| Sharding scope | LTX 2.3 Diffusion Model only |
+| Sharding scope | validated LTX 2.3 and MiniMax H3 Diffusion Models |
 
 The physical carrier-board or PCIe slot arrangement is not a software condition. The real gate is whether CUDA P2P works and the complete correctness/bandwidth probe passes.
 
@@ -358,7 +360,26 @@ Current visually accepted FSDP baseline:
 | FSDP without LoRA | 479.83 s | about 11.0 s/it | about 41.7 s/it | 16,218/16,208 MiB | coherent, PASS |
 | FSDP + original BF16 LoRA | 551.82 s | about 15.0 s/it | about 45.6 s/it | 16,224/16,156 MiB | coherent, PASS |
 
-These results prove sharding, dual-GPU computation, and correct output. They do not pass the separate target of at least 20% faster than a fair single-GPU baseline.
+These results prove sharding, dual-GPU computation, and correct output. LTX performance optimization remains a separate task.
+
+### MiniMax H3 accepted state
+
+| Capability | Current result |
+|---|---|
+| I2V / REF2VA FSDP | dual rank, CUDA P2P, and FP8-scaled checkpoints pass |
+| Worker lifecycle | same checkpoint reuses actors; changed checkpoints recycle actors and reclaim committed memory |
+| Turbo workflows | loadable Turbo8 I2V and Turbo4 REF2VA workflows pass node/API validation |
+| Accepted full profiles | I2V 640x640/56 frames; REF2VA 864x480/124 frames |
+| Current compute policy | FP8 storage with FP32 V100 diffusion compute |
+| O6 | not implemented; first run matched 1120x768/124-frame/24-FPS local baselines |
+| O7 | preliminary model-specific safe-FP16 research for LTX/LTXAV after O6 |
+
+The accepted O5 cold Turbo records are 387.98 s for I2V Turbo8 and 424.59 s for REF2VA Turbo4. They document O5 and are not O6 denominators. O6 compares only with the new matched local baselines: stable sampling must be strictly more than 11x faster, while model load, preprocessing, VAE decode, and media write must not regress.
+
+- [MiniMax validation summary](docs/testing/minimax-h3/README.md)
+- [Turbo workflow usage](docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md)
+- [O6 implementation and baseline plan](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md)
+- [O7 preliminary LTX research plan](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
 
 ## Important fixes retained in this branch
 
@@ -386,7 +407,7 @@ A playable file, non-black pixels, and absence of NaN/Inf are only basic gates. 
 - Gloo shows a host name or wrong adapter: pass `-GlooHost <physical-adapter-ip>`; do not hard-code a development-machine address in shared scripts.
 - P2P below 50 GiB/s: check TCC, active NVLink links, peer access, topology, and competing GPU processes.
 - VAE `operation not supported`: retain `--disable-cuda-malloc`.
-- FSDP error: use this repository's FSDP workflow and strict `GPU=2`, `FSDP=true`, `CPU Offload=false`, `Ulysses/Ring/CFG=0`, `DP=1` topology.
+- FSDP error: use the matching repository workflow with `GPU=2`, `FSDP=true`, `Ulysses/Ring/CFG=0`, and `DP=1`; accepted LTX uses CPU Offload=false, while full MiniMax H3 uses CPU Offload=true.
 
 ## Repository layout
 
@@ -395,9 +416,11 @@ raylight/
 ├─ src/raylight/                         Raylight plus Windows P2P/FSDP layer
 ├─ scripts/                              launcher and hardware preflight
 ├─ tests/                                unit tests, hardware probes, benchmark tool
-├─ example_workflows/                    ComfyUI workflow and upstream input image
+├─ example_workflows/                    LTX and MiniMax H3 workflows and upstream inputs
 ├─ benchmark_payloads/                   checked-in 5-second API prompts
 ├─ docs/                                 technical plans, diagnostics, and results
+│  ├─ testing/minimax-h3/                MiniMax staged validation and usage
+│  └─ superpowers/plans/                 O1-O7 plans and acceptance gates
 ├─ environment-windows-v100.json         machine-readable validation matrix
 ├─ requirements-windows-v100.txt         pinned Windows V100 dependencies
 ├─ WINDOWS_P2P_CHANGES.md                previous-stage changes

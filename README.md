@@ -11,6 +11,8 @@
 会在两张 V100 之间真正分片；聚合权重和 Ulysses 张量通过 CUDA IPC、跨进程
 CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建组和控制面。
 
+在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
+
 当前实现不是完整的 Windows NCCL，也不是通用 PyTorch `ProcessGroup`。它是针对
 单机、双 rank、Windows V100 推理所需 collective 的定向兼容层。
 
@@ -40,14 +42,15 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 
 - 必须使用原生 Windows，不希望迁移到 WSL/Linux。
 - 使用两张 Tesla V100-SXM2-16GB，并已切换到 TCC 模式。
-- 两卡之间有可用 NVLink/CUDA P2P，希望 LTX 2.3 的 FSDP 权重聚合与序列并行
+- 两卡之间有可用 NVLink/CUDA P2P，希望 LTX 2.3 或 MiniMax H3 的 FSDP 权重聚合与序列并行
   通信实际走 GPU P2P，而不是通过 CPU 主存中转。
 - 接受 Ray 在 Windows 上仍属于 Beta、功能与性能弱于 Linux + NCCL。
 - 愿意固定经过验证的软件版本，并在运行工作流前执行完整自检。
 
 ### 它解决什么
 
-- 让 LTX 2.3 Diffusion Model 的持久权重分片保存在两张 16GB V100 上。
+- 让已验证的 LTX 2.3 与 MiniMax H3 Diffusion Model 持久权重分片保存在两张 16GB V100 上。
+- 支持 MiniMax H3 FP8-scaled checkpoint、FSDP CPU offload、官方 Turbo LoRA、同 checkpoint 热复用和切换 checkpoint 时的 worker 回收。
 - 为 FSDP2 的 CUDA `all_gather_into_tensor` 和 Ulysses 的
   `all_to_all_single` 提供专用 P2P 快速路径。
 - 保留 Gloo 作为 Windows 可用的进程组、控制面和兼容回退。
@@ -72,15 +75,15 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 当前 `windows-v100-fsdp-p2p` 分支已经实现并验证：
 
 > 在原生 Windows、双 V100 TCC、NVLink 环境下，用 PyTorch FSDP2 对
-> LTX 2.3 Diffusion Model 做真实权重分片，并用自定义 CUDA IPC/P2P
+> LTX 2.3 与 MiniMax H3 Diffusion Model 做真实权重分片，并用自定义 CUDA IPC/P2P
 > all-gather 替代 NCCL 的关键数据通信路径。
 
 这不表示整个 ComfyUI 工作流中的所有模型都会自动分片，也不表示两张 16GB GPU
-变成了一张透明的 32GB GPU。当前主要解决的是 22B Diffusion Model 的单卡显存容量问题。
+变成了一张透明的 32GB GPU。当前解决的是已验证 Diffusion Model 的单卡显存容量问题；模型支持必须逐项验收。
 
 ### 两张 GPU 是否参与计算
 
-是。最终通过视觉验收的 FSDP + 原始 BF16 LoRA 运行中：
+是。以下数据来自最终通过视觉验收的 LTX FSDP + 原始 BF16 LoRA 运行：
 
 - GPU0 峰值：16,224 MiB、100%、354.54W。
 - GPU1 峰值：16,156 MiB、100%、348.43W。
@@ -98,6 +101,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 | Diffusion Sampler 2 | 高负载 | 高负载 | FSDP 双 rank 采样 |
 | Video/Audio VAE 解码 | 主要工作 | 多数空闲 | 当前工作流使用普通 VAE 节点 |
 
+MiniMax H3 I2V 和 REF2VA 的已验收运行同样证明两个 rank 完成采样且两卡达到高利用率。
 所以准确表述是：**FSDP 扩散采样阶段双卡共同运算；整个工作流并非始终双卡满载。**
 
 ### 权重如何分片和计算
@@ -111,7 +115,8 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 5. 对下一层重复上述过程。
 
 LTX 2.3 实测注册了 2,999 个 FSDP wrapper、2,620 个 DTensor；每个 rank
-长期保存的 Diffusion Model payload 约为 11,203 MiB。每张 GPU 仍需为当前完整层、
+长期保存的 Diffusion Model payload 约为 11,203 MiB。MiniMax H3 实测每个 rank 注册 684 个 FSDP wrapper。
+每张 GPU 仍需为当前完整层、
 激活张量、LoRA、128 MiB P2P 缓冲区和 CUDA 工作区保留临时显存，因此峰值仍可能接近 16GB。
 
 ### 哪些模型会被分片
@@ -119,6 +124,7 @@ LTX 2.3 实测注册了 2,999 个 FSDP wrapper、2,620 个 DTensor；每个 rank
 | 模型或组件 | 当前是否 FSDP 分片 | 说明 |
 |---|---|---|
 | LTX 2.3 Diffusion Model | 是 | 通过 `RayUNETLoader` 进入 FSDP |
+| MiniMax H3 Diffusion Model | 是 | FP8-scaled I2V/REF2VA checkpoint 已通过双 rank FSDP/P2P 验收 |
 | Diffusion Model 内的视频/音频 Transformer | 是 | 属于 LTXAV Diffusion Model 本体 |
 | Text Encoder | 否 | `DualCLIPLoader + CLIPTextEncode` 是普通 ComfyUI 路径 |
 | Video VAE | 否 | 当前使用普通 `VAELoader + VAEDecodeTiled` |
@@ -130,7 +136,7 @@ LTX 2.3 实测注册了 2,999 个 FSDP wrapper、2,620 个 DTensor；每个 rank
 
 Distilled LoRA 不会像主模型权重一样长期一分为二。其 payload 主要保留在 CPU，
 在相应层执行时再传入并计算，所以会增加物理内存、传输量和运行时间。当前 BF16
-Distilled LoRA 已通过 121 帧视频、音频和双 rank 一致性验收。
+Distilled LoRA 已通过 121 帧视频、音频和双 rank 一致性验收。MiniMax H3 官方 FL2V Turbo8 与 REF2V Turbo4 LoRA 也已通过 FSDP 加载、双 rank 采样和媒体检查。
 
 ### FSDP 与 NCCL 的关系
 
@@ -178,10 +184,10 @@ Gloo/TCPStore 仍承担 rendezvous、进程组建立、控制和少量不符合�
 | CUDA 数据通信 | NCCL | P2P `all_to_all` | P2P `all_gather`，并保留 `all_to_all` |
 | 支持规模 | NCCL 支持多卡、多机 | 严格双卡、单机 | 严格双卡、单机 |
 | 主要价值 | 通用性和标准实现 | 提升已有模型的采样速度 | 让单卡装不下的模型可以运行 |
-| 当前性能状态 | 随上游模型/硬件而异 | 热对热约快 10.28% | 正确性通过，20% 加速目标未通过 |
+| 当前性能状态 | 随上游模型/硬件而异 | 热对热约快 10.28% | LTX 正确性通过；MiniMax H3 O1-O5 与 Turbo 工作流通过，O6 新基线待测 |
 
 原版 Raylight 当前把 LTX 2/2.3/2.5 的 FSDP 标记为“逻辑支持、等待测试”。
-本分支则完成了 Windows + 双 V100 + LTX 2.3 的实际输出验收，但适用范围更窄。
+本分支完成了 Windows + 双 V100 的 LTX 2.3 与 MiniMax H3 实际输出验收，但适用范围更窄。
 
 ### 与物理内存和虚拟内存的关系
 
@@ -223,9 +229,9 @@ CPU offload 数据可能进入页面文件。页面文件可以推迟 OOM，但�
 | 驱动模式 | 两卡均为 TCC；WDDM 未支持、未验证 |
 | GPU 通信 | CUDA peer access、CUDA IPC、跨进程 CUDA Event 可用 |
 | Ray worker | 两个 worker / 两个 rank |
-| 已验收 FSDP 配置 | FSDP=true，CPU Offload=false，Ulysses/Ring/CFG=0，DP=1 |
+| 已验收 FSDP 配置 | LTX：CPU Offload=false；MiniMax H3 完整工作流：CPU Offload=true；均为 FSDP=true、Ulysses/Ring/CFG=0、DP=1 |
 | Collective | 双 rank CUDA `all_gather_into_tensor` 与 `all_to_all_single` |
-| FSDP 范围 | LTX 2.3 Diffusion Model；Text Encoder、VAE、Upscaler 不分片 |
+| FSDP 范围 | 已验证的 LTX 2.3 与 MiniMax H3 Diffusion Model；Text Encoder、VAE、Upscaler 不分片 |
 
 物理上是否通过同一个 PCIe 插槽、载板或桥接芯片连接，不是代码判断条件。
 真正的准入标准是 CUDA P2P 能否工作，以及完整探针的正确性与带宽是否达标。
@@ -538,8 +544,26 @@ P2P/Ulysses 的公平热对热提升为 10.28%，但它仍在每张 GPU 保存�
 | FSDP 无 LoRA | 479.83 s | 约 11.0 s/it | 约 41.7 s/it | 16,218/16,208 MiB | 连贯，PASS |
 | FSDP + 原 BF16 LoRA | 551.82 s | 约 15.0 s/it | 约 45.6 s/it | 16,224/16,156 MiB | 连贯，PASS |
 
-FSDP 当前证明的是显存分片、双卡计算和输出正确性，不是性能验收。带 LoRA 的冷端到端
-仍慢于正确的 Ray/Ulysses 速度路径，尚未达到“快于公平单卡 20%”的最终目标。
+FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性能仍需单独优化。
+
+### MiniMax H3 已验收状态
+
+| 能力 | 当前结果 |
+|---|---|
+| I2V / REF2VA FSDP | 双 rank、CUDA P2P、FP8-scaled checkpoint 已通过 |
+| Worker 生命周期 | 同 checkpoint 复用；切换 checkpoint 时回收旧 actor，防止提交内存累积 |
+| Turbo 工作流 | 可直接载入的 Turbo8 I2V 与 Turbo4 REF2VA 已生成并通过节点/API 检查 |
+| 已验收完整规格 | I2V 640x640、56 帧；REF2VA 864x480、124 帧 |
+| 当前计算策略 | FP8 仅用于存储；V100 扩散计算回退 FP32 |
+| O6 | 尚未开发；先运行 1120x768、124 帧、24 FPS 的两套本机 FP32 对照组 |
+| O7 | LTX/LTXAV 模型专用安全 FP16 预研，等待 O6 结束后校正 |
+
+现有完整 Turbo 冷启动记录为：I2V Turbo8 387.98 秒，REF2VA Turbo4 424.59 秒。这些旧规格结果用于说明 O5 已完成，不作为 O6 的速度分母。O6 只与即将运行的同规格本机基线比较：采样稳定速度必须严格超过基线 11 倍，模型加载、预处理、VAE 解码和视频保存均不得慢于对应基线。
+
+- MiniMax 验证汇总：[docs/testing/minimax-h3/README.md](docs/testing/minimax-h3/README.md)
+- Turbo 使用说明：[docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md](docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md)
+- O6 计划：[docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md)
+- O7 预研：[docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
 
 ## 已知限制
 
@@ -588,8 +612,8 @@ Invoke-WebRequest http://127.0.0.1:8188/ -UseBasicParsing
 ### 启用了 FSDP 后报错
 
 先确认当前检出的是 `windows-v100-fsdp-p2p`，而不是已发布的上一阶段 P2P/Ulysses
-分支。使用 FSDP 示例工作流，保持 GPU=2、FSDP=true、FSDP_CPU_OFFLOAD=false、
-Ulysses/Ring/CFG=0、DP=1，并查看
+分支。使用对应的 FSDP 示例工作流，保持 GPU=2、FSDP=true、Ulysses/Ring/CFG=0、DP=1；
+LTX 已验收工作流使用 FSDP_CPU_OFFLOAD=false，MiniMax H3 完整工作流使用 true。并查看
 [Windows FSDP 测试记录](docs/WINDOWS_V100_FSDP_TESTING.md)中的准入条件和已知限制。
 
 ## 仓库结构
@@ -601,13 +625,15 @@ raylight/
 │  ├─ start-comfyui-windows-p2p.ps1     通用启动脚本
 │  └─ verify-windows-v100.ps1           环境和真实 P2P 自检
 ├─ tests/                                单元测试与独立探针
-├─ example_workflows/                    LTX 2.3 ComfyUI 示例工作流
+├─ example_workflows/                    LTX 2.3 与 MiniMax H3 示例/验收工作流
 ├─ benchmark_payloads/                   可直接用于 API 基准的 5 秒 payload
 ├─ docs/
 │  ├─ WINDOWS_V100_FSDP_TESTING.md       FSDP 测试、失败历史与验收
 │  ├─ windows-v100-p2p.md                上一阶段 Windows P2P 技术指南
 │  ├─ ltx23-model-manifest.md            模型与节点清单
 │  ├─ TESTING.md                         P2P/Ulysses 历史测试
+│  ├─ testing/minimax-h3/                MiniMax H3 分阶段验证与使用说明
+│  ├─ superpowers/plans/                 O1-O7 计划与验收门槛
 │  └─ windows-v100-fsdp-test-results-2026-08.csv  FSDP 精简数据
 ├─ environment-windows-v100.json         机器可读验证矩阵
 ├─ requirements-windows-v100.txt         锁定依赖
@@ -617,7 +643,9 @@ raylight/
 
 ## 后续优化方向
 
-- 在保持 FSDP 输出正确的前提下，把公平端到端性能推进到快于单卡 20%。
+- O6 开发前先同步 O1-O5，并建立两套 1120x768、124 帧、24 FPS 的本机 FP32 对照组。
+- O6 为 MiniMax H3 增加显式安全 FP16 路径；采样速度以同规格本机基线为分母，验收要求严格高于 11 倍，其他阶段不得回退。
+- O7 评估 LTX/LTXAV 模型专用 FP32 数值岛与 FP16 矩阵计算，不启用全局 LTX FP16。
 - 分析 CUDA P2P 微基准约 108 GiB/s、项目探针约 59 GiB/s 与 FSDP 实际 all-gather 的差距。
 - 降低 FSDP 逐层 all-gather、LoRA sidecar、Python 控制面和同步开销。
 - 评估多 buffer/ring slot、批量控制、预取和通信/计算重叠。
@@ -628,7 +656,7 @@ raylight/
 ## 安全与可再分发内容
 
 仓库包含源码、脚本、测试、配置，以及上游随项目发布的示例工作流和配套素材。
-其中，LTX 2.3 原版工作流、Windows P2P 测试工作流、内置提示词和上游示例输入图片
+其中，LTX 2.3、MiniMax H3 原版/Windows FSDP 测试工作流、内置提示词和可再分发的上游示例输入图片
 均保留在 `example_workflows` 目录中。
 
 仓库不包含：
@@ -652,5 +680,4 @@ raylight/
 - [PyTorch](https://github.com/pytorch/pytorch)
 - [ComfyUI](https://github.com/Comfy-Org/ComfyUI)
 
-如需报告问题，请附上环境验证脚本输出、错误日志、RayInitializer 设置和最小复现
-工作流；请先删除令牌、个人路径、图片和模型下载凭据。
+如需报告问题，请附上环境验证脚本输出、错误日志、RayInitializer 设置和最小复现工作流。

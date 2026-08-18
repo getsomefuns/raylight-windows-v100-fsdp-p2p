@@ -99,8 +99,51 @@ Keep the accepted full I2V and REF2VA workflows correct while making repeated in
 - Documentation gives a direct manual-use path and clearly distinguishes the quality baseline from the speed preset.
 - Repository remains local until user review; no model, generated media or raw log is added to Git.
 
+## Phase O6: safe FP16 compute for MiniMax H3 on Raylight FSDP
+
+**Status: approved for baseline preparation on 2026-08-18; implementation has not started.** The external MIT project `Amduraznak/minimax-h3-fp16-fix` provides a credible explanation for the black-output failure seen when MiniMax H3 is forced globally to FP16. Its drop-in custom-node installation does not reach Raylight actors, but its FP32-island/FP16-matmul design can be evaluated through a worker-side integration. The detailed implementation and validation plan is in `docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md`.
+
+### O6 pre-development baseline
+
+- Verified: both accepted Turbo workflows use FP8-storage checkpoints with `RayUNETLoader.weight_dtype=default`; existing worker logs show V100 fallback dequantization and rank outputs in FP32.
+- Verified: the external patch imports against the current ComfyUI 0.31 model classes and its `DiTBlock`/`MLP` signatures still match.
+- Verified: a file placed only in `ComfyUI/custom_nodes` is not shipped or imported by the Ray actor runtime. Copying the external file as documented by its author therefore does not make the patch active in either FSDP rank.
+- Verified: Raylight replaces MiniMax attention and model `_forward` for USP, but still invokes every `DiTBlock` and `out_proj`; FSDP wrapping occurs after model construction. This leaves a feasible integration point before each worker builds and shards the model.
+- Hypothesis to test: retain FP8 checkpoint storage/FSDP sharding, the condition projection/residual/final heads in FP32, and run the dominant attention/MLP branches plus their V100 chunked FP8 dequantization in FP16.
+- Hypothesis to test: FP16 branch tensors reduce temporary dequantized-weight memory and Ulysses activation traffic, while host checkpoint storage and the FP32 residual stream remain largely unchanged.
+- Compatibility risk: BF16 Turbo LoRA sidecars, instance-level forward wrappers, repeated model loads and FSDP2 hooks must be validated together; no quality-equivalence claim is accepted from the external single-machine report.
+- Before any O6 code change, run the existing Turbo8 I2V and Turbo4 REF2VA paths at 1120x768, 124 frames and 24 FPS from a clean cold start.
+- Record full video wall time, worker/model load, preprocessing, every sampler's total and per-iteration timing, VAE decode, media write, both-GPU utilization/VRAM, host physical/committed memory and pagefile use.
+- The measured local FP32-compute runs are the only O6 performance denominators. External timing figures are not release gates.
+
+### O6 acceptance boundary
+
+- Existing `default` FP32-compute workflows remain byte-for-byte baselines; FP16 is opt-in through dedicated experimental workflows and an explicit Ray loader mode.
+- Both ranks prove FP32 residual/condition/output islands and FP16 attention/MLP branches; V100 FP8 fallback logs the actual FP16 dequantization dtype.
+- FSDP remains at 684 wrappers per rank, CPU offload remains available, CUDA P2P remains active, and no tensor collective falls back to host-staged Gloo.
+- Both Turbo LoRAs load all 208 grouped sidecar adapters with zero unsupported entries and execute in the branch input dtype.
+- Smoke and full runs have finite rank-matched outputs, valid video/audio, no black interval, temporal variation and no NaN/Inf.
+- For each workflow, stable sampling throughput must be strictly more than 11x faster than its matched local pre-O6 baseline. The exact baseline and resulting numeric threshold are locked only after the two pre-development runs complete.
+- Worker/model load, preprocessing, VAE decode and media-write stages must be no slower than their matched local baselines. End-to-end time must improve; no faster sampler may hide a regression elsewhere.
+- Peak VRAM, committed memory and pagefile remain within the O4 accepted operating envelope. A speed gain cannot be accepted by weakening numerical or media gates.
+
+## Phase O7: model-specific safe FP16 research for LTX/LTXAV
+
+**Status: preliminary feasibility plan only; scheduled for recalibration after O6.** The MiniMax H3 patch cannot be copied directly because LTX/LTXAV uses different transformer blocks, video/audio branches, normalization and output paths. Previous global-FP16 LTX tests produced black video and audio NaN/Inf, so O7 starts from identifying LTX-specific FP32 numerical islands instead of adding FP16 to the global inference allowlist.
+
+### O7 preliminary direction
+
+- Preserve the currently accepted LTX BF16/FP32 workflows and FP8 storage behavior unchanged.
+- Instrument video and audio residual streams, AdaLN/RMSNorm, attention/MLP branches, cross-modal gates and final projections to find the first non-finite or destructive precision transition.
+- Evaluate FP16 only for proven-safe high-cost matrix multiplications; retain sensitive reductions, normalization, residual accumulation, modulation and output heads in FP32 where required.
+- Install any experimental policy inside both Ray actors before FSDP wrapping, with an explicit LTX-only loader mode and no global dtype allowlist change.
+- Validate LTX and LTXAV separately because valid video does not prove valid audio.
+- Reuse O6's dtype tracing, rank-consistency, P2P/FSDP and stage-timing infrastructure, then set O7 performance gates from a fresh matched local baseline after O6 closes.
+
+The detailed preliminary O7 plan is in `docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md`.
+
 ## Documentation and release boundary
 
 - Update the maintained MiniMax validation log after every accepted run.
 - Keep raw logs, telemetry, generated media and model weights out of the repository.
-- Do not push or alter the public repository until the user reviews the local changes.
+- Before O6 implementation, keep README, implementation plans, validation summaries and the public GitHub repository synchronized with the accepted O1-O5 state and the pending O6/O7 status.
