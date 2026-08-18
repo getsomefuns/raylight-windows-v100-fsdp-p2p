@@ -302,6 +302,121 @@ An unchanged healthy configuration may later report:
 
 A matched supported CUDA P2P operation fails closed if initialization, correctness, bandwidth, operation IDs, or peer state are invalid; it does not silently continue through host memory while claiming NVLink use.
 
+### 7. Reproduce the MiniMax H3 O6 result on the real machine
+
+Use REF2VA Turbo4 for O6 acceptance. It has half as many sampling steps as I2V Turbo8 and is the
+workflow used for the best O6 result. “Fastest” has two meanings:
+
+| Test | Workflow | 5 GiB host registration | Historical sampling | Historical cold E2E |
+|---|---|---|---:|---:|
+| Main safe-FP16 result | REF2VA Turbo4 safe FP16 | off | 54.2174 s/it | **394.110 s** |
+| Fastest sampling | REF2VA Turbo4 safe FP16 | on | **49.8680 s/it** | 424.241 s |
+| FP32 control | REF2VA Turbo4 default | off | 185.2034 s/it | 932.031 s |
+
+The 5 GiB option reduces per-step submission waiting but adds registration and initialization work.
+It is the fastest sampler, not the fastest whole prompt. Run these as three independent cold starts.
+
+Define reusable paths and stop the previous ComfyUI/Ray instance first:
+
+```powershell
+$EnvRoot = "<standalone ComfyUI environment root>"
+$ComfyRoot = Join-Path $EnvRoot "ComfyUI"
+$RepoRoot = Join-Path $ComfyRoot "custom_nodes\raylight"
+$PY = Join-Path $EnvRoot "Python310\python.exe"
+$Ray = Join-Path $EnvRoot "Python310\Scripts\ray.exe"
+
+& $Ray stop --force
+nvidia-smi --query-gpu=index,name,driver_model.current,memory.used,utilization.gpu --format=csv,noheader
+```
+
+Wait until both V100s are in TCC, idle, and released from the previous run. For the main safe-FP16
+result, disable optional host registration and start with the required 256 MiB per-rank P2P buffer:
+
+```powershell
+Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER -ErrorAction SilentlyContinue
+Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB -ErrorAction SilentlyContinue
+$env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = "268435456"
+
+Set-Location $RepoRoot
+.\scripts\start-comfyui-windows-p2p.ps1 `
+  -PythonPath $PY `
+  -ComfyRoot $ComfyRoot `
+  -P2PCapacityBytes 268435456 `
+  -ReserveVramGiB 2
+```
+
+The 128 MiB default is insufficient for the measured 239,826,944-byte Ulysses remote payload at the
+formal geometry. Open <http://127.0.0.1:8188> and load:
+
+[example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json](example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json)
+
+Both Load Image nodes use `minimax_h3_ref2va_green_robots.jpg`; the repository source image is
+[example_workflows/Minimax_H3_REF2VA_Raylight.jpg](example_workflows/Minimax_H3_REF2VA_Raylight.jpg).
+Keep the accepted prompt unchanged. Although its prose says “10 seconds,” the measured node geometry
+is 124 frames at 24 FPS, approximately 5.167 seconds.
+
+The GUI workflow still contains a Resolution Selector. The O6 benchmark overrode width and height at
+the API layer. For an exact manual run, disconnect the selector's width/height links to
+`MiniMaxH3ReferenceToVideo`, then enter 1120 and 768 directly. Verify:
+
+| Node/setting | Fixed value |
+|---|---|
+| geometry | 1120x768, length=124, duration=5, FPS=24 |
+| RayUNETLoader | REF2VA FP8-scaled checkpoint; `weight_dtype=fp16_h3_safe` |
+| RayLoraLoader | REF2V Turbo4 LoRA, strength=1.0 |
+| scheduler / sampler | simple, 4 steps, denoise=1; `res_multistep` |
+| seed | `547879687678090`, control set to fixed |
+| GPU / Ulysses / Ring / CFG / DP | 2 / 2 / 1 / 1 / 1 |
+| sync Ulysses | true |
+| FSDP / FSDP CPU offload | true / true |
+| clear VRAM after sampling | false |
+| attention / skip comm / mmap | `TORCH_EFFICIENT` / true / true |
+| SaveVideo prefix | `video/raylight_o6/manual_ref2va_o6_safe_fp16_nohost` |
+
+Queue exactly once. The first run should log safe FP16 on both ranks, FSDP registration, and Windows
+CUDA P2P. Historical main-run stages were Ray 37.614 s, model load 19.400 s, preprocessing 36.134 s,
+Sampler 246.844 s, VAE 42.984 s, save 8.965 s, and 394.110 s total.
+
+For the 5 GiB fastest-sampling run, stop ComfyUI, run `& $Ray stop --force`, wait for GPU release, and
+set these variables before starting new workers:
+
+```powershell
+$env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = "268435456"
+$env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER = "1"
+$env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB = "5120"
+```
+
+Start with the same launcher and use the identical workflow, geometry, input, prompt, four steps, and
+fixed seed. Use SaveVideo prefix `video/raylight_o6/manual_ref2va_o6_safe_fp16_hostreg5g`. The log
+must show `FSDP_HOST_REGISTER` and approximately 5120 MiB. Historical results were 49.8680 s/it,
+249.977 s for the Sampler node, and 424.241 s E2E. Instant tqdm values and total Sampler-node time are
+not the formal s/it definition; the formal value is the slowest rank's complete sampling interval / 4.
+
+For the FP32 control, restart again with both host-registration variables removed, keep the 256 MiB
+P2P buffer, and load:
+
+[example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json](example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json)
+
+Keep all inputs and parameters identical. The only core precision difference is
+`RayUNETLoader weight_dtype=default`. Use prefix `video/raylight_o6/manual_ref2va_o6_baseline_fp32`.
+The historical control was 185.2034 s/it, 774.778 s Sampler, and 932.031 s E2E.
+
+Historical local media names are under `<ComfyUI>\output\video\raylight_o6`:
+
+```text
+minimax_h3_ref2va_o6-baseline-fp32-p2p256_run0_00001_.mp4
+minimax_h3_ref2va_o6-safe-fp16-full-reviewed_run0_00001_.mp4
+minimax_h3_ref2va_o6-safe-fp16-hostreg5g-scoped-full_run0_00001_.mp4
+```
+
+Check 1120x768 H.264, 124 unique frames, continuous robot/cloth motion, no black/noise/frozen section,
+and no audio NaN/Inf symptom. Container hashes need not match. Record prompt and Sampler times, log
+s/it, both-GPU VRAM/utilization, physical/committed/pagefile peaks, output path, and media result.
+ComfyUI Manager commonly writes `<ComfyUI>\user\comfyui_8188.log`.
+
+Do not enable the sampling profiler, pin-memory experiment, 6 GiB registration, global FP16 allowlist,
+FlashAttention, `--highvram`, or `--disable-smart-memory` when reproducing the accepted O6 result.
+
 ## Reproducible benchmark inputs
 
 The repository includes 5-second API prompt payloads under `benchmark_payloads/` for:

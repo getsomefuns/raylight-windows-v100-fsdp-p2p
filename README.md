@@ -423,6 +423,180 @@ CUDA P2P 正确性和带宽检查。
 如果 P2P 初始化、正确性或带宽检查失败，受支持的快速路径会直接报错，不会把同一次
 受支持操作静默降级为主存中转后继续假装使用 NVLink。
 
+### 8. 实机复现 MiniMax H3 O6
+
+O6 建议使用 REF2VA Turbo4 做实机验收。它比 I2V Turbo8 少一半采样步数，也是当前
+最适合复现 O6 最快结果的工作流。这里有两种不同的“最快”：
+
+| 测试 | 工作流 | 5 GiB host registration | 历史采样 | 历史冷端到端 |
+|---|---|---|---:|---:|
+| 安全 FP16 主结果 | REF2VA Turbo4 safe FP16 | 关闭 | 54.2174 s/it | **394.110 s** |
+| 最快采样结果 | REF2VA Turbo4 safe FP16 | 开启 | **49.8680 s/it** | 424.241 s |
+| FP32 对照 | REF2VA Turbo4 default | 关闭 | 185.2034 s/it | 932.031 s |
+
+5 GiB 注册减少逐步采样期间的提交等待，但增加采样前的注册和初始化成本。因此它是
+“最快采样”，不是“最快完成整段视频”。建议依次跑安全 FP16 主结果、5 GiB 最快采样、
+FP32 对照；每组都使用独立冷启动，三组总计约需 30 分钟。
+
+#### 8.1 定义本机路径并清理旧进程
+
+下例把 ComfyUI、Python 和本仓库放在同一个独立环境根目录下；请按实际位置修改第一行：
+
+```powershell
+$EnvRoot = "<你的独立 ComfyUI 环境根目录>"
+$ComfyRoot = Join-Path $EnvRoot "ComfyUI"
+$RepoRoot = Join-Path $ComfyRoot "custom_nodes\raylight"
+$PY = Join-Path $EnvRoot "Python310\python.exe"
+$Ray = Join-Path $EnvRoot "Python310\Scripts\ray.exe"
+```
+
+先在旧 ComfyUI 窗口按 `Ctrl+C`，再停止该环境遗留的 Ray 进程：
+
+```powershell
+& $Ray stop --force
+nvidia-smi --query-gpu=index,name,driver_model.current,memory.used,utilization.gpu --format=csv,noheader
+```
+
+确认两张 V100 均为 TCC、利用率接近 0 且旧任务显存已释放，再开始下一组冷测试。不要
+用同一 ComfyUI 进程中的第二次热运行与下表冷启动数字比较。
+
+#### 8.2 运行安全 FP16 主结果
+
+1120×768 的正式工作流需要 256 MiB P2P buffer；默认 128 MiB 无法容纳实测
+239,826,944 字节的 Ulysses 远端 payload。先关闭可选 host registration，再启动：
+
+```powershell
+Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER -ErrorAction SilentlyContinue
+Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB -ErrorAction SilentlyContinue
+$env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = "268435456"
+
+Set-Location $RepoRoot
+.\scripts\start-comfyui-windows-p2p.ps1 `
+  -PythonPath $PY `
+  -ComfyRoot $ComfyRoot `
+  -P2PCapacityBytes 268435456 `
+  -ReserveVramGiB 2
+```
+
+浏览器打开 `http://127.0.0.1:8188`，载入：
+
+[example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json](example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json)
+
+两处 `LoadImage` 都应选择 `minimax_h3_ref2va_green_robots.jpg`。该输入的仓库原图是
+[example_workflows/Minimax_H3_REF2VA_Raylight.jpg](example_workflows/Minimax_H3_REF2VA_Raylight.jpg)；
+运行前应复制到 ComfyUI `input` 目录并使用工作流要求的文件名。提示词保持不变，即使
+文本中写有 “10 seconds”；O6 计时规格由节点参数决定，实际是 124 帧、24 FPS，播放
+时长约 5.167 秒。
+
+提交前逐项核对：
+
+| 节点/参数 | 固定值 |
+|---|---|
+| `MiniMaxH3ReferenceToVideo` | width=1120、height=768、length=124 |
+| `PrimitiveFloat (Duration)` | 5 |
+| `CreateVideo` | FPS=24 |
+| 两个 `LoadImage` | `minimax_h3_ref2va_green_robots.jpg` |
+| `RayUNETLoader` | `minimax_h3_ref2va_pruned_fp8_scaled.safetensors`；`weight_dtype=fp16_h3_safe` |
+| `RayLoraLoader` | REF2V Turbo4 LoRA；strength=1.0 |
+| `RayBasicScheduler` | simple、steps=4、denoise=1 |
+| sampler | `res_multistep` |
+| seed | `547879687678090`，控制方式设为 fixed |
+| `SaveVideo` 前缀 | `video/raylight_o6/manual_ref2va_o6_safe_fp16_nohost` |
+
+GUI 工作流保留了 `Resolution Selector (Size)`。O6 benchmark 当时在 API 层把宽高覆盖为
+1120×768；手动 GUI 复现时必须断开它到 `MiniMaxH3ReferenceToVideo` 的 width/height
+两条线，使数值框出现后再输入 1120 和 768。保留默认 0.4 MP 就不是 O6 同规格测试。
+
+`RayInitializer` 必须保持：
+
+| 参数 | 值 |
+|---|---:|
+| address / namespace | `local` / `default` |
+| GPU / Ulysses / Ring / CFG / DP | 2 / 2 / 1 / 1 / 1 |
+| sync Ulysses | true |
+| clear VRAM after sampling | false |
+| FSDP / FSDP CPU offload | true / true |
+| xFuser attention | `TORCH_EFFICIENT` |
+| skip comm test / use mmap | true / true |
+
+首次只 Queue 一次。终端应出现两个 rank 的 MiniMax H3 safe-FP16、FSDP 和 Windows
+CUDA P2P 初始化信息，采样期间两张 GPU 都应明显参与。历史阶段参考值：
+
+| 阶段 | 秒 |
+|---|---:|
+| Ray 初始化 | 37.614 |
+| 模型加载 | 19.400 |
+| 预处理 | 36.134 |
+| Sampler 节点 | 246.844 |
+| VAE 解码 | 42.984 |
+| 视频保存 | 8.965 |
+| Prompt 端到端 | 394.110 |
+
+#### 8.3 运行 5 GiB 最快采样结果
+
+先 `Ctrl+C`、执行 `& $Ray stop --force`，并等显存释放。必须在新 ComfyUI/Ray worker
+启动前设置注册开关：
+
+```powershell
+$env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = "268435456"
+$env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER = "1"
+$env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB = "5120"
+
+Set-Location $RepoRoot
+.\scripts\start-comfyui-windows-p2p.ps1 `
+  -PythonPath $PY `
+  -ComfyRoot $ComfyRoot `
+  -P2PCapacityBytes 268435456 `
+  -ReserveVramGiB 2
+```
+
+仍使用同一个 safe-FP16 工作流和完全相同的输入、提示词、1120×768、124 帧、4 步及
+固定种子，只把保存前缀改为：
+
+```text
+video/raylight_o6/manual_ref2va_o6_safe_fp16_hostreg5g
+```
+
+日志还应出现 `FSDP_HOST_REGISTER` 和约 5120 MiB 容量信息。历史正式口径为
+49.8680 s/it、Sampler 节点 249.977 秒、端到端 424.241 秒。UI 的瞬时 tqdm 值或
+Sampler 节点总时间不等于正式 s/it；正式值使用最慢 rank 的完整采样区间除以 4 步。
+
+#### 8.4 运行 FP32 对照
+
+再次停止 ComfyUI/Ray，删除两个 host-registration 环境变量，保留 256 MiB P2P buffer，
+然后按 8.2 的命令重新启动。改为载入：
+
+[example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json](example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json)
+
+输入、提示词、几何、帧数、步数、种子和 RayInitializer 均与 safe-FP16 测试相同；唯一
+核心精度差异是 `RayUNETLoader weight_dtype=default`。保存前缀建议设为：
+
+```text
+video/raylight_o6/manual_ref2va_o6_baseline_fp32
+```
+
+历史结果为 185.2034 s/it、Sampler 774.778 秒、端到端 932.031 秒。
+
+#### 8.5 视频与日志验收
+
+已有本机历史基线的文件名为：
+
+```text
+<ComfyUI>\output\video\raylight_o6\minimax_h3_ref2va_o6-baseline-fp32-p2p256_run0_00001_.mp4
+<ComfyUI>\output\video\raylight_o6\minimax_h3_ref2va_o6-safe-fp16-full-reviewed_run0_00001_.mp4
+<ComfyUI>\output\video\raylight_o6\minimax_h3_ref2va_o6-safe-fp16-hostreg5g-scoped-full_run0_00001_.mp4
+```
+
+新结果应为正常 H.264 1120×768、124 帧、24 FPS 视频；检查黑屏、彩色噪声、单帧冻结、
+音频 NaN/Inf、机械手/织物运动连续性。不要要求 MP4 文件哈希相同，容器时间戳和编码
+元数据可以不同。ComfyUI Manager 日志通常位于 `<ComfyUI>\user\comfyui_8188.log`。
+每次至少记录 Prompt 总时间、Sampler 时间、终端 s/it、双卡显存/利用率、物理/提交/
+分页内存峰值、输出路径和视频/音频检查结论。
+
+为保持同规格，不要启用 sampling profiler、pin-memory 实验、6 GiB registration、全局
+FP16 dtype allowlist、FlashAttention、`--highvram` 或 `--disable-smart-memory`。这些配置
+不是 O6 已验收结果的一部分。
+
 ## 启动脚本设置了什么
 
 | 设置 | 默认值 | 作用 |
