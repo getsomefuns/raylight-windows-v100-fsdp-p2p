@@ -138,6 +138,64 @@ def enable_low_peak_fsdp_unshard(model: torch.nn.Module) -> int:
     return wrappers
 
 
+def _fsdp_all_gather_output_bytes(module: torch.nn.Module) -> int:
+    state = module._get_fsdp_state()
+    group = getattr(state, "_fsdp_param_group", None)
+    if group is None:
+        return 0
+    world_size = int(group.mesh_info.mesh.size())
+    return sum(
+        int(tensor.numel()) * int(tensor.element_size()) * world_size
+        for fsdp_param in group.fsdp_params
+        for tensor in fsdp_param.all_gather_inputs
+    )
+
+
+def configure_minimax_h3_forward_prefetch(
+    model: torch.nn.Module,
+    *,
+    max_prefetch_bytes: int,
+    fsdp_module_type=FSDPModule,
+) -> dict[str, int]:
+    """Prefetch selected MiniMax H3 weights behind known-long compute stages.
+
+    Every FSDP wrapper normally uses the default stream on this V100 path to
+    minimize peak memory.  Only explicitly selected targets switch back to
+    FSDP2's separate all-gather streams, and only when their gathered storage
+    fits the configured bound.
+    """
+
+    result = {"configured": 0, "skipped": 0, "max_configured_bytes": 0}
+    if max_prefetch_bytes <= 0 or type(model).__name__ != "MiniMaxH3Model":
+        return result
+
+    pairs = []
+    for block in getattr(model, "blocks", ()):
+        pairs.extend(
+            (
+                (block.norm1, block.attn.qkv_proj),
+                (block.attn.k_norm, block.attn.out_proj),
+                (block.norm2, block.mlp.fc1),
+                (block.mlp.fc1, block.mlp.fc2),
+            )
+        )
+
+    for source, target in pairs:
+        if not isinstance(source, fsdp_module_type) or not isinstance(target, fsdp_module_type):
+            continue
+        gathered_bytes = _fsdp_all_gather_output_bytes(target)
+        if gathered_bytes <= 0 or gathered_bytes > max_prefetch_bytes:
+            result["skipped"] += 1
+            continue
+        target._set_unshard_async_op(False)
+        source.set_modules_to_forward_prefetch([target])
+        result["configured"] += 1
+        result["max_configured_bytes"] = max(
+            result["max_configured_bytes"], gathered_bytes
+        )
+    return result
+
+
 
 """
  This stuff is for systematically fully_shard from bottom up,
