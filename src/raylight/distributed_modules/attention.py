@@ -2,7 +2,10 @@ from xfuser.core.long_ctx_attention import (
     xFuserLongContextAttention,
 )
 
+import torch.distributed as dist
+from yunchang.comm.all_to_all import SeqAllToAll4D
 from yunchang.kernels import AttnType
+from yunchang.kernels import select_flash_attn_impl
 from .sageattention_hf_patch import ensure_hf_fp8_cuda_kernel, ensure_hf_sm90_kernel
 
 _ATTN_TYPE = None
@@ -33,6 +36,46 @@ def get_sync_ulysses():
         return _SYNC_ULYSSES
 
 
+def single_ring_ulysses_attention(
+    query,
+    key,
+    value,
+    *,
+    ulysses_group,
+    attention_kernel,
+    all_to_all=SeqAllToAll4D,
+    softmax_scale=None,
+    use_sync=False,
+):
+    """Run Ulysses attention without xFuser's redundant world-size-one ring merge.
+
+    xFuser always enters its ring implementation, even when the ring group has
+    one member.  That path promotes the full attention result to FP32 solely to
+    merge block LSE values, then casts it back to FP16.  A one-member ring has
+    nothing to merge, so the promotion and LSE retention are mathematically
+    unnecessary and particularly expensive for MiniMax H3's long sequences.
+    """
+
+    query_layer = all_to_all.apply(ulysses_group, query, 2, 1, use_sync)
+    key_layer = all_to_all.apply(ulysses_group, key, 2, 1, use_sync)
+    value_layer = all_to_all.apply(ulysses_group, value, 2, 1, use_sync)
+    kernel_result = attention_kernel(
+        query_layer,
+        key_layer,
+        value_layer,
+        dropout_p=0.0,
+        softmax_scale=softmax_scale,
+        causal=False,
+        window_size=(-1, -1),
+        softcap=0.0,
+        alibi_slopes=None,
+        return_softmax=False,
+    )
+    context_layer = kernel_result[0] if isinstance(kernel_result, tuple) else kernel_result
+    context_layer = context_layer.to(query_layer.dtype)
+    return all_to_all.apply(ulysses_group, context_layer, 1, 2, use_sync)
+
+
 def make_xfuser_attention(attn_type, sync_ulysses):
     print(f"Using XFuser {attn_type} attention, Sync Ulysses: {sync_ulysses}")
     attn = AttnType[attn_type]
@@ -42,6 +85,10 @@ def make_xfuser_attention(attn_type, sync_ulysses):
         ensure_hf_sm90_kernel
 
     xfuser_attn = xFuserLongContextAttention(use_sync=sync_ulysses, attn_type=attn)
+    direct_kernel = select_flash_attn_impl(attn, stage="fwd-only")
+    single_ring = dist.get_world_size(xfuser_attn.ring_pg) == 1
+    if single_ring:
+        print("Using direct Ulysses attention for ring_degree=1 (skip redundant FP32 ring merge)")
 
     def _attention_xfuser_unmask(
             q,
@@ -98,6 +145,16 @@ def make_xfuser_attention(attn_type, sync_ulysses):
                 joint_tensor_key=join_k.transpose(1, 2),
                 joint_tensor_value=join_v.transpose(1, 2),
                 softmax_scale=kwargs.get("scale", None),
+            ).transpose(1, 2)
+        elif single_ring:
+            out = single_ring_ulysses_attention(
+                query,
+                key,
+                value,
+                ulysses_group=xfuser_attn.ulysses_pg,
+                attention_kernel=direct_kernel,
+                softmax_scale=kwargs.get("scale", None),
+                use_sync=xfuser_attn.use_sync,
             ).transpose(1, 2)
         else:
             out = xfuser_attn(
