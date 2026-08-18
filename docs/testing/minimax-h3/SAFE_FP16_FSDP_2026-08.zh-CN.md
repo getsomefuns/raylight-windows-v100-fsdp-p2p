@@ -269,6 +269,6 @@ P2P profile 也证明双卡确实在交换数据：初始安全 FP16 I2V 共 528
 | 单 Ring 回归 | `20260818-224904-ref2va-full-o6-safe-fp16-hostreg5g-single-ring-fastpath-smoke/` |
 | Prefetch 未生效 | `20260818-230432-ref2va-full-o6-safe-fp16-hostreg5g-prefetch128-smoke/` |
 
-正式 FP32 视频位于 `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o3`，文件名分别为 `minimax_h3_i2v_o6-baseline-fp32-p2p256_run0_00001_.mp4` 和 `minimax_h3_ref2va_o6-baseline-fp32-p2p256_run0_00001_.mp4`。安全 FP16 的完整运行输出可由对应 benchmark JSON 中记录的 output path 逐项定位。
+全部 O6 benchmark 视频现统一位于 `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o6`。历史 `run0-prompt.json` 保留运行当时错误写入的 `raylight_o3` 前缀作为原始证据；视频整理后不反向修改历史 prompt。后续 `o6-*` benchmark 标签已修正为自动写入 `raylight_o6`。
 
 这些数据来自固定机器状态下每个工作流各一次冷启动。若几何、帧数、步数、P2P 容量、精度策略、模型资源或核心运行时版本发生变化，必须重新建立同规格基线。

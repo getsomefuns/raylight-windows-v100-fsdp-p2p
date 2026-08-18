@@ -49,6 +49,19 @@ def test_prepare_prompt_changes_seed_and_output_without_changing_topology():
     assert prompt["142"]["inputs"]["unet_name"] == "model.safetensors"
 
 
+def test_prepare_prompt_routes_o6_tag_to_o6_output_group():
+    prompt = benchmark.prepare_prompt(
+        _prompt(),
+        "ref2va",
+        0,
+        output_tag="o6-safe-fp16-full-reviewed",
+    )
+
+    assert prompt["92"]["inputs"]["filename_prefix"] == (
+        "video/raylight_o6/minimax_h3_ref2va_o6-safe-fp16-full-reviewed_run0"
+    )
+
+
 def test_validate_prompt_requires_dual_gpu_fsdp_and_one_sampler():
     benchmark.validate_prompt(_prompt())
 

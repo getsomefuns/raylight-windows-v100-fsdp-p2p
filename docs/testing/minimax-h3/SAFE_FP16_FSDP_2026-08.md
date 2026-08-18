@@ -269,6 +269,6 @@ Raw logs, telemetry CSVs, API prompts and benchmark JSON remain under local dire
 | Single-ring regression | `20260818-224904-ref2va-full-o6-safe-fp16-hostreg5g-single-ring-fastpath-smoke/` |
 | Prefetch did not activate | `20260818-230432-ref2va-full-o6-safe-fp16-hostreg5g-prefetch128-smoke/` |
 
-Formal FP32 videos are under `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o3` as `minimax_h3_i2v_o6-baseline-fp32-p2p256_run0_00001_.mp4` and `minimax_h3_ref2va_o6-baseline-fp32-p2p256_run0_00001_.mp4`. Each completed safe-FP16 benchmark JSON records the corresponding output path.
+All O6 benchmark videos are now consolidated under `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o6`. Historical `run0-prompt.json` files retain the original incorrect `raylight_o3` prefix as immutable run evidence; media organization does not rewrite those prompts. Future `o6-*` benchmark tags now route directly to `raylight_o6`.
 
 These are one cold run per workflow under a fixed machine state. If geometry, frame count, step count, P2P capacity, precision policy, model assets or core runtime versions change, a new matched baseline is required.

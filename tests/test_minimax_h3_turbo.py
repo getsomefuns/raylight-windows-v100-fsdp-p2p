@@ -60,7 +60,9 @@ def test_prepare_prompt_inserts_turbo_lora_and_official_step_count():
     }
     assert prompt["142"]["inputs"]["lora"] == [lora_id, 0]
     assert prompt["143"]["inputs"]["steps"] == 8
-    assert prompt["92"]["inputs"]["filename_prefix"].endswith("i2v_turbo8_run0")
+    assert prompt["92"]["inputs"]["filename_prefix"] == (
+        "video/raylight_o3/minimax_h3_i2v_turbo8_run0"
+    )
 
 
 def test_prepare_prompt_rejects_steps_without_exactly_one_scheduler():
