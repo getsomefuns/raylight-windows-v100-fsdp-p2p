@@ -7,6 +7,7 @@ import unittest
 REPO_ROOT = Path(__file__).parents[1]
 START_SCRIPT = REPO_ROOT / "scripts" / "start-comfyui-windows-p2p.ps1"
 ENVIRONMENT_MATRIX = REPO_ROOT / "environment-windows-v100.json"
+WINDOWS_REQUIREMENTS = REPO_ROOT / "requirements-windows-v100.txt"
 WORKFLOW = (
     REPO_ROOT
     / "example_workflows"
@@ -15,6 +16,11 @@ WORKFLOW = (
 
 
 class WindowsReleaseProfileTests(unittest.TestCase):
+    def test_windows_requirements_pin_benchmark_websocket_client(self):
+        requirements = WINDOWS_REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+
+        self.assertIn("websocket-client==1.9.0", requirements)
+
     def test_environment_matrix_records_release_capacity_and_timeout(self):
         matrix = json.loads(ENVIRONMENT_MATRIX.read_text(encoding="utf-8"))
         gates = matrix["release_gates"]

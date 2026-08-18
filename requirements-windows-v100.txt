@@ -18,3 +18,4 @@ kernels==0.14.1
 huggingface-hub==1.24.0
 protobuf==5.29.5
 msgpack==1.2.1
+websocket-client==1.9.0

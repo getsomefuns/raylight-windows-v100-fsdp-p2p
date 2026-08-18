@@ -21,6 +21,7 @@ import urllib.request
 import uuid
 
 import psutil
+import websocket
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
@@ -214,6 +215,209 @@ def prepare_prompt(
     )
     validate_prompt(prompt)
     return prompt
+
+
+def configure_prompt_geometry(
+    prompt: dict,
+    *,
+    width: int,
+    height: int,
+    duration: float,
+    fps: int,
+    expected_frames: int,
+) -> dict:
+    if width <= 0 or height <= 0 or duration <= 0 or fps <= 0 or expected_frames <= 0:
+        raise ValueError("benchmark geometry values must be positive")
+
+    resolution_id, _ = _one_node(prompt, "ResolutionSelector")
+    width_link = [resolution_id, 0]
+    height_link = [resolution_id, 1]
+    width_replacements = 0
+    height_replacements = 0
+    for node in prompt.values():
+        for name, value in list(node.get("inputs", {}).items()):
+            if value == width_link:
+                node["inputs"][name] = int(width)
+                width_replacements += 1
+            elif value == height_link:
+                node["inputs"][name] = int(height)
+                height_replacements += 1
+    if not width_replacements or not height_replacements:
+        raise ValueError("ResolutionSelector outputs are not connected to width and height inputs")
+    del prompt[resolution_id]
+
+    length_replacements = 0
+    for node in prompt.values():
+        class_type = str(node.get("class_type", ""))
+        inputs = node.get("inputs", {})
+        if class_type.startswith("MiniMaxH3") and "length" in inputs:
+            inputs["length"] = int(expected_frames)
+            length_replacements += 1
+    if not length_replacements:
+        raise ValueError("MiniMax H3 generation node has no length input to lock")
+
+    _, duration_node = _one_node(prompt, "PrimitiveFloat")
+    duration_node["inputs"]["value"] = float(duration)
+    _, create_video = _one_node(prompt, "CreateVideo")
+    create_video["inputs"]["fps"] = int(fps)
+    return {
+        "width": int(width),
+        "height": int(height),
+        "duration_seconds": float(duration),
+        "fps": int(fps),
+        "expected_frames": int(expected_frames),
+        "playback_duration_seconds": int(expected_frames) / int(fps),
+    }
+
+
+def summarize_node_timings(events: list[dict], prompt: dict, *, prompt_id: str) -> dict:
+    selected = [
+        event
+        for event in events
+        if event.get("prompt_id") == prompt_id and "node" in event and "time_ns" in event
+    ]
+    nodes: dict[str, dict] = {}
+    first_sampler_index = next(
+        (
+            index
+            for index, event in enumerate(selected)
+            if event.get("node") is not None
+            and prompt.get(str(event["node"]), {}).get("class_type") == "XFuserSamplerCustomAdvanced"
+        ),
+        len(selected),
+    )
+    preprocessing_seconds = 0.0
+    ray_initialization_seconds = 0.0
+    model_load_seconds = 0.0
+    sampler_node_seconds = 0.0
+    vae_decode_seconds = 0.0
+    video_create_seconds = 0.0
+    video_save_seconds = 0.0
+    loader_types = {"RayUNETLoader", "RayLoraLoader", "CLIPLoader", "VAELoader", "UNETLoader"}
+
+    for index, (current, following) in enumerate(zip(selected, selected[1:])):
+        node_id = current.get("node")
+        if node_id is None:
+            continue
+        node_id = str(node_id)
+        node = prompt.get(node_id)
+        if node is None:
+            raise RuntimeError(f"node timing references unknown prompt node {node_id}")
+        seconds = max(0, int(following["time_ns"]) - int(current["time_ns"])) / 1e9
+        class_type = node.get("class_type", "unknown")
+        target = nodes.setdefault(node_id, {"class_type": class_type, "seconds": 0.0})
+        target["seconds"] += seconds
+        if class_type == "RayInitializer":
+            ray_initialization_seconds += seconds
+        elif class_type in loader_types:
+            model_load_seconds += seconds
+        elif index < first_sampler_index:
+            preprocessing_seconds += seconds
+        if class_type == "XFuserSamplerCustomAdvanced":
+            sampler_node_seconds += seconds
+        elif class_type.startswith("VAEDecode"):
+            vae_decode_seconds += seconds
+        elif class_type == "CreateVideo":
+            video_create_seconds += seconds
+        elif class_type == "SaveVideo":
+            video_save_seconds += seconds
+
+    return {
+        "model_load_seconds": model_load_seconds,
+        "preprocessing_seconds": preprocessing_seconds,
+        "ray_initialization_seconds": ray_initialization_seconds,
+        "sampler_node_seconds": sampler_node_seconds,
+        "vae_decode_seconds": vae_decode_seconds,
+        "video_create_seconds": video_create_seconds,
+        "video_save_seconds": video_save_seconds,
+        "nodes": nodes,
+    }
+
+
+def extract_sampler_progress(text: str, worker_pids_by_rank: dict[str, int]) -> dict[str, dict]:
+    pid_to_rank = {int(pid): str(rank) for rank, pid in worker_pids_by_rank.items()}
+    results: dict[str, dict] = {}
+    pattern = re.compile(r"\(pid=(\d+)\).*?100%.*?([0-9]+(?:\.[0-9]+)?)s/it")
+    for match in pattern.finditer(text):
+        pid = int(match.group(1))
+        rank = pid_to_rank.get(pid)
+        if rank is not None:
+            results[rank] = {
+                "pid": pid,
+                "seconds_per_iteration": float(match.group(2)),
+            }
+    if not results:
+        raise RuntimeError("worker stderr did not contain a final s/it record for any known rank")
+    return results
+
+
+def decode_node_event(message, *, time_ns: int) -> dict | None:
+    if not isinstance(message, str):
+        return None
+    try:
+        payload = json.loads(message)
+    except json.JSONDecodeError:
+        return None
+    event_type = payload.get("type")
+    data = payload.get("data", {})
+    if "prompt_id" not in data:
+        return None
+    if event_type == "execution_success":
+        node = None
+    elif event_type == "executing" and "node" in data:
+        node = None if data["node"] is None else str(data["node"])
+    else:
+        return None
+    return {
+        "prompt_id": str(data["prompt_id"]),
+        "node": node,
+        "time_ns": int(time_ns),
+    }
+
+
+def wait_for_terminal_node_event(
+    events: list[dict],
+    *,
+    prompt_id: str,
+    timeout: float = 10.0,
+    poll_interval: float = 0.01,
+) -> dict:
+    deadline = time.monotonic() + timeout
+    while True:
+        for event in reversed(events):
+            if event.get("prompt_id") == prompt_id and event.get("node") is None:
+                return event
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"WebSocket did not report a terminal event for prompt {prompt_id} within {timeout}s"
+            )
+        time.sleep(poll_interval)
+
+
+def receive_node_events(
+    connection,
+    stop_event: threading.Event,
+    events: list[dict],
+    errors: list[str],
+    *,
+    clock=time.time_ns,
+) -> None:
+    try:
+        while not stop_event.is_set():
+            try:
+                message = connection.recv()
+            except websocket.WebSocketTimeoutException:
+                continue
+            except websocket.WebSocketConnectionClosedException:
+                if stop_event.is_set():
+                    return
+                raise
+            event = decode_node_event(message, time_ns=clock())
+            if event is not None:
+                events.append(event)
+    except BaseException as exc:
+        if not stop_event.is_set():
+            errors.append(f"{type(exc).__name__}: {exc}")
 
 
 def request_json(url: str, payload=None, timeout=30):
@@ -705,7 +909,14 @@ def validate_runtime_identity(identity: dict) -> None:
         raise RuntimeError("deployed Raylight source commit does not match the benchmark worktree HEAD")
 
 
-def build_api_prompt(base_url: str, mode: str, profile: str, cpu_offload: bool) -> dict:
+def build_api_prompt(
+    base_url: str,
+    mode: str,
+    profile: str,
+    cpu_offload: bool,
+    *,
+    geometry: dict | None = None,
+) -> dict:
     builder = _load_script("minimax_h3_build_workflows", SCRIPT_ROOT / "build_workflows.py")
     converter = _load_script("minimax_h3_workflow_to_api", SCRIPT_ROOT / "workflow_to_api.py")
     workflow = builder.build_workflow(
@@ -717,6 +928,8 @@ def build_api_prompt(base_url: str, mode: str, profile: str, cpu_offload: bool) 
     _, initializer = _one_node(prompt, "RayInitializer")
     initializer["inputs"]["FSDP_CPU_OFFLOAD"] = bool(cpu_offload)
     initializer["inputs"]["skip_comm_test"] = True
+    if geometry is not None:
+        configure_prompt_geometry(prompt, **geometry)
     validate_prompt(prompt)
     return prompt
 
@@ -748,7 +961,27 @@ def run_benchmark(
     turbo_variant: str | None = None,
     steps: int | None = None,
     output_tag: str | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    duration: float | None = None,
+    fps: int | None = None,
+    expected_frames: int | None = None,
 ) -> Path:
+    geometry_values = (width, height, duration, fps, expected_frames)
+    if any(value is not None for value in geometry_values) and not all(
+        value is not None for value in geometry_values
+    ):
+        raise ValueError("width, height, duration, fps and expected_frames must be provided together")
+    geometry = None
+    if all(value is not None for value in geometry_values):
+        geometry = {
+            "width": int(width),
+            "height": int(height),
+            "duration": float(duration),
+            "fps": int(fps),
+            "expected_frames": int(expected_frames),
+        }
+
     turbo_spec = resolve_turbo_variant(turbo_variant, mode, steps) if turbo_variant else None
     lora_name = turbo_spec["lora_name"] if turbo_spec else None
     if turbo_spec:
@@ -801,6 +1034,17 @@ def run_benchmark(
         "steps": steps,
         "lora": lora_identity,
         "runtime_identity": runtime_identity,
+        "geometry": (
+            {
+                "width": geometry["width"],
+                "height": geometry["height"],
+                "duration_seconds": geometry["duration"],
+                "fps": geometry["fps"],
+                "expected_frames": geometry["expected_frames"],
+            }
+            if geometry
+            else None
+        ),
         "benchmark_input_hashes": hash_input_files(benchmark_input_paths(mode)),
         "started_ns": time.time_ns(),
         "runs": [],
@@ -819,7 +1063,13 @@ def run_benchmark(
         try:
             job = attach_kill_on_close_job(process)
             wait_server(base_url, process)
-            template = build_api_prompt(base_url, mode, profile, cpu_offload)
+            template = build_api_prompt(
+                base_url,
+                mode,
+                profile,
+                cpu_offload,
+                geometry=geometry,
+            )
             configure_prompt_variant(template, lora_name=lora_name, steps=steps)
             report["api_prompt_template_sha256"] = write_prompt_artifact(
                 result_dir / "api-prompt-template.json", template
@@ -838,25 +1088,48 @@ def run_benchmark(
                 stderr.flush()
                 prompt_sha256 = write_prompt_artifact(result_dir / f"run{run_index}-prompt.json", prompt)
                 log_start = stdout_path.stat().st_size
+                stderr_start = stderr_path.stat().st_size
                 samples: list[dict] = []
                 monitor_errors: list[str] = []
                 stop_event = threading.Event()
                 monitor = threading.Thread(target=monitor_resources, args=(stop_event, samples, monitor_errors), daemon=True)
+
+                client_id = str(uuid.uuid4())
+                websocket_url = f"ws://127.0.0.1:{port}/ws?clientId={client_id}"
+                connection = websocket.create_connection(websocket_url, timeout=10, suppress_origin=True)
+                connection.settimeout(1.0)
+                node_events: list[dict] = []
+                node_event_errors: list[str] = []
+                node_stop_event = threading.Event()
+                node_receiver = threading.Thread(
+                    target=receive_node_events,
+                    args=(connection, node_stop_event, node_events, node_event_errors),
+                    daemon=True,
+                )
+                node_receiver.start()
                 monitor.start()
                 started = time.perf_counter()
                 try:
                     response = request_json(
                         f"{base_url}/prompt",
-                        {"prompt": prompt, "client_id": str(uuid.uuid4())},
+                        {"prompt": prompt, "client_id": client_id},
                         timeout=60,
                     )
                     prompt_id = response["prompt_id"]
                     history = wait_prompt(base_url, prompt_id, process, timeout)
+                    wait_for_terminal_node_event(node_events, prompt_id=prompt_id)
                 finally:
                     stop_event.set()
                     monitor.join(timeout=15)
+                    node_stop_event.set()
+                    connection.close()
+                    node_receiver.join(timeout=15)
                 if monitor.is_alive():
                     raise RuntimeError("resource monitor did not stop")
+                if node_receiver.is_alive():
+                    raise RuntimeError("node event receiver did not stop")
+                if node_event_errors:
+                    raise RuntimeError(f"node event receiver failed: {node_event_errors[0]}")
                 validate_monitor_samples(samples, monitor_errors)
                 elapsed = time.perf_counter() - started
                 reject_cached_sampler(history, sampler_id)
@@ -878,6 +1151,19 @@ def run_benchmark(
                     execution_end_ms=execution_end_ms,
                 )
                 diagnostic_wait_seconds = time.perf_counter() - diagnostic_wait_started
+                node_timings = summarize_node_timings(node_events, prompt, prompt_id=prompt_id)
+                if not node_timings["nodes"] or node_timings["video_save_seconds"] <= 0:
+                    raise RuntimeError("WebSocket node timing did not capture a complete SaveVideo execution")
+                stderr.flush()
+                stderr_end = stderr_path.stat().st_size
+                with stderr_path.open("rb") as handle:
+                    handle.seek(stderr_start)
+                    stderr_segment = handle.read(stderr_end - stderr_start).decode("utf-8", errors="replace")
+                worker_pids_by_rank = {
+                    rank: int(values["pid"]) for rank, values in phases["per_rank"].items()
+                }
+                sampler_progress = extract_sampler_progress(stderr_segment, worker_pids_by_rank)
+                sampling_seconds_per_iteration = phases["sampling_seconds"] / int(steps) if steps else None
                 run = {
                     "run_index": run_index,
                     "temperature": "cold" if run_index == 0 else "warm",
@@ -887,6 +1173,9 @@ def run_benchmark(
                     "noise_seed": prompt[sampler_id]["inputs"]["noise_seed"],
                     "api_prompt_sha256": prompt_sha256,
                     "phases": phases,
+                    "node_timings": node_timings,
+                    "sampler_progress": sampler_progress,
+                    "sampling_seconds_per_iteration": sampling_seconds_per_iteration,
                     "resources": summarize_resources(samples),
                     "outputs": history.get("outputs", {}),
                     "log_start": log_start,
@@ -908,7 +1197,7 @@ def run_benchmark(
     return result_path
 
 
-def main() -> int:
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("i2v", "ref2va"), required=True)
     parser.add_argument("--profile", choices=("smoke", "full"), default="smoke")
@@ -919,11 +1208,30 @@ def main() -> int:
     parser.add_argument("--turbo-variant")
     parser.add_argument("--steps", type=int)
     parser.add_argument("--output-tag")
-    args = parser.parse_args()
+    parser.add_argument("--width", type=int)
+    parser.add_argument("--height", type=int)
+    parser.add_argument("--duration", type=float)
+    parser.add_argument("--fps", type=int)
+    parser.add_argument("--expected-frames", type=int)
+    args = parser.parse_args(argv)
     if args.runs < 1:
         raise ValueError("runs must be positive")
     if args.steps is not None and args.steps < 1:
         raise ValueError("steps must be positive")
+    geometry_values = (args.width, args.height, args.duration, args.fps, args.expected_frames)
+    if any(value is not None for value in geometry_values) and not all(
+        value is not None for value in geometry_values
+    ):
+        raise ValueError(
+            "--width, --height, --duration, --fps and --expected-frames must be provided together"
+        )
+    if any(value is not None and value <= 0 for value in geometry_values):
+        raise ValueError("geometry values must be positive")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
     print(
         run_benchmark(
             mode=args.mode,
@@ -935,6 +1243,11 @@ def main() -> int:
             turbo_variant=args.turbo_variant,
             steps=args.steps,
             output_tag=args.output_tag,
+            width=args.width,
+            height=args.height,
+            duration=args.duration,
+            fps=args.fps,
+            expected_frames=args.expected_frames,
         )
     )
     return 0
