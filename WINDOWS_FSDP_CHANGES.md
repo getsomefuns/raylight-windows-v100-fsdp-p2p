@@ -35,6 +35,8 @@ The implementation is an experimental, inference-only compatibility layer for na
 - Adds collective profiling, FSDP wrapper/state diagnostics, rank output fingerprints, memory monitoring, and standalone hardware probes.
 - Adds checked-in 5-second ComfyUI workflow and API payloads for single, Ray single, Ulysses, and FSDP comparisons.
 - Separates the historical P2P/Ulysses results from the current FSDP acceptance record.
+- The public launcher defaults to a 256 MiB per-GPU P2P staging buffer, displays and validates the 128/256/512 MiB choices, and keeps Rank/P2P diagnostics disabled unless `-EnableDiagnostics` is supplied.
+- The low-level worker fallback remains 128 MiB when Raylight is launched without the repository script. The legacy `-P2PCapacityBytes` launcher parameter remains available for automation compatibility.
 
 ## Validated scope
 

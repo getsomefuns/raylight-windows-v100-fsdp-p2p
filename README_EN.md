@@ -9,6 +9,8 @@ This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gat
 
 MiniMax H3 O6 now includes the explicit `fp16_h3_safe` mode: FP32 numerical islands protect residuals and sensitive outputs while dominant attention/MLP branches use FP16. Full I2V/REF2VA sampling reaches 3.299x/3.416x, and the best current REF2VA experimental configuration reaches 3.714x. Quality gates pass, but the initial 4x gate does not. See the complete [English upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) or [Chinese upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) for shipped changes, resource data, and rejected experiments.
 
+Launcher update (2026-08-19): the generic launcher now defaults to a 256 MiB P2P buffer per GPU, exposes explicit 128/256/512 MiB choices, and keeps Rank/P2P diagnostics off unless requested. See the [English release note](docs/releases/2026-08-19-launcher-controls.en.md) or [Chinese release note](docs/releases/2026-08-19-launcher-controls.zh-CN.md).
+
 This is not Windows NCCL and not a general PyTorch `ProcessGroup`. It is a targeted compatibility layer for a single machine, exactly two ranks, Windows V100 inference.
 
 ## Upstream and authorship
@@ -23,6 +25,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - FSDP test and acceptance record: [docs/WINDOWS_V100_FSDP_TESTING.md](docs/WINDOWS_V100_FSDP_TESTING.md)
 - Historical P2P/Ulysses record: [docs/TESTING.md](docs/TESTING.md)
 - MiniMax H3 O6 safe-FP16 upgrade record: [English](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) / [中文](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md)
+- Launcher capacity and diagnostic controls: [English](docs/releases/2026-08-19-launcher-controls.en.md) / [中文](docs/releases/2026-08-19-launcher-controls.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -87,7 +90,7 @@ This is not pipeline parallelism with half the layers on each GPU. For each FSDP
 4. the full weight is released and each rank returns to its persistent shard;
 5. the process repeats for the next layer.
 
-The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each rank retained about 11,203 MiB of Diffusion Model payload. The validated MiniMax H3 path registered 684 FSDP wrappers per rank. Each GPU still needs temporary room for the active full layer, activations, LoRA, a 128 MiB P2P buffer, and CUDA workspaces, so peak VRAM can still approach 16 GB.
+The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each rank retained about 11,203 MiB of Diffusion Model payload. The validated MiniMax H3 path registered 684 FSDP wrappers per rank. Each GPU still needs temporary room for the active full layer, activations, LoRA, the selected P2P buffer (256 MiB in the current launcher), and CUDA workspaces, so peak VRAM can still approach 16 GB.
 
 ### What is and is not sharded
 
@@ -246,6 +249,30 @@ Start normally:
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY
 ```
 
+The launcher prints the available `128/256/512 MiB` choices and defaults to `256 MiB`. Select a size explicitly when comparing configurations:
+
+```powershell
+# Lower VRAM use, but too small for the accepted 1120x768 MiniMax H3 O6 workflow
+.\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 128
+
+# Default; covers the currently measured LTX and MiniMax H3 O6 payloads
+.\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 256
+
+# More headroom; consumes 256 MiB more VRAM per GPU than the 256 MiB choice
+.\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 512
+```
+
+Detailed Rank/P2P diagnostics are off for normal use. Enable them only while investigating timing or synchronization:
+
+```powershell
+.\scripts\start-comfyui-windows-p2p.ps1 `
+  -PythonPath $PY `
+  -P2PCapacityMiB 256 `
+  -EnableDiagnostics
+```
+
+Capacity and diagnostic settings are read when Ray workers start. Stop ComfyUI and stale Ray workers before changing them. `-ValidateOnly` prints the resolved settings without launching ComfyUI. The legacy `-P2PCapacityBytes` parameter remains accepted for existing automation; new commands should use MiB.
+
 Open <http://127.0.0.1:8188>. The essential ComfyUI command is:
 
 ```text
@@ -335,18 +362,16 @@ result, disable optional host registration and start with the required 256 MiB p
 ```powershell
 Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER -ErrorAction SilentlyContinue
 Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB -ErrorAction SilentlyContinue
-$env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = "268435456"
 
 Set-Location $RepoRoot
 .\scripts\start-comfyui-windows-p2p.ps1 `
   -PythonPath $PY `
   -ComfyRoot $ComfyRoot `
-  -P2PCapacityBytes 268435456 `
+  -P2PCapacityMiB 256 `
   -ReserveVramGiB 2
 ```
 
-The 128 MiB default is insufficient for the measured 239,826,944-byte Ulysses remote payload at the
-formal geometry. Open <http://127.0.0.1:8188> and load:
+The worker's 128 MiB fallback is insufficient for the measured 239,826,944-byte Ulysses remote payload at the formal geometry; the launcher now selects 256 MiB by default. Open <http://127.0.0.1:8188> and load:
 
 [example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json](example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json)
 
@@ -381,12 +406,11 @@ For the 5 GiB fastest-sampling run, stop ComfyUI, run `& $Ray stop --force`, wai
 set these variables before starting new workers:
 
 ```powershell
-$env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = "268435456"
 $env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER = "1"
 $env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB = "5120"
 ```
 
-Start with the same launcher and use the identical workflow, geometry, input, prompt, four steps, and
+Start with the same launcher and `-P2PCapacityMiB 256`, then use the identical workflow, geometry, input, prompt, four steps, and
 fixed seed. Use SaveVideo prefix `video/raylight_o6/manual_ref2va_o6_safe_fp16_hostreg5g`. The log
 must show `FSDP_HOST_REGISTER` and approximately 5120 MiB. Historical results were 49.8680 s/it,
 249.977 s for the Sampler node, and 424.241 s E2E. Instant tqdm values and total Sampler-node time are
@@ -442,7 +466,9 @@ ComfyUI -> Raylight workers -> FSDP all-gather / Ulysses all-to-all
 TCPStore + Gloo -------------> rendezvous, groups, control, unmatched operations
 ```
 
-The launcher sets UTF-8 logging, `USE_LIBUV=0`, localhost rendezvous, Ray memory-monitor overrides, two visible GPUs, a 128 MiB per-rank P2P buffer, and a 50 GiB/s minimum P2P gate. See the Chinese README for the complete environment-variable table.
+The launcher sets UTF-8 logging, `USE_LIBUV=0`, localhost rendezvous, Ray memory-monitor overrides, two visible GPUs, a 256 MiB per-rank P2P buffer by default, a 50 GiB/s minimum P2P gate, and diagnostics off. It exposes 128/256/512 MiB choices plus `-EnableDiagnostics`. See the Chinese README for the complete environment-variable table and memory trade-offs.
+
+P2P capacity is a persistent CUDA staging-buffer limit per GPU, not a direct conversion from video duration or resolution. Increasing it does not reserve additional host RAM/pagefile and does not inherently improve speed; it consumes the selected amount of VRAM per GPU. Raise it only when a measured collective payload exceeds the current choice. Insufficient capacity fails explicitly rather than silently spilling through host memory.
 
 The memory-monitor override prevents Ray from terminating a large workflow early. It can allow Windows to enter paging under pressure; monitor physical and committed memory rather than treating it as a free optimization.
 

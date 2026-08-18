@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
   "tested_date": "2026-08-16",
+  "profile_updated_date": "2026-08-19",
   "scope": "native Windows, one machine, two ranks, FSDP2 inference enabled, Ulysses/Ring/CFG degree 0, DP degree 1",
   "hardware": {
     "gpus": 2,
@@ -46,7 +47,9 @@
   "release_gates": {
     "minimum_remote_p2p_gib_s": 50.0,
     "p2p_timeout_seconds": 10,
-    "p2p_capacity_bytes_per_rank": 134217728,
+    "p2p_capacity_bytes_per_rank": 268435456,
+    "launcher_default_p2p_capacity_mib_per_rank": 256,
+    "worker_fallback_p2p_capacity_bytes_per_rank": 134217728,
     "maximum_validated_collective_input_bytes": 230686720,
     "maximum_synthetic_all_gather_shard_bytes": 402653184,
     "maximum_validated_ltx_collective_input_bytes": 115343360

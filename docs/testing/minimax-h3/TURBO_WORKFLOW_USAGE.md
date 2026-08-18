@@ -27,13 +27,15 @@ Diffusion Model、Text Encoder、Video VAE 和 Audio VAE 的完整清单及下�
 
 ## 启动和运行
 
-1. 在 PowerShell 中进入 `E:\ComfyUI-py310`。
-2. 执行 `./start_raylight_p2p.ps1`。
+1. 在 PowerShell 中进入 `<ComfyUI>\custom_nodes\raylight`。
+2. 执行 `.\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 256`。
 3. 浏览器打开 `http://127.0.0.1:8188`。
 4. 从 Raylight 的 `example_workflows` 目录载入所需 JSON。
 5. 检查图片文件名和提示词，然后加入队列。
 
-启动脚本已经设置原生 Windows 双 V100 所需的环境变量，并使用 `--disable-cuda-malloc`、`--reserve-vram 2`、两个 Ray worker、Ulysses 2、Ring 1、FSDP CPU offload、Windows CUDA P2P transport 和 `TORCH_EFFICIENT` attention。
+启动脚本已经设置原生 Windows 双 V100 所需的环境变量，并使用 `--disable-cuda-malloc`、`--reserve-vram 2`、Windows CUDA P2P transport 及默认关闭的详细诊断日志。两个 Ray worker、Ulysses 2、Ring 1、FSDP CPU offload 和 `TORCH_EFFICIENT` attention 由工作流中的 `RayInitializer` 配置。
+
+启动脚本显示 `128/256/512 MiB` 三档，默认 256 MiB。只有排查性能或同步问题时才追加 `-EnableDiagnostics`；修改容量或诊断状态后必须重启 ComfyUI 和 Ray worker。
 
 不要删除 `--disable-cuda-malloc`，否则 V100 的 VAE 路径可能出现 `operation not supported`。完整 REF2VA 运行时两卡采样显存约为 12.7/12.5 GiB，CPU offload 是 16GB V100 的必要容量模式。
 

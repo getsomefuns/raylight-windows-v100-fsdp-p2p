@@ -15,6 +15,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 MiniMax H3 O6 现已加入显式 `fp16_h3_safe` 模式：FP32 数值岛保护残差与敏感输出，主 Attention/MLP 分支使用 FP16。正式 I2V/REF2VA 采样分别达到 3.299×/3.416×，REF2VA 的当前最佳实验配置达到 3.714×；质量验收通过，但 4× 初始门槛尚未通过。完整的实装、资源数据和失败实验见[中文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md)与[英文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md)。
 
+2026-08-19 启动体验更新：通用启动脚本现在默认选择每张 GPU `256 MiB` P2P buffer，明确提供 `128/256/512 MiB` 三档，并默认关闭 Rank/P2P 详细诊断日志。参见[中文更新说明](docs/releases/2026-08-19-launcher-controls.zh-CN.md)或[English release note](docs/releases/2026-08-19-launcher-controls.en.md)。
+
 当前实现不是完整的 Windows NCCL，也不是通用 PyTorch `ProcessGroup`。它是针对
 单机、双 rank、Windows V100 推理所需 collective 的定向兼容层。
 
@@ -33,6 +35,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - FSDP 测试与验收：[docs/WINDOWS_V100_FSDP_TESTING.md](docs/WINDOWS_V100_FSDP_TESTING.md)
 - P2P/Ulysses 历史测试：[docs/TESTING.md](docs/TESTING.md)
 - MiniMax H3 O6 安全 FP16 升级记录：[中文](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) / [English](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md)
+- 启动脚本三档容量与日志开关更新：[中文](docs/releases/2026-08-19-launcher-controls.zh-CN.md) / [English](docs/releases/2026-08-19-launcher-controls.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -120,7 +123,8 @@ MiniMax H3 I2V 和 REF2VA 的已验收运行同样证明两个 rank 完成采样
 LTX 2.3 实测注册了 2,999 个 FSDP wrapper、2,620 个 DTensor；每个 rank
 长期保存的 Diffusion Model payload 约为 11,203 MiB。MiniMax H3 实测每个 rank 注册 684 个 FSDP wrapper。
 每张 GPU 仍需为当前完整层、
-激活张量、LoRA、128 MiB P2P 缓冲区和 CUDA 工作区保留临时显存，因此峰值仍可能接近 16GB。
+激活张量、LoRA、所选 P2P 缓冲区和 CUDA 工作区保留临时显存；当前启动脚本默认每张 GPU
+使用 256 MiB，因此峰值仍可能接近 16GB。
 
 ### 哪些模型会被分片
 
@@ -339,6 +343,32 @@ cd <ComfyUI>\custom_nodes\raylight
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY
 ```
 
+启动时会显示 `128/256/512 MiB` 三档选择和当前值。默认是 `256 MiB`，可显式切换：
+
+```powershell
+# 128 MiB：占用较少，但无法运行已验收的 1120×768 MiniMax H3 O6 工作流
+.\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 128
+
+# 256 MiB：默认值，覆盖当前 LTX 与 MiniMax H3 O6 已测 payload
+.\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 256
+
+# 512 MiB：为更大的单次 collective 预留空间，每张 GPU 比 256 MiB 档多占 256 MiB 显存
+.\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 512
+```
+
+普通使用时 Rank/P2P 详细诊断默认关闭。只有排查性能或同步问题时才启用：
+
+```powershell
+.\scripts\start-comfyui-windows-p2p.ps1 `
+  -PythonPath $PY `
+  -P2PCapacityMiB 256 `
+  -EnableDiagnostics
+```
+
+容量和日志开关都在 Ray worker 启动时读取。切换前需先 `Ctrl+C` 停止 ComfyUI，停止旧 Ray
+进程并重新启动；它们不会改变已经运行的 worker。`-ValidateOnly` 只显示最终配置，不会启动
+ComfyUI。为兼容旧自动化，脚本仍接受 `-P2PCapacityBytes`，新命令应优先使用 MiB 参数。
+
 默认打开：
 
 ```text
@@ -462,19 +492,18 @@ nvidia-smi --query-gpu=index,name,driver_model.current,memory.used,utilization.g
 
 #### 8.2 运行安全 FP16 主结果
 
-1120×768 的正式工作流需要 256 MiB P2P buffer；默认 128 MiB 无法容纳实测
+1120×768 的正式工作流需要 256 MiB P2P buffer；底层 worker 的 128 MiB 回退值无法容纳实测
 239,826,944 字节的 Ulysses 远端 payload。先关闭可选 host registration，再启动：
 
 ```powershell
 Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER -ErrorAction SilentlyContinue
 Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB -ErrorAction SilentlyContinue
-$env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = "268435456"
 
 Set-Location $RepoRoot
 .\scripts\start-comfyui-windows-p2p.ps1 `
   -PythonPath $PY `
   -ComfyRoot $ComfyRoot `
-  -P2PCapacityBytes 268435456 `
+  -P2PCapacityMiB 256 `
   -ReserveVramGiB 2
 ```
 
@@ -538,7 +567,6 @@ CUDA P2P 初始化信息，采样期间两张 GPU 都应明显参与。历史阶
 启动前设置注册开关：
 
 ```powershell
-$env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = "268435456"
 $env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER = "1"
 $env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB = "5120"
 
@@ -546,7 +574,7 @@ Set-Location $RepoRoot
 .\scripts\start-comfyui-windows-p2p.ps1 `
   -PythonPath $PY `
   -ComfyRoot $ComfyRoot `
-  -P2PCapacityBytes 268435456 `
+  -P2PCapacityMiB 256 `
   -ReserveVramGiB 2
 ```
 
@@ -609,12 +637,19 @@ FP16 dtype allowlist、FlashAttention、`--highvram` 或 `--disable-smart-memory
 | `RAY_DEBUG_DISABLE_MEMORY_MONITOR` | `1` | 避免 Ray 因高内存占用提前杀 worker |
 | `RAY_memory_usage_threshold` | `1` | 将 Ray 内存阈值提高到 100% |
 | `RAYLIGHT_WINDOWS_P2P` | `1` | 启用 Windows CUDA P2P 快速路径 |
-| `RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES` | `134217728` | 每 rank 128 MiB 持久发送缓冲区 |
+| `RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES` | `268435456` | 每 rank 256 MiB 持久发送缓冲区；可选 128/256/512 MiB |
 | `RAYLIGHT_WINDOWS_P2P_MIN_GIB_S` | `50` | 启动带宽硬门槛 |
+| `RAYLIGHT_RANK_DIAG` | `0` | 默认关闭 Rank/P2P 详细诊断；`-EnableDiagnostics` 设为 `1` |
 | `CUDA_VISIBLE_DEVICES` | `0,1` | 固定两张目标 GPU 的可见顺序 |
 
 内存监控覆盖可能让系统在压力过高时进入换页；它是为了避免 Ray 过早终止大型工作流，
 不是免费的性能优化。请监控系统内存和 swap/pagefile。
+
+P2P capacity 是每张 GPU 的持久 CUDA staging buffer 上限，不是视频时长或分辨率的直接换算。
+增大它不会自动加速，也不会增加系统内存或分页文件的固定预留，但会按差额增加每张 GPU 的
+常驻显存：256 相比 128 MiB 多约 128 MiB/GPU，512 相比 256 MiB 多约 256 MiB/GPU。
+只有实际 collective payload 超过当前容量时才需要提高；显存更紧时可尝试较小档，但容量不足
+会明确报错，不会自动回退到主存。
 
 ## 技术说明
 
@@ -634,7 +669,7 @@ flowchart LR
 
 FSDP2 继续调用标准 `torch.distributed.all_gather_into_tensor`，yunchang/xFuser
 继续调用标准 `torch.distributed.all_to_all_single`。Ray worker 内部路由器只拦截
-双 rank、CUDA、连续张量和受支持参数组合。大于 128 MiB staging buffer 的 FSDP
+双 rank、CUDA、连续张量和受支持参数组合。大于当前 staging buffer 容量的 FSDP
 分片会分块传输。已匹配快速路径一旦发生错误会 poison 当前 endpoint，不会静默改用
 CPU 主存后继续假装使用 NVLink；其他不匹配调用仍保留 Gloo 兼容路径。
 
@@ -650,14 +685,14 @@ CPU 主存后继续假装使用 NVLink；其他不匹配调用仍保留 Gloo 兼
 
 每个 rank 持有：
 
-- 一个默认 128 MiB 的持久 CUDA 发送缓冲区。
+- 一个持久 CUDA 发送缓冲区；底层 worker 在没有环境配置时回退到 128 MiB，当前启动脚本默认选择 256 MiB。
 - 可导出的 CUDA IPC storage handle。
 - `ready` 和 `consumed` 跨进程 CUDA Event。
 - Windows named shared memory + event 控制面。
 - 单独 CUDA stream、递增 operation ID、超时和 poison 状态。
 
 对于 Ulysses all-to-all，发送方把本 rank 需要发送的半块写入持久缓冲区；对于 FSDP
-all-gather，则把本地权重分片按 128 MiB 容量切块写入。对端确认 operation ID 和尺寸后，
+all-gather，则把本地权重分片按所选容量切块写入。对端确认 operation ID 和尺寸后，
 等待 CUDA Event，并直接从 peer buffer 复制到目标 CUDA 张量。
 
 ### Gloo 仍然负责什么

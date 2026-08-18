@@ -19,7 +19,7 @@ Lock the local comparison denominator for O6 safe-FP16 work. No external or proj
 | P2P capacity | explicitly 256 MiB per rank | explicitly 256 MiB per rank |
 | Source/deployment commit | `394d1cffb668fd62d87ae632ef86e28e4d9c04b4` | same |
 
-The release default remains 128 MiB. A preliminary I2V attempt proved that this exact geometry needs a larger buffer: its Ulysses remote payload was 239,826,944 bytes and was correctly rejected by the 134,217,728-byte default. The benchmark-only 256 MiB setting covers that measured payload without changing the release default.
+At the time of these O6 measurements, the launcher default was 128 MiB. A preliminary I2V attempt proved that this exact geometry needs a larger buffer: its Ulysses remote payload was 239,826,944 bytes and was correctly rejected by that capacity. Formal benchmarks therefore used 256 MiB. Since the 2026-08-19 launcher-control update, the public launcher defaults to 256 MiB and exposes 128/256/512 MiB choices; the measurements below remain unchanged historical evidence.
 
 ## Stage results
 
@@ -164,7 +164,7 @@ The two initial safe-FP16 smoke runs establish that both graph families complete
 
 | Time/directory | What was tested and the reached stage | Observation | Exclusion/non-implementation basis |
 |---|---|---|---|
-| 15:44 I2V FP32 with default 128 MiB P2P | Workflow, two workers and 684 FSDP wrappers/rank entered; stopped at the first Ulysses collective | Remote payload was 239,826,944 bytes, greater than the 134,217,728-byte capacity; explicit `ValueError`; `runs=0` | Benchmark capacity was too small for this geometry, not a model or P2P failure. Formal runs used 256 MiB and passed; release default remains 128 MiB |
+| 15:44 I2V FP32 with the then-default 128 MiB P2P | Workflow, two workers and 684 FSDP wrappers/rank entered; stopped at the first Ulysses collective | Remote payload was 239,826,944 bytes, greater than the 134,217,728-byte capacity; explicit `ValueError`; `runs=0` | Benchmark capacity was too small for this geometry, not a model or P2P failure. Formal runs used 256 MiB and passed; the launcher default was later changed to 256 MiB on 2026-08-19 |
 | 19:20 pinned-memory attempt | Two workers, safe FP16, Sampler and FSDP model preparation entered; logs end during preparation; `runs=0` | No exception was saved, but there is no `FSDP registered successfully`, sampling progress, video or benchmark result; interrupted after about 478 s | No timing/resource conclusion and no invented root cause; unreliable, not implemented |
 | 19:33 first FP8 chunk=64 invocation | Worker/Sampler/FSDP preparation entered; only one rank logged registration; no completed sampling | `geometry=null`, `runs=0`; invocation was not the fixed 1120x768 formal case | Unmatched and incomplete, excluded; rerun correctly at 19:36 for the decision |
 | 22:29 first 6 GiB host-registration invocation | ComfyUI server started, but benchmark submitted/recorded no API prompt | `runs=0`; the `_ray_runtime_env/__init__.py` warning also exists in successful runs | Warning is not causal evidence; no workflow ran, so excluded and corrected in the later valid 6 GiB smoke run |
@@ -253,7 +253,7 @@ P2P profiles also prove real dual-GPU exchange: initial safe-FP16 I2V made 5,282
 
 ## Evidence references
 
-Raw logs, telemetry CSVs, API prompts and benchmark JSON remain under local directory `E:\ComfyUI-py310\logs\minimax-h3\o2`. This index includes successful, failed, incomplete and profiler-distorted O6 attempts:
+Raw logs, telemetry CSVs, API prompts and benchmark JSON remain under local directory `<environment-root>\logs\minimax-h3\o2`. This index includes successful, failed, incomplete and profiler-distorted O6 attempts:
 
 | Category | Evidence directory |
 |---|---|
@@ -269,6 +269,6 @@ Raw logs, telemetry CSVs, API prompts and benchmark JSON remain under local dire
 | Single-ring regression | `20260818-224904-ref2va-full-o6-safe-fp16-hostreg5g-single-ring-fastpath-smoke/` |
 | Prefetch did not activate | `20260818-230432-ref2va-full-o6-safe-fp16-hostreg5g-prefetch128-smoke/` |
 
-All O6 benchmark videos are now consolidated under `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o6`. Historical `run0-prompt.json` files retain the original incorrect `raylight_o3` prefix as immutable run evidence; media organization does not rewrite those prompts. Future `o6-*` benchmark tags now route directly to `raylight_o6`.
+All O6 benchmark videos are now consolidated under `<ComfyUI>\output\video\raylight_o6`. Historical `run0-prompt.json` files retain the original incorrect `raylight_o3` prefix as immutable run evidence; media organization does not rewrite those prompts. Future `o6-*` benchmark tags now route directly to `raylight_o6`.
 
 These are one cold run per workflow under a fixed machine state. If geometry, frame count, step count, P2P capacity, precision policy, model assets or core runtime versions change, a new matched baseline is required.

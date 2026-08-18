@@ -25,7 +25,9 @@ class WindowsReleaseProfileTests(unittest.TestCase):
         matrix = json.loads(ENVIRONMENT_MATRIX.read_text(encoding="utf-8"))
         gates = matrix["release_gates"]
 
-        self.assertEqual(gates["p2p_capacity_bytes_per_rank"], 134217728)
+        self.assertEqual(gates["p2p_capacity_bytes_per_rank"], 268435456)
+        self.assertEqual(gates["launcher_default_p2p_capacity_mib_per_rank"], 256)
+        self.assertEqual(gates["worker_fallback_p2p_capacity_bytes_per_rank"], 134217728)
         self.assertEqual(gates["maximum_validated_collective_input_bytes"], 230686720)
         self.assertEqual(gates["p2p_timeout_seconds"], 10)
 
@@ -35,10 +37,11 @@ class WindowsReleaseProfileTests(unittest.TestCase):
         )
 
         self.assertEqual(DEFAULT_WINDOWS_P2P_CAPACITY_BYTES, 134217728)
-    def test_validate_only_uses_capacity_required_by_validated_10s_workflow(self):
+
+    def run_launcher(self, *arguments):
         python_path = REPO_ROOT.parent / "Python310" / "python.exe"
         comfy_root = REPO_ROOT.parent / "ComfyUI"
-        result = subprocess.run(
+        return subprocess.run(
             [
                 "powershell.exe",
                 "-NoProfile",
@@ -50,6 +53,88 @@ class WindowsReleaseProfileTests(unittest.TestCase):
                 str(python_path),
                 "-ComfyRoot",
                 str(comfy_root),
+                *arguments,
+                "-ValidateOnly",
+            ],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+
+    def test_validate_only_defaults_to_256_mib_with_diagnostics_disabled(self):
+        result = self.run_launcher()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("P2P capacity choices: 128, 256, 512 MiB", result.stdout)
+        self.assertIn(
+            "Selected P2P capacity: 256 MiB (268435456 bytes per GPU)",
+            result.stdout,
+        )
+        self.assertIn("Rank/P2P diagnostics: disabled", result.stdout)
+        self.assertIn("Reserved VRAM: 2 GiB", result.stdout)
+
+    def test_validate_only_accepts_each_documented_mib_choice(self):
+        for capacity_mib, capacity_bytes in (
+            (128, 134217728),
+            (256, 268435456),
+            (512, 536870912),
+        ):
+            with self.subTest(capacity_mib=capacity_mib):
+                result = self.run_launcher(
+                    "-P2PCapacityMiB",
+                    str(capacity_mib),
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(
+                    f"Selected P2P capacity: {capacity_mib} MiB "
+                    f"({capacity_bytes} bytes per GPU)",
+                    result.stdout,
+                )
+
+    def test_validate_only_rejects_undocumented_mib_choice(self):
+        result = self.run_launcher("-P2PCapacityMiB", "384")
+
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_validate_only_enables_diagnostics_only_when_requested(self):
+        result = self.run_launcher("-EnableDiagnostics")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Rank/P2P diagnostics: enabled", result.stdout)
+
+    def test_legacy_capacity_bytes_parameter_remains_compatible(self):
+        result = self.run_launcher("-P2PCapacityBytes", "268435456")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "Selected P2P capacity: 256 MiB (268435456 bytes per GPU)",
+            result.stdout,
+        )
+
+    def test_legacy_positional_arguments_remain_compatible(self):
+        python_path = REPO_ROOT.parent / "Python310" / "python.exe"
+        comfy_root = REPO_ROOT.parent / "ComfyUI"
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(START_SCRIPT),
+                str(python_path),
+                str(comfy_root),
+                "127.0.0.1",
+                "0,1",
+                "8188",
+                "29500",
+                "268435456",
+                "50",
+                "128",
+                "2",
                 "-ValidateOnly",
             ],
             capture_output=True,
@@ -60,8 +145,10 @@ class WindowsReleaseProfileTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("P2P capacity: 134217728 bytes", result.stdout)
-        self.assertIn("Reserved VRAM: 2 GiB", result.stdout)
+        self.assertIn(
+            "Selected P2P capacity: 256 MiB (268435456 bytes per GPU)",
+            result.stdout,
+        )
 
     def test_example_workflow_enables_mmap_for_quantized_safetensors(self):
         workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))

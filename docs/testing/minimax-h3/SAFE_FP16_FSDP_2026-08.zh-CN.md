@@ -19,7 +19,7 @@
 | P2P 容量 | 每个 rank 显式设置 256 MiB | 每个 rank 显式设置 256 MiB |
 | 源码/部署提交 | `394d1cffb668fd62d87ae632ef86e28e4d9c04b4` | 相同 |
 
-发布默认值仍为 128 MiB。I2V 预跑证明该精确几何需要更大的 buffer：Ulysses 远端 payload 为 239,826,944 字节，134,217,728 字节的默认容量正确拒绝了它。仅 benchmark 使用的 256 MiB 设置可以覆盖实测 payload，不改变发布默认值。
+进行这些 O6 测量时，启动脚本默认值还是 128 MiB。I2V 预跑证明该精确几何需要更大的 buffer：Ulysses 远端 payload 为 239,826,944 字节，原容量正确拒绝了它，因此正式 benchmark 使用 256 MiB。从 2026-08-19 启动脚本更新起，公开启动脚本默认改为 256 MiB，并提供 128/256/512 MiB 三档；下文测量结果仍作为不改写的历史证据保留。
 
 ## 阶段结果
 
@@ -164,7 +164,7 @@ O6 性能分母采用最慢 rank 的完整采样区间除以精确步数。该�
 
 | 时间/目录 | 实际做了什么、到达哪一阶段 | 观察结果 | 排除/不实装依据 |
 |---|---|---|---|
-| 15:44 I2V FP32、默认 128 MiB P2P | 工作流、双 worker、684 个 FSDP wrapper/rank 均已进入；在第一个 Ulysses collective 前停止 | 远端 payload 为 239,826,944 字节，大于 134,217,728 字节容量，抛出明确 `ValueError`；`runs=0` | 这是该几何的 benchmark 容量配置不够，不是模型或 P2P 失效。仅将正式测试改为 256 MiB 后通过；发布默认值仍为 128 MiB |
+| 15:44 I2V FP32、当时默认的 128 MiB P2P | 工作流、双 worker、684 个 FSDP wrapper/rank 均已进入；在第一个 Ulysses collective 前停止 | 远端 payload 为 239,826,944 字节，大于 134,217,728 字节容量，抛出明确 `ValueError`；`runs=0` | 这是该几何的 benchmark 容量配置不够，不是模型或 P2P 失效。正式测试改为 256 MiB 后通过；启动脚本默认值于 2026-08-19 改为 256 MiB |
 | 19:20 pinned-memory 尝试 | 双 worker、安全 FP16、Sampler 和 FSDP 模型准备均已进入，日志停在模型准备阶段；`runs=0` | 保存日志没有异常，也没有 `FSDP registered successfully`、采样进度、视频或 benchmark 结果；约 478 秒后被中止 | 无法证明 pinning 的速度或资源效果，也不能臆测具体根因；可靠性不足，不实装 |
 | 19:33 FP8 chunk=64 首次调用 | 已进入 worker/Sampler/FSDP 准备，只有一个 rank 记录注册完成；没有完整采样 | `geometry=null`、`runs=0`，调用并非固定 1120×768 正式规格 | 无同规格、无完整运行，排除；随后用 19:36 的正确规格完整重跑作判断 |
 | 22:29 6 GiB host registration 首次调用 | ComfyUI 服务启动完成，但 benchmark 没有提交/记录 API prompt | `runs=0`；日志中的 `_ray_runtime_env/__init__.py` 缺失警告在成功运行中也存在 | 警告不是因果证据；该次没有执行工作流，排除，随后在 22:29 的纠正运行中得到有效结果 |
@@ -253,7 +253,7 @@ P2P profile 也证明双卡确实在交换数据：初始安全 FP16 I2V 共 528
 
 ## 证据索引
 
-原始日志、遥测 CSV、API prompt 和 benchmark JSON 保留在本机 `E:\ComfyUI-py310\logs\minimax-h3\o2`。以下索引包含成功、失败、未完成和被探针扰动的 O6 尝试：
+原始日志、遥测 CSV、API prompt 和 benchmark JSON 保留在本机 `<环境根目录>\logs\minimax-h3\o2`。以下索引包含成功、失败、未完成和被探针扰动的 O6 尝试：
 
 | 类别 | 证据目录 |
 |---|---|
@@ -269,6 +269,6 @@ P2P profile 也证明双卡确实在交换数据：初始安全 FP16 I2V 共 528
 | 单 Ring 回归 | `20260818-224904-ref2va-full-o6-safe-fp16-hostreg5g-single-ring-fastpath-smoke/` |
 | Prefetch 未生效 | `20260818-230432-ref2va-full-o6-safe-fp16-hostreg5g-prefetch128-smoke/` |
 
-全部 O6 benchmark 视频现统一位于 `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o6`。历史 `run0-prompt.json` 保留运行当时错误写入的 `raylight_o3` 前缀作为原始证据；视频整理后不反向修改历史 prompt。后续 `o6-*` benchmark 标签已修正为自动写入 `raylight_o6`。
+全部 O6 benchmark 视频现统一位于 `<ComfyUI>\output\video\raylight_o6`。历史 `run0-prompt.json` 保留运行当时错误写入的 `raylight_o3` 前缀作为原始证据；视频整理后不反向修改历史 prompt。后续 `o6-*` benchmark 标签已修正为自动写入 `raylight_o6`。
 
 这些数据来自固定机器状态下每个工作流各一次冷启动。若几何、帧数、步数、P2P 容量、精度策略、模型资源或核心运行时版本发生变化，必须重新建立同规格基线。
