@@ -83,7 +83,7 @@ Keep the accepted full I2V and REF2VA workflows correct while making repeated in
 
 ## Phase O5: user-loadable Turbo release candidate
 
-**Status: active.** O4 proves the runtime path. O5 packages the accepted settings as normal ComfyUI workflow JSON files and user-facing instructions instead of requiring the benchmark harness.
+**Status: complete and accepted on 2026-08-18.** Dedicated I2V Turbo 8-step and REF2VA Turbo 4-step GUI workflows load against the installed ComfyUI node catalog and each convert to a 21-node API prompt with the pinned LoRA, strength and step contract. Generated artifacts are locked by byte-for-byte tests; upstream and 20-step workflows retain their prior SHA-256 values. Manual instructions are in `docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md`.
 
 1. Generate dedicated I2V Turbo 8-step and REF2VA Turbo 4-step GUI workflows without modifying the upstream or 20-step FSDP examples.
 2. Pin the intended LoRA filename, strength and sampler step count in each workflow while preserving the original prompts, inputs and full output settings.

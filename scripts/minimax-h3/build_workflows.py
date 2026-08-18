@@ -8,6 +8,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_ROOT = REPO_ROOT / "example_workflows"
+MODEL_MANIFEST = Path(__file__).with_name("models.json")
 
 SOURCE_WORKFLOWS = {
     "i2v": WORKFLOW_ROOT / "Minimax_H3_I2V_Raylight.json",
@@ -16,6 +17,14 @@ SOURCE_WORKFLOWS = {
 OUTPUT_WORKFLOWS = {
     "i2v": WORKFLOW_ROOT / "Minimax_H3_I2V_Windows_V100_FSDP.json",
     "ref2va": WORKFLOW_ROOT / "Minimax_H3_REF2VA_Windows_V100_FSDP.json",
+}
+TURBO_OUTPUT_WORKFLOWS = {
+    "i2v": WORKFLOW_ROOT / "Minimax_H3_I2V_Windows_V100_FSDP_Turbo8.json",
+    "ref2va": WORKFLOW_ROOT / "Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json",
+}
+DEFAULT_TURBO_VARIANTS = {
+    "i2v": "fl2v-turbo-8step",
+    "ref2va": "ref2v-turbo-4step",
 }
 DIFFUSION_MODELS = {
     "i2v": "minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
@@ -132,6 +141,77 @@ def _ensure_initializer_wait_link(workflow: dict[str, Any], mode: str) -> None:
     source_output.setdefault("links", []).append(link_id)
 
 
+def _resolve_turbo_variant(variant_id: str, mode: str) -> dict[str, Any]:
+    manifest = json.loads(MODEL_MANIFEST.read_text(encoding="utf-8"))
+    matches = [
+        item
+        for item in manifest.get("models", [])
+        if item.get("id") == variant_id and "turbo" in item.get("groups", [])
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"Unknown Turbo variant: {variant_id}")
+    item = matches[0]
+    if item.get("mode") != mode:
+        raise ValueError(f"Turbo variant {variant_id} mode is {item.get('mode')}, not {mode}")
+    relative_path = Path(item["relative_path"])
+    if relative_path.parent.as_posix() != "loras" or relative_path.name != relative_path.as_posix().split("/")[-1]:
+        raise ValueError(f"Turbo variant {variant_id} has an invalid LoRA path")
+    steps = int(item["steps"])
+    if steps < 1:
+        raise ValueError(f"Turbo variant {variant_id} has invalid steps")
+    return {"lora_name": relative_path.name, "steps": steps}
+
+
+def _ensure_lora_link(workflow: dict[str, Any], lora_name: str) -> None:
+    unet = _one_node(workflow, "RayUNETLoader")
+    lora_inputs = [i for i, input_ in enumerate(unet.get("inputs", [])) if input_["name"] == "lora"]
+    if len(lora_inputs) != 1:
+        raise ValueError(f"Expected exactly one RayUNETLoader lora input, found {len(lora_inputs)}")
+    target_slot = lora_inputs[0]
+    if unet["inputs"][target_slot].get("link") is not None:
+        raise ValueError("RayUNETLoader already has a LoRA link")
+    if _nodes(workflow, "RayLoraLoader"):
+        raise ValueError("Workflow already contains a RayLoraLoader")
+
+    node_ids = [int(node["id"]) for node in workflow.get("nodes", [])]
+    node_id = max([int(workflow.get("last_node_id", 0)), *node_ids], default=0) + 1
+    workflow["last_node_id"] = node_id
+    link_ids = [int(link[0]) for link in workflow.get("links", [])]
+    link_id = max([int(workflow.get("last_link_id", 0)), *link_ids], default=0) + 1
+    workflow["last_link_id"] = link_id
+
+    unet_position = unet.get("pos", [0, 0])
+    lora_node = {
+        "id": node_id,
+        "type": "RayLoraLoader",
+        "pos": [float(unet_position[0]), float(unet_position[1]) + 150.0],
+        "size": [270, 82],
+        "flags": {},
+        "order": max((int(node.get("order", -1)) for node in workflow.get("nodes", [])), default=-1) + 1,
+        "mode": 0,
+        "inputs": [
+            {
+                "name": "prev_ray_lora",
+                "shape": 7,
+                "type": "RAY_LORA",
+                "link": None,
+            }
+        ],
+        "outputs": [
+            {
+                "name": "ray_lora",
+                "type": "RAY_LORA",
+                "links": [link_id],
+            }
+        ],
+        "properties": {"Node name for S&R": "RayLoraLoader"},
+        "widgets_values": [lora_name, 1.0],
+    }
+    workflow.setdefault("nodes", []).append(lora_node)
+    workflow.setdefault("links", []).append([link_id, node_id, 0, unet["id"], target_slot, "RAY_LORA"])
+    unet["inputs"][target_slot]["link"] = link_id
+
+
 def build_workflow(
     source_path: str | Path,
     *,
@@ -141,6 +221,7 @@ def build_workflow(
     megapixels: float | None = None,
     duration: float | None = None,
     steps: int | None = None,
+    turbo_variant: str | None = None,
 ) -> dict[str, Any]:
     if mode not in SOURCE_WORKFLOWS:
         raise ValueError(f"Unsupported MiniMax workflow mode: {mode}")
@@ -150,6 +231,10 @@ def build_workflow(
         raise ValueError(f"Unsupported workflow profile: {profile}")
     if not input_filename:
         raise ValueError("input_filename must not be empty")
+
+    turbo = _resolve_turbo_variant(turbo_variant, mode) if turbo_variant else None
+    if turbo is not None and steps is not None and int(steps) != turbo["steps"]:
+        raise ValueError(f"Turbo variant {turbo_variant} requires {turbo['steps']} steps, not {steps}")
 
     source_path = Path(source_path)
     workflow = json.loads(source_path.read_text(encoding="utf-8"))
@@ -182,6 +267,14 @@ def build_workflow(
         megapixels = defaults["megapixels"] if megapixels is None else megapixels
         duration = defaults["duration"] if duration is None else duration
         steps = defaults["steps"] if steps is None else steps
+
+    if turbo is not None:
+        steps = turbo["steps"]
+        _ensure_lora_link(workflow, turbo["lora_name"])
+        _set_first_widget(
+            _one_node(workflow, "SaveVideo"),
+            f"{OUTPUT_PREFIXES[mode]}_Turbo{turbo['steps']}",
+        )
 
     if megapixels is not None:
         if megapixels <= 0:
@@ -223,13 +316,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration", type=float)
     parser.add_argument("--steps", type=int)
     parser.add_argument("--output-dir", type=Path, default=WORKFLOW_ROOT)
+    parser.add_argument("--turbo", action="store_true")
     return parser
 
 
 def main() -> int:
     args = _parser().parse_args()
+    if args.turbo and args.profile != "full":
+        raise ValueError("--turbo requires --profile full")
     modes = ("i2v", "ref2va") if args.mode == "all" else (args.mode,)
     for mode in modes:
+        turbo_variant = DEFAULT_TURBO_VARIANTS[mode] if args.turbo else None
         workflow = build_workflow(
             SOURCE_WORKFLOWS[mode],
             mode=mode,
@@ -238,9 +335,13 @@ def main() -> int:
             megapixels=args.megapixels,
             duration=args.duration,
             steps=args.steps,
+            turbo_variant=turbo_variant,
         )
-        output_name = OUTPUT_WORKFLOWS[mode].name
-        if args.profile == "smoke":
+        if args.turbo:
+            output_name = TURBO_OUTPUT_WORKFLOWS[mode].name
+        else:
+            output_name = OUTPUT_WORKFLOWS[mode].name
+        if args.profile == "smoke" and not args.turbo:
             output_name = output_name.replace(".json", "_Smoke.json")
         output_path = write_workflow(workflow, args.output_dir / output_name)
         print(output_path)
