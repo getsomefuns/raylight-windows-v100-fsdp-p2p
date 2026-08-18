@@ -10,6 +10,7 @@ from raylight.diffusion_models.wan.pipefusion import (
     partition_wan_for_pipefusion,
 )
 from raylight.distributed_worker.pipefusion_schema import build_stage_plan
+from raylight.comfy_dist.minimax_h3_fp16 import resolve_minimax_h3_safe_fp16_manual_cast
 
 from comfy.sd import model_detection_error_hint
 from comfy import model_detection, model_management
@@ -915,6 +916,9 @@ def pipefusion_load_diffusion_model_state_dict(sd, pipefusion_config, parallel_c
         manual_cast_dtype = model_management.unet_manual_cast(None, load_device, model_config.supported_inference_dtypes)
     else:
         manual_cast_dtype = model_management.unet_manual_cast(unet_dtype, load_device, model_config.supported_inference_dtypes)
+    manual_cast_dtype = resolve_minimax_h3_safe_fp16_manual_cast(
+        model_options, model_config, manual_cast_dtype
+    )
     model_config.set_inference_dtype(unet_dtype, manual_cast_dtype)
 
     if custom_operations is not None:
@@ -1234,6 +1238,9 @@ def fsdp_load_diffusion_model_stat_dict(sd, rank, device_mesh, is_cpu_offload, m
         manual_cast_dtype = model_management.unet_manual_cast(None, load_device, model_config.supported_inference_dtypes)
     else:
         manual_cast_dtype = model_management.unet_manual_cast(unet_dtype, load_device, model_config.supported_inference_dtypes)
+    manual_cast_dtype = resolve_minimax_h3_safe_fp16_manual_cast(
+        model_options, model_config, manual_cast_dtype
+    )
     model_config.set_inference_dtype(unet_dtype, manual_cast_dtype)
 
     if custom_operations is not None:

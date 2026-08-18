@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -97,3 +98,72 @@ def test_runtime_identity_requires_deployed_source_commit_and_clean_runtime():
     }
     with pytest.raises(RuntimeError, match="runtime source files are dirty"):
         benchmark.validate_runtime_identity(dirty)
+
+
+def test_build_api_prompt_forwards_safe_fp16_compute_dtype():
+    seen = {}
+
+    def build_workflow(source, **kwargs):
+        seen.update(kwargs)
+        return {"source": source}
+
+    builder = SimpleNamespace(
+        SOURCE_WORKFLOWS={"i2v": Path("source.json")},
+        build_workflow=build_workflow,
+    )
+    converter = SimpleNamespace(
+        workflow_to_prompt=lambda workflow, object_info: {
+            "init": {
+                "class_type": "RayInitializer",
+                "inputs": {},
+            }
+        }
+    )
+
+    with (
+        mock.patch.object(benchmark, "_load_script", side_effect=[builder, converter]),
+        mock.patch.object(benchmark, "request_json", return_value={}),
+        mock.patch.object(benchmark, "validate_prompt"),
+    ):
+        benchmark.build_api_prompt(
+            "http://127.0.0.1:8188",
+            "i2v",
+            "full",
+            True,
+            compute_dtype="fp16_h3_safe",
+            turbo_variant="fl2v-turbo-8step",
+        )
+
+    assert seen["compute_dtype"] == "fp16_h3_safe"
+    assert seen["turbo_variant"] == "fl2v-turbo-8step"
+
+
+def test_parse_args_accepts_safe_fp16_compute_dtype():
+    args = benchmark.parse_args(
+        [
+            "--mode",
+            "i2v",
+            "--profile",
+            "full",
+            "--compute-dtype",
+            "fp16_h3_safe",
+            "--turbo-variant",
+            "fl2v-turbo-8step",
+        ]
+    )
+
+    assert args.compute_dtype == "fp16_h3_safe"
+
+
+def test_parse_args_rejects_safe_fp16_without_turbo_variant():
+    with pytest.raises(ValueError, match="Turbo"):
+        benchmark.parse_args(
+            [
+                "--mode",
+                "i2v",
+                "--profile",
+                "full",
+                "--compute-dtype",
+                "fp16_h3_safe",
+            ]
+        )

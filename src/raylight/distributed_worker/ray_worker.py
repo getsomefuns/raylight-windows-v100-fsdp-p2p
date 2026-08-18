@@ -65,6 +65,10 @@ from raylight.distributed_worker.windows_p2p import (
 )
 from raylight.comfy_dist.quant_ops import patch_temp_fix_ck_ops
 from raylight.comfy_dist.fsdp_utils import summarize_fsdp_parameters
+from raylight.comfy_dist.minimax_h3_fp16 import (
+    minimax_h3_safe_fp16_construction,
+    prepare_minimax_h3_safe_fp16_worker,
+)
 from ray.exceptions import RayActorError
 
 
@@ -577,6 +581,7 @@ class RayWorker:
         self.device = torch.device(f"cuda:{self.device_id}")
         self.device_mesh = None
         self.compute_capability = int("{}{}".format(*torch.cuda.get_device_capability()))
+        self.device_name = torch.cuda.get_device_name(self.device)
         self.pipefusion_config = PipeFusionConfig.from_parallel_dict(self.parallel_dict)
         self.pipefusion_stage = None
         self.xfuser_parallel = None
@@ -1220,6 +1225,14 @@ class RayWorker:
         )
 
     def load_unet(self, unet_path, model_options):
+        safe_fp16_active = prepare_minimax_h3_safe_fp16_worker(
+            model_options,
+            compute_capability=self.compute_capability,
+            device_name=getattr(self, "device_name", str(self.device)),
+            rank=self.local_rank,
+            is_fsdp=self.parallel_dict.get("is_fsdp") is True,
+            is_xdit=self.parallel_dict.get("is_xdit") is True,
+        )
         if self.parallel_dict["is_fsdp"] is True:
             active_key = self._active_model_key(unet_path, model_options)
 
@@ -1261,13 +1274,14 @@ class RayWorker:
             gc.collect()
             model_management.soft_empty_cache()
 
-            self.model, self.state_dict = fsdp_load_diffusion_model(
-                unet_path,
-                self.local_rank,
-                self.device_mesh,
-                self.is_cpu_offload,
-                model_options=fsdp_model_options,
-            )
+            with minimax_h3_safe_fp16_construction(fsdp_model_options):
+                self.model, self.state_dict = fsdp_load_diffusion_model(
+                    unet_path,
+                    self.local_rank,
+                    self.device_mesh,
+                    self.is_cpu_offload,
+                    model_options=fsdp_model_options,
+                )
             torch.cuda.synchronize()
             model_management.soft_empty_cache()
             gc.collect()
@@ -1277,6 +1291,12 @@ class RayWorker:
 
             base_model = getattr(self.model, "model", self.model)
             self.overwrite_cast_dtype = getattr(base_model, "manual_cast_dtype", None)
+            if safe_fp16_active:
+                print(
+                    f"[Raylight] MiniMax H3 safe FP16 rank={self.local_rank} "
+                    f"model_dtype={fsdp_model_options.get('dtype')} "
+                    f"manual_cast_dtype={self.overwrite_cast_dtype}"
+                )
             self.is_model_loaded = True
             self.active_request_key = active_key
             return

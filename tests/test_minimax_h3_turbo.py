@@ -4,8 +4,10 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -128,3 +130,70 @@ def test_bf16_lora_sidecar_follows_fp32_v100_compute_dtype():
     assert len(seen_weight_dtypes) >= 2
     assert set(seen_weight_dtypes) == {torch.float32}
     hook.eject()
+
+
+def test_bf16_lora_sidecar_follows_safe_fp16_branch_dtype():
+    up = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.bfloat16)
+    down = torch.tensor([[0.5, 1.0], [1.5, 2.0]], dtype=torch.bfloat16)
+    adapter = defer_adapter_device_move(LoRAAdapter({"up", "down"}, (up, down, 2.0, None, None, None)))
+    layer = torch.nn.Linear(2, 2, bias=False, dtype=torch.float16)
+    with torch.no_grad():
+        layer.weight.zero_()
+    hook = BypassForwardHook(layer, adapter, multiplier=1.0)
+    hook.inject()
+    seen_weight_dtypes = []
+    original_linear = F.linear
+
+    def tracking_linear(value, weight, bias=None):
+        seen_weight_dtypes.append(weight.dtype)
+        return original_linear(value, weight, bias)
+
+    x = torch.tensor([[1.0, -1.0]], dtype=torch.float16)
+    with mock.patch(
+        "raylight.comfy_dist.weight_adapter.lora.F.linear",
+        side_effect=tracking_linear,
+    ):
+        actual = layer(x)
+
+    expected = original_linear(original_linear(x, down.half()), up.half())
+    torch.testing.assert_close(actual, expected)
+    assert torch.isfinite(actual).all()
+    assert len(seen_weight_dtypes) >= 2
+    assert set(seen_weight_dtypes) == {torch.float16}
+    hook.eject()
+
+
+def test_safe_attention_projection_scales_post_injection_lora_sidecar():
+    from raylight.comfy_dist.minimax_h3_fp16 import (
+        activate_minimax_h3_safe_fp16_model,
+        safe_attention_output_projection,
+    )
+
+    layer = torch.nn.Linear(1, 1, bias=False, dtype=torch.float16)
+    with torch.no_grad():
+        layer.weight.fill_(1.0)
+    model = SimpleNamespace(
+        dtype=torch.float16,
+        condition_proj=torch.nn.Identity(),
+        blocks=[SimpleNamespace(attn=SimpleNamespace(out_proj=layer), mlp=SimpleNamespace())],
+    )
+    assert activate_minimax_h3_safe_fp16_model(model) is True
+
+    up = torch.tensor([[2.0]], dtype=torch.bfloat16)
+    down = torch.tensor([[1.0]], dtype=torch.bfloat16)
+    adapter = defer_adapter_device_move(
+        LoRAAdapter({"up", "down"}, (up, down, 1.0, None, None, None))
+    )
+    hook = BypassForwardHook(layer, adapter, multiplier=1.0)
+    hook.inject()
+    try:
+        actual = safe_attention_output_projection(
+            layer,
+            torch.tensor([[60_000.0]], dtype=torch.float16),
+        )
+    finally:
+        hook.eject()
+
+    assert actual.dtype is torch.float32
+    assert torch.isfinite(actual).all()
+    assert actual.item() == pytest.approx(180_000.0, rel=3e-3)

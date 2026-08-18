@@ -921,6 +921,8 @@ def build_api_prompt(
     profile: str,
     cpu_offload: bool,
     *,
+    compute_dtype: str = "default",
+    turbo_variant: str | None = None,
     geometry: dict | None = None,
 ) -> dict:
     builder = _load_script("minimax_h3_build_workflows", SCRIPT_ROOT / "build_workflows.py")
@@ -929,6 +931,8 @@ def build_api_prompt(
         builder.SOURCE_WORKFLOWS[mode],
         mode=mode,
         profile=profile,
+        compute_dtype=compute_dtype,
+        turbo_variant=turbo_variant,
     )
     prompt = converter.workflow_to_prompt(workflow, request_json(f"{base_url}/object_info", timeout=120))
     _, initializer = _one_node(prompt, "RayInitializer")
@@ -964,6 +968,7 @@ def run_benchmark(
     port: int,
     timeout: int,
     cpu_offload: bool,
+    compute_dtype: str = "default",
     turbo_variant: str | None = None,
     steps: int | None = None,
     output_tag: str | None = None,
@@ -974,6 +979,8 @@ def run_benchmark(
     expected_frames: int | None = None,
     p2p_capacity_mib: int = P2P_CAPACITY_BYTES // 2**20,
 ) -> Path:
+    if compute_dtype == "fp16_h3_safe" and turbo_variant is None:
+        raise ValueError("fp16_h3_safe requires a pinned MiniMax H3 Turbo variant")
     if p2p_capacity_mib <= 0:
         raise ValueError("p2p_capacity_mib must be positive")
     p2p_capacity_bytes = int(p2p_capacity_mib) * 2**20
@@ -1039,6 +1046,7 @@ def run_benchmark(
         "mode": mode,
         "profile": profile,
         "cpu_offload": cpu_offload,
+        "compute_dtype": compute_dtype,
         "variant": turbo_variant or output_tag or "base",
         "turbo": turbo_spec,
         "steps": steps,
@@ -1079,6 +1087,8 @@ def run_benchmark(
                 mode,
                 profile,
                 cpu_offload,
+                compute_dtype=compute_dtype,
+                turbo_variant=turbo_variant,
                 geometry=geometry,
             )
             configure_prompt_variant(template, lora_name=lora_name, steps=steps)
@@ -1216,6 +1226,11 @@ def parse_args(argv=None):
     parser.add_argument("--port", type=int, default=8188)
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--cpu-offload", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--compute-dtype",
+        choices=("default", "fp16_h3_safe"),
+        default="default",
+    )
     parser.add_argument("--turbo-variant")
     parser.add_argument("--steps", type=int)
     parser.add_argument("--output-tag")
@@ -1246,6 +1261,8 @@ def parse_args(argv=None):
         )
     if any(value is not None and value <= 0 for value in geometry_values):
         raise ValueError("geometry values must be positive")
+    if args.compute_dtype == "fp16_h3_safe" and args.turbo_variant is None:
+        raise ValueError("fp16_h3_safe requires a pinned MiniMax H3 Turbo variant")
     return args
 
 
@@ -1259,6 +1276,7 @@ def main() -> int:
             port=args.port,
             timeout=args.timeout,
             cpu_offload=args.cpu_offload,
+            compute_dtype=args.compute_dtype,
             turbo_variant=args.turbo_variant,
             steps=args.steps,
             output_tag=args.output_tag,

@@ -22,6 +22,10 @@ TURBO_OUTPUT_WORKFLOWS = {
     "i2v": WORKFLOW_ROOT / "Minimax_H3_I2V_Windows_V100_FSDP_Turbo8.json",
     "ref2va": WORKFLOW_ROOT / "Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json",
 }
+SAFE_FP16_OUTPUT_WORKFLOWS = {
+    "i2v": WORKFLOW_ROOT / "Minimax_H3_I2V_Windows_V100_FSDP_Turbo8_FP16_Experimental.json",
+    "ref2va": WORKFLOW_ROOT / "Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json",
+}
 DEFAULT_TURBO_VARIANTS = {
     "i2v": "fl2v-turbo-8step",
     "ref2va": "ref2v-turbo-4step",
@@ -77,6 +81,13 @@ def _set_first_widget(node: dict[str, Any], value: Any) -> None:
     if not isinstance(widgets, list) or not widgets:
         raise ValueError(f"Node {node.get('type')} has no editable widgets_values")
     widgets[0] = value
+
+
+def _set_unet_compute_dtype(node: dict[str, Any], value: str) -> None:
+    widgets = node.get("widgets_values")
+    if not isinstance(widgets, list) or len(widgets) < 2:
+        raise ValueError("RayUNETLoader has no editable weight_dtype widget")
+    widgets[1] = value
 
 
 def _ensure_conditioning_link(workflow: dict[str, Any], mode: str) -> None:
@@ -222,6 +233,7 @@ def build_workflow(
     duration: float | None = None,
     steps: int | None = None,
     turbo_variant: str | None = None,
+    compute_dtype: str = "default",
 ) -> dict[str, Any]:
     if mode not in SOURCE_WORKFLOWS:
         raise ValueError(f"Unsupported MiniMax workflow mode: {mode}")
@@ -229,6 +241,12 @@ def build_workflow(
         input_filename = INPUT_FILENAMES[mode]
     if profile not in {"full", "smoke"}:
         raise ValueError(f"Unsupported workflow profile: {profile}")
+    if compute_dtype not in {"default", "fp16_h3_safe"}:
+        raise ValueError(f"Unsupported MiniMax compute dtype: {compute_dtype}")
+    if compute_dtype == "fp16_h3_safe" and profile != "full":
+        raise ValueError("fp16_h3_safe requires the full MiniMax H3 profile")
+    if compute_dtype == "fp16_h3_safe" and turbo_variant is None:
+        raise ValueError("fp16_h3_safe requires a pinned MiniMax H3 Turbo variant")
     if not input_filename:
         raise ValueError("input_filename must not be empty")
 
@@ -252,7 +270,9 @@ def build_workflow(
     initializer_widgets[RAY_INITIALIZER_FSDP_CPU_OFFLOAD_INDEX] = profile == "full"
     initializer["widgets_values"] = initializer_widgets
 
-    _set_first_widget(_one_node(workflow, "RayUNETLoader"), DIFFUSION_MODELS[mode])
+    unet = _one_node(workflow, "RayUNETLoader")
+    _set_first_widget(unet, DIFFUSION_MODELS[mode])
+    _set_unet_compute_dtype(unet, compute_dtype)
     _set_first_widget(_one_node(workflow, "SaveVideo"), OUTPUT_PREFIXES[mode])
 
     load_images = _nodes(workflow, "LoadImage")
@@ -275,6 +295,10 @@ def build_workflow(
             _one_node(workflow, "SaveVideo"),
             f"{OUTPUT_PREFIXES[mode]}_Turbo{turbo['steps']}",
         )
+
+    if compute_dtype == "fp16_h3_safe":
+        save_video = _one_node(workflow, "SaveVideo")
+        _set_first_widget(save_video, f"{save_video['widgets_values'][0]}_SafeFP16")
 
     if megapixels is not None:
         if megapixels <= 0:
@@ -317,6 +341,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int)
     parser.add_argument("--output-dir", type=Path, default=WORKFLOW_ROOT)
     parser.add_argument("--turbo", action="store_true")
+    parser.add_argument(
+        "--compute-dtype",
+        choices=("default", "fp16_h3_safe"),
+        default="default",
+    )
     return parser
 
 
@@ -324,6 +353,8 @@ def main() -> int:
     args = _parser().parse_args()
     if args.turbo and args.profile != "full":
         raise ValueError("--turbo requires --profile full")
+    if args.compute_dtype == "fp16_h3_safe" and not args.turbo:
+        raise ValueError("--compute-dtype fp16_h3_safe requires --turbo")
     modes = ("i2v", "ref2va") if args.mode == "all" else (args.mode,)
     for mode in modes:
         turbo_variant = DEFAULT_TURBO_VARIANTS[mode] if args.turbo else None
@@ -336,8 +367,11 @@ def main() -> int:
             duration=args.duration,
             steps=args.steps,
             turbo_variant=turbo_variant,
+            compute_dtype=args.compute_dtype,
         )
-        if args.turbo:
+        if args.compute_dtype == "fp16_h3_safe":
+            output_name = SAFE_FP16_OUTPUT_WORKFLOWS[mode].name
+        elif args.turbo:
             output_name = TURBO_OUTPUT_WORKFLOWS[mode].name
         else:
             output_name = OUTPUT_WORKFLOWS[mode].name

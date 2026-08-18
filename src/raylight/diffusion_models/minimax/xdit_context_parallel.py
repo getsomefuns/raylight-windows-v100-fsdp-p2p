@@ -5,6 +5,7 @@ from comfy.ldm.minimax.model import pack_audio, patchify_video, rope_rotation_ta
 from xfuser.core.distributed import get_sequence_parallel_rank, get_sequence_parallel_world_size, get_sp_group
 
 import raylight.distributed_modules.attention as xfuser_attn
+from raylight.comfy_dist.minimax_h3_fp16 import safe_attention_output_projection
 from ..utils import pad_to_world_size
 
 
@@ -40,7 +41,7 @@ def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
     k = k.transpose(0, 1).unsqueeze(0)
     v = v.transpose(0, 1).unsqueeze(0)
     out = xfuser_optimized_attention(q, k, v, self.heads, skip_reshape=True)
-    return self.out_proj(out.squeeze(0))
+    return safe_attention_output_projection(self.out_proj, out.squeeze(0))
 
 
 def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_payload=None, **kwargs):

@@ -28,6 +28,7 @@ from .distributed_worker.ray_worker import (
 )
 from .distributed_worker.parallel_group_manager import validate_hybrid_topology
 from .distributed_worker.ray_worker_vae import combine_dist_vae_partials, combine_seedvr2_vae_partials
+from .comfy_dist.minimax_h3_fp16 import SAFE_FP16_LOADER_VALUE, ray_unet_model_options
 
 
 class AnyType(str):
@@ -1067,6 +1068,7 @@ class RayUNETLoader:
                         "fp8_e5m2",
                         "bf16",
                         "fp16",
+                        SAFE_FP16_LOADER_VALUE,
                     ],
                 ),
                 "ray_actors_init": (
@@ -1086,18 +1088,7 @@ class RayUNETLoader:
     def load_ray_unet(self, ray_actors_init, unet_name, weight_dtype, lora=None):
         ray_actors, gpu_actors, parallel_dict = ensure_fresh_actors(ray_actors_init)
 
-        model_options = {}
-        if weight_dtype == "fp8_e4m3fn":
-            model_options["dtype"] = torch.float8_e4m3fn
-        elif weight_dtype == "fp8_e4m3fn_fast":
-            model_options["dtype"] = torch.float8_e4m3fn
-            model_options["fp8_optimizations"] = True
-        elif weight_dtype == "fp8_e5m2":
-            model_options["dtype"] = torch.float8_e5m2
-        elif weight_dtype == "bf16":
-            model_options["dtype"] = torch.bfloat16
-        elif weight_dtype == "fp16":
-            model_options["dtype"] = torch.float16
+        model_options = ray_unet_model_options(weight_dtype)
 
         try:
             unet_path = folder_paths.get_full_path_or_raise("diffusion_models", unet_name)

@@ -282,6 +282,57 @@ def test_cli_rejects_turbo_smoke_before_writing_workflows(monkeypatch, tmp_path)
 
 
 @pytest.mark.parametrize(
+    ("mode", "variant"),
+    [("i2v", "fl2v-turbo-8step"), ("ref2va", "ref2v-turbo-4step")],
+)
+def test_safe_fp16_workflow_changes_only_the_loader_mode_and_output_label(mode, variant):
+    builder = _load_builder()
+    default = builder.build_workflow(
+        builder.SOURCE_WORKFLOWS[mode],
+        mode=mode,
+        profile="full",
+        turbo_variant=variant,
+    )
+    safe = builder.build_workflow(
+        builder.SOURCE_WORKFLOWS[mode],
+        mode=mode,
+        profile="full",
+        turbo_variant=variant,
+        compute_dtype="fp16_h3_safe",
+    )
+
+    assert _node(default, "RayUNETLoader")["widgets_values"][1] == "default"
+    assert _node(safe, "RayUNETLoader")["widgets_values"][1] == "fp16_h3_safe"
+    assert _node(safe, "SaveVideo")["widgets_values"][0].endswith("_SafeFP16")
+
+    _node(safe, "RayUNETLoader")["widgets_values"][1] = "default"
+    _node(safe, "SaveVideo")["widgets_values"][0] = _node(default, "SaveVideo")["widgets_values"][0]
+    assert safe == default
+
+
+def test_safe_fp16_workflow_rejects_smoke_profile():
+    builder = _load_builder()
+    with pytest.raises(ValueError, match="full"):
+        builder.build_workflow(
+            builder.SOURCE_WORKFLOWS["i2v"],
+            mode="i2v",
+            profile="smoke",
+            compute_dtype="fp16_h3_safe",
+        )
+
+
+def test_safe_fp16_workflow_requires_a_pinned_turbo_variant():
+    builder = _load_builder()
+    with pytest.raises(ValueError, match="Turbo"):
+        builder.build_workflow(
+            builder.SOURCE_WORKFLOWS["i2v"],
+            mode="i2v",
+            profile="full",
+            compute_dtype="fp16_h3_safe",
+        )
+
+
+@pytest.mark.parametrize(
     ("mode", "variant", "filename"),
     [
         ("i2v", "fl2v-turbo-8step", "Minimax_H3_I2V_Windows_V100_FSDP_Turbo8.json"),
@@ -295,6 +346,35 @@ def test_committed_turbo_workflow_is_the_exact_generated_artifact(tmp_path, mode
         mode=mode,
         profile="full",
         turbo_variant=variant,
+    )
+    generated = builder.write_workflow(expected, tmp_path / filename)
+
+    assert generated.read_bytes() == (WORKFLOW_ROOT / filename).read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("mode", "variant", "filename"),
+    [
+        (
+            "i2v",
+            "fl2v-turbo-8step",
+            "Minimax_H3_I2V_Windows_V100_FSDP_Turbo8_FP16_Experimental.json",
+        ),
+        (
+            "ref2va",
+            "ref2v-turbo-4step",
+            "Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json",
+        ),
+    ],
+)
+def test_committed_safe_fp16_workflow_is_exact_generated_artifact(tmp_path, mode, variant, filename):
+    builder = _load_builder()
+    expected = builder.build_workflow(
+        builder.SOURCE_WORKFLOWS[mode],
+        mode=mode,
+        profile="full",
+        turbo_variant=variant,
+        compute_dtype="fp16_h3_safe",
     )
     generated = builder.write_workflow(expected, tmp_path / filename)
 

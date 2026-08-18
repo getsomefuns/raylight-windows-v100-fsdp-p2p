@@ -9,6 +9,7 @@ from raylight.comfy_dist.fsdp_utils import (
     collect_scalar_ignored_params,
 )
 from raylight.comfy_dist.kitchen_patches.fp8 import (
+    fp8_linear_fallback_chunked,
     install_fp8_patches,
     restore_fp8_patches,
 )
@@ -89,6 +90,31 @@ class MiniMaxH3FSDPQuantTests(unittest.TestCase):
         )
 
         self.assertIsNone(select_fsdp_mixed_precision_policy(model_patcher))
+
+    def test_v100_safe_fp16_compute_keeps_fp8_storage_without_bf16_mixed_policy(self):
+        model_patcher = types.SimpleNamespace(
+            model=types.SimpleNamespace(manual_cast_dtype=torch.float16)
+        )
+        qweight = torch.tensor(
+            [[1.0, -2.0], [0.5, 3.0]], dtype=torch.float8_e4m3fn
+        )
+        original_storage = qweight.clone()
+        x = torch.tensor([[2.0, -1.0]], dtype=torch.float16)
+
+        result = fp8_linear_fallback_chunked(
+            x,
+            qweight,
+            torch.tensor(0.5, dtype=torch.float32),
+            None,
+            torch.float16,
+            max_temp_bytes=16,
+        )
+
+        self.assertIsNone(select_fsdp_mixed_precision_policy(model_patcher))
+        self.assertEqual(qweight.dtype, torch.float8_e4m3fn)
+        torch.testing.assert_close(qweight.float(), original_storage.float())
+        self.assertEqual(result.dtype, torch.float16)
+        self.assertTrue(torch.isfinite(result).all())
 
     def test_dual_v100_minimax_hybrid_topology_is_accepted(self):
         config = {
