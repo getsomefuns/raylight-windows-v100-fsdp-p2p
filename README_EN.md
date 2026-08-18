@@ -170,7 +170,7 @@ A page file can delay a host OOM, but paging can stall one rank, slow sampling s
 | Driver model | both GPUs in TCC; WDDM is not a release configuration |
 | GPU transport | CUDA peer access, CUDA IPC, and cross-process CUDA events |
 | Ray topology | two workers / two ranks |
-| FSDP topology | LTX uses CPU Offload=false; full MiniMax H3 uses CPU Offload=true; both use FSDP=true, Ulysses/Ring/CFG=0, DP=1 |
+| FSDP topology | LTX uses CPU Offload=false and Ulysses/Ring/CFG=0/0/0; full MiniMax H3 uses CPU Offload=true and 2/1/1; both use FSDP=true and DP=1 |
 | Supported collectives | two-rank CUDA `all_gather_into_tensor` and `all_to_all_single` |
 | Sharding scope | validated LTX 2.3 and MiniMax H3 Diffusion Models |
 
@@ -371,12 +371,13 @@ These results prove sharding, dual-GPU computation, and correct output. LTX perf
 | Turbo workflows | loadable Turbo8 I2V and Turbo4 REF2VA workflows pass node/API validation |
 | Accepted full profiles | I2V 640x640/56 frames; REF2VA 864x480/124 frames |
 | Current compute policy | FP8 storage with FP32 V100 diffusion compute |
-| O6 | not implemented; first run matched 1120x768/124-frame/24-FPS local baselines |
+| O6 | Task 0 matched local baselines complete; safe FP16 is not implemented |
 | O7 | preliminary model-specific safe-FP16 research for LTX/LTXAV after O6 |
 
-The accepted O5 cold Turbo records are 387.98 s for I2V Turbo8 and 424.59 s for REF2VA Turbo4. They document O5 and are not O6 denominators. O6 compares only with the new matched local baselines: stable sampling must be strictly more than 11x faster, while model load, preprocessing, VAE decode, and media write must not regress.
+The matched local FP32 baselines are now locked. I2V Turbo8 takes 1463.67 s end to end and 160.72 s/it; REF2VA Turbo4 takes 932.03 s and 185.20 s/it. Safe FP16 must be below 14.6109 and 16.8367 s/it respectively to be strictly more than 11x faster. Model load, preprocessing, VAE decode, and media write must not regress. Older O5 geometry is not an O6 denominator.
 
 - [MiniMax validation summary](docs/testing/minimax-h3/README.md)
+- [O6 matched local FP32 baseline](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md)
 - [Turbo workflow usage](docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md)
 - [O6 implementation and baseline plan](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md)
 - [O7 preliminary LTX research plan](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
@@ -407,7 +408,7 @@ A playable file, non-black pixels, and absence of NaN/Inf are only basic gates. 
 - Gloo shows a host name or wrong adapter: pass `-GlooHost <physical-adapter-ip>`; do not hard-code a development-machine address in shared scripts.
 - P2P below 50 GiB/s: check TCC, active NVLink links, peer access, topology, and competing GPU processes.
 - VAE `operation not supported`: retain `--disable-cuda-malloc`.
-- FSDP error: use the matching repository workflow with `GPU=2`, `FSDP=true`, `Ulysses/Ring/CFG=0`, and `DP=1`; accepted LTX uses CPU Offload=false, while full MiniMax H3 uses CPU Offload=true.
+- FSDP error: use the matching repository workflow with `GPU=2`, `FSDP=true`, and `DP=1`; accepted LTX uses CPU Offload=false with Ulysses/Ring/CFG=0/0/0, while full MiniMax H3 uses CPU Offload=true with 2/1/1.
 
 ## Repository layout
 

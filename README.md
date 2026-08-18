@@ -229,7 +229,7 @@ CPU offload 数据可能进入页面文件。页面文件可以推迟 OOM，但�
 | 驱动模式 | 两卡均为 TCC；WDDM 未支持、未验证 |
 | GPU 通信 | CUDA peer access、CUDA IPC、跨进程 CUDA Event 可用 |
 | Ray worker | 两个 worker / 两个 rank |
-| 已验收 FSDP 配置 | LTX：CPU Offload=false；MiniMax H3 完整工作流：CPU Offload=true；均为 FSDP=true、Ulysses/Ring/CFG=0、DP=1 |
+| 已验收 FSDP 配置 | LTX：CPU Offload=false、Ulysses/Ring/CFG=0/0/0；MiniMax H3 完整工作流：CPU Offload=true、Ulysses/Ring/CFG=2/1/1；均为 FSDP=true、DP=1 |
 | Collective | 双 rank CUDA `all_gather_into_tensor` 与 `all_to_all_single` |
 | FSDP 范围 | 已验证的 LTX 2.3 与 MiniMax H3 Diffusion Model；Text Encoder、VAE、Upscaler 不分片 |
 
@@ -555,12 +555,13 @@ FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性�
 | Turbo 工作流 | 可直接载入的 Turbo8 I2V 与 Turbo4 REF2VA 已生成并通过节点/API 检查 |
 | 已验收完整规格 | I2V 640x640、56 帧；REF2VA 864x480、124 帧 |
 | 当前计算策略 | FP8 仅用于存储；V100 扩散计算回退 FP32 |
-| O6 | 尚未开发；先运行 1120x768、124 帧、24 FPS 的两套本机 FP32 对照组 |
+| O6 | Task 0 本机基线已完成；安全 FP16 尚未开发 |
 | O7 | LTX/LTXAV 模型专用安全 FP16 预研，等待 O6 结束后校正 |
 
-现有完整 Turbo 冷启动记录为：I2V Turbo8 387.98 秒，REF2VA Turbo4 424.59 秒。这些旧规格结果用于说明 O5 已完成，不作为 O6 的速度分母。O6 只与即将运行的同规格本机基线比较：采样稳定速度必须严格超过基线 11 倍，模型加载、预处理、VAE 解码和视频保存均不得慢于对应基线。
+O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒、采样 160.72 s/it；REF2VA Turbo4 端到端 932.03 秒、采样 185.20 s/it。安全 FP16 必须分别低于 14.6109 和 16.8367 s/it，才算严格超过 11 倍；模型加载、预处理、VAE 解码和视频保存也不得慢于对应基线。O5 的旧规格记录不作为 O6 分母。
 
 - MiniMax 验证汇总：[docs/testing/minimax-h3/README.md](docs/testing/minimax-h3/README.md)
+- O6 本机 FP32 基线：[docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md)
 - Turbo 使用说明：[docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md](docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md)
 - O6 计划：[docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md)
 - O7 预研：[docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
@@ -612,7 +613,7 @@ Invoke-WebRequest http://127.0.0.1:8188/ -UseBasicParsing
 ### 启用了 FSDP 后报错
 
 先确认当前检出的是 `windows-v100-fsdp-p2p`，而不是已发布的上一阶段 P2P/Ulysses
-分支。使用对应的 FSDP 示例工作流，保持 GPU=2、FSDP=true、Ulysses/Ring/CFG=0、DP=1；
+分支。使用对应的 FSDP 示例工作流：LTX 保持 Ulysses/Ring/CFG=0/0/0，MiniMax H3 保持 2/1/1；两者均为 GPU=2、FSDP=true、DP=1；
 LTX 已验收工作流使用 FSDP_CPU_OFFLOAD=false，MiniMax H3 完整工作流使用 true。并查看
 [Windows FSDP 测试记录](docs/WINDOWS_V100_FSDP_TESTING.md)中的准入条件和已知限制。
 
@@ -643,7 +644,7 @@ raylight/
 
 ## 后续优化方向
 
-- O6 开发前先同步 O1-O5，并建立两套 1120x768、124 帧、24 FPS 的本机 FP32 对照组。
+- O6 的 O1-O5 同步与两套 1120x768、124 帧、24 FPS 本机 FP32 对照组已完成。
 - O6 为 MiniMax H3 增加显式安全 FP16 路径；采样速度以同规格本机基线为分母，验收要求严格高于 11 倍，其他阶段不得回退。
 - O7 评估 LTX/LTXAV 模型专用 FP32 数值岛与 FP16 矩阵计算，不启用全局 LTX FP16。
 - 分析 CUDA P2P 微基准约 108 GiB/s、项目探针约 59 GiB/s 与 FSDP 实际 all-gather 的差距。

@@ -86,14 +86,14 @@ for both workflows. The actual numeric limits are written into the validation re
 
 ### Task 0: Synchronize O1-O5 and lock the matched local baseline
 
-- [ ] Reconcile `README.md`, `README_EN.md`, implementation plans and MiniMax validation summaries with the code and workflows already accepted through O5.
-- [ ] Run the complete test suite, commit the reconciled repository state and push the public `main` branch before O6 implementation.
-- [ ] Generate isolated benchmark copies of Turbo8 I2V and Turbo4 REF2VA at 1120x768, 124 frames and 24 FPS without changing the accepted O5 GUI workflows.
-- [ ] Start each workflow from an idle GPU/Ray/ComfyUI state and run one complete cold job.
-- [ ] Record total, preprocessing, worker/model load, each sampler's first/stable/aggregate `s/it`, VAE decode, media save, VRAM/utilization/power, host RAM/commit/pagefile and P2P/rank evidence.
-- [ ] Validate dimensions, frame count, video/audio streams, non-black temporal variation and finite outputs.
-- [ ] Write the concise baseline table and the calculated per-workflow `B_i / 11` sampling thresholds to `docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md`; keep raw evidence local.
-- [ ] Do not begin Task 1 until both baselines are complete and their data is internally consistent.
+- [x] Reconcile `README.md`, `README_EN.md`, implementation plans and MiniMax validation summaries with the code and workflows already accepted through O5.
+- [x] Run the complete test suite, commit the reconciled repository state and push the public `main` branch before O6 implementation.
+- [x] Generate isolated benchmark copies of Turbo8 I2V and Turbo4 REF2VA at 1120x768, 124 frames and 24 FPS without changing the accepted O5 GUI workflows.
+- [x] Start each workflow from an idle GPU/Ray/ComfyUI state and run one complete cold job.
+- [x] Record total, preprocessing, worker/model load, each sampler's first/stable/aggregate `s/it`, VAE decode, media save, VRAM/utilization/power, host RAM/commit/pagefile and P2P/rank evidence.
+- [x] Validate dimensions, frame count, video/audio streams, non-black temporal variation and finite outputs.
+- [x] Write the concise baseline table and the calculated per-workflow `B_i / 11` sampling thresholds to `docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md`; keep raw evidence local.
+- [x] Do not begin Task 1 until both baselines are complete and their data is internally consistent.
 
 ### Task 1: Lock numerical and activation contracts with failing tests
 
@@ -165,4 +165,4 @@ SAFE_FP16_LOADER_VALUE = "fp16_h3_safe"
 
 ## Current gate
 
-O6 architecture is approved, but implementation remains blocked on Task 0: repository synchronization and the two matched local baseline runs. No O6 source-code change begins before that evidence is complete.
+Task 0 is complete. The matched local FP32 baselines and strict 11x boundaries are recorded in `docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md`. Task 1 is now permitted but has not started.
