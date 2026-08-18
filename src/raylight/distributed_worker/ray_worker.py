@@ -65,6 +65,7 @@ from raylight.distributed_worker.windows_p2p import (
 )
 from raylight.comfy_dist.quant_ops import patch_temp_fix_ck_ops
 from raylight.comfy_dist.fsdp_utils import summarize_fsdp_parameters
+from raylight.comfy_dist.model_patcher import close_fsdp_cpu_offload_host_memory
 from raylight.comfy_dist.minimax_h3_fp16 import (
     minimax_h3_safe_fp16_construction,
     prepare_minimax_h3_safe_fp16_worker,
@@ -74,6 +75,61 @@ from ray.exceptions import RayActorError
 
 
 _WORKER_AIMDO_INIT_ATTEMPTED = False
+
+
+def _release_fsdp_host_registration_after_sampling(
+    worker,
+    *,
+    synchronize_fn=None,
+    close_fn=None,
+):
+    if worker.parallel_dict.get("is_fsdp") is not True:
+        return
+    if synchronize_fn is None:
+        synchronize_fn = torch.cuda.synchronize
+    if close_fn is None:
+        close_fn = close_fsdp_cpu_offload_host_memory
+
+    base_model = getattr(worker.model, "model", worker.model)
+    diffusion_model = getattr(base_model, "diffusion_model", base_model)
+    if getattr(diffusion_model, "_raylight_fsdp_host_registration", None) is None:
+        return
+
+    active_exception = sys.exc_info()[0] is not None
+    try:
+        synchronize_fn()
+    except BaseException as sync_error:
+        if active_exception:
+            print(
+                "[FSDP_HOST_REGISTER] CUDA synchronize failed during exception cleanup; "
+                f"registration retained: {type(sync_error).__name__}: {sync_error}",
+                flush=True,
+            )
+            return
+        raise
+
+    try:
+        close_fn(base_model)
+    except BaseException as close_error:
+        if active_exception:
+            print(
+                "[FSDP_HOST_REGISTER] close failed during exception cleanup; "
+                f"original error preserved: {type(close_error).__name__}: {close_error}",
+                flush=True,
+            )
+            return
+        raise
+
+
+def _scoped_fsdp_host_registration(method):
+    @functools.wraps(method)
+    def wrapped(worker, *args, **kwargs):
+        try:
+            return method(worker, *args, **kwargs)
+        finally:
+            _release_fsdp_host_registration_after_sampling(worker)
+
+    return wrapped
 
 def windows_p2p_health_iterations(
     size_bytes,
@@ -1501,6 +1557,7 @@ class RayWorker:
     def ray_seedvr2_vae_decode_partial(self, samples, tile_size, overlap=64, job_rank=0, job_world_size=1):
         return ray_seedvr2_vae_decode_partial_impl(self, samples, tile_size, overlap, job_rank, job_world_size)
 
+    @_scoped_fsdp_host_registration
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
     @patch_enable_comfy_kitchen_fsdp
@@ -1575,9 +1632,10 @@ class RayWorker:
         if self.local_rank == 0:
             disable_pbar = not comfy_utils.PROGRESS_BAR_ENABLED
 
-        with torch.no_grad():
-            _raylight_rank_diag(self, invocation, "sample_begin")
-            samples = run_with_optional_profile(
+        try:
+            with torch.no_grad():
+                _raylight_rank_diag(self, invocation, "sample_begin")
+                samples = run_with_optional_profile(
                 lambda: guider.sample(
                     noise,
                     latent_image,
@@ -1591,25 +1649,26 @@ class RayWorker:
                 rank=self.local_rank,
                 invocation=invocation,
             )
-            _raylight_rank_diag(self, invocation, "sample_returned")
-            samples = samples.to(comfy_model_management.intermediate_device())
+                _raylight_rank_diag(self, invocation, "sample_returned")
+                samples = samples.to(comfy_model_management.intermediate_device())
 
-            out = latent.copy()
-            out.pop("downscale_ratio_spacial", None)
-            out.pop("downscale_ratio_temporal", None)
-            out["samples"] = samples
+                out = latent.copy()
+                out.pop("downscale_ratio_spacial", None)
+                out.pop("downscale_ratio_temporal", None)
+                out["samples"] = samples
 
-            if "x0" in x0_output:
-                x0 = x0_output["x0"]
-                if samples.is_nested and not x0.is_nested:
-                    latent_shapes = [x.shape for x in samples.unbind()]
-                    x0 = comfy_nested_tensor.NestedTensor(comfy_utils.unpack_latents(x0, latent_shapes))
-                x0_out = guider.model_patcher.model.process_latent_out(x0.cpu())
-                out_denoised = latent.copy()
-                out_denoised["samples"] = x0_out
-            else:
-                out_denoised = out
-
+                if "x0" in x0_output:
+                    x0 = x0_output["x0"]
+                    if samples.is_nested and not x0.is_nested:
+                        latent_shapes = [x.shape for x in samples.unbind()]
+                        x0 = comfy_nested_tensor.NestedTensor(comfy_utils.unpack_latents(x0, latent_shapes))
+                    x0_out = guider.model_patcher.model.process_latent_out(x0.cpu())
+                    out_denoised = latent.copy()
+                    out_denoised["samples"] = x0_out
+                else:
+                    out_denoised = out
+        finally:
+            _release_fsdp_host_registration_after_sampling(self)
         try:
             self.model.cleanup()
         except Exception:
@@ -1622,6 +1681,7 @@ class RayWorker:
             return self._grouped_sampling_result(result)
         return result
 
+    @_scoped_fsdp_host_registration
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
     @patch_enable_comfy_kitchen_fsdp
@@ -1761,6 +1821,7 @@ class RayWorker:
             if self.local_rank == 0:
                 print(f"[Rank {self.local_rank}] VAE cache freed")
 
+    @_scoped_fsdp_host_registration
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
     @patch_enable_comfy_kitchen_fsdp

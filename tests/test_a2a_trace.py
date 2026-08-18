@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import types
 import unittest
 from unittest import mock
 import sys
@@ -171,6 +172,112 @@ class A2ATraceTests(unittest.TestCase):
             "destroy_group",
             "exit_actor",
         ])
+
+    def test_sampler_releases_host_registration_before_worker_returns(self):
+        source = MODULE_PATH.with_name("ray_worker.py").read_text(encoding="utf-8")
+        advanced_start = source.index("    def custom_sampler_advanced(")
+        custom_start = source.index("    def custom_sampler(", advanced_start)
+
+        advanced_source = source[advanced_start:custom_start]
+        self.assertIn("finally:", advanced_source)
+        self.assertIn(
+            "_release_fsdp_host_registration_after_sampling(self)",
+            advanced_source,
+        )
+        self.assertLess(
+            advanced_source.index("_release_fsdp_host_registration_after_sampling(self)"),
+            advanced_source.index("sampler_return"),
+        )
+        self.assertEqual(source.count("@_scoped_fsdp_host_registration"), 3)
+
+    def test_host_registration_release_synchronizes_before_close(self):
+        comfy_root = MODULE_PATH.parents[5]
+        raylight_src = MODULE_PATH.parents[2]
+        sys.path[:0] = [str(comfy_root), str(raylight_src)]
+        try:
+            from raylight.distributed_worker import ray_worker
+        finally:
+            del sys.path[:2]
+
+        events = []
+        base_model = types.SimpleNamespace(
+            _raylight_fsdp_host_registration=object()
+        )
+        worker = types.SimpleNamespace(
+            parallel_dict={"is_fsdp": True},
+            model=types.SimpleNamespace(model=base_model),
+        )
+
+        ray_worker._release_fsdp_host_registration_after_sampling(
+            worker,
+            synchronize_fn=lambda: events.append("synchronize"),
+            close_fn=lambda model: events.append(("close", model)),
+        )
+
+        self.assertEqual(events, ["synchronize", ("close", base_model)])
+
+    def test_host_registration_release_does_not_mask_sampling_exception(self):
+        comfy_root = MODULE_PATH.parents[5]
+        raylight_src = MODULE_PATH.parents[2]
+        sys.path[:0] = [str(comfy_root), str(raylight_src)]
+        try:
+            from raylight.distributed_worker import ray_worker
+        finally:
+            del sys.path[:2]
+
+        events = []
+        worker = types.SimpleNamespace(
+            parallel_dict={"is_fsdp": True},
+            model=types.SimpleNamespace(
+                model=types.SimpleNamespace(
+                    _raylight_fsdp_host_registration=object()
+                )
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "sampling failed"):
+            try:
+                raise ValueError("sampling failed")
+            finally:
+                ray_worker._release_fsdp_host_registration_after_sampling(
+                    worker,
+                    synchronize_fn=lambda: (_ for _ in ()).throw(
+                        RuntimeError("sync failed")
+                    ),
+                    close_fn=lambda _model: events.append("close"),
+                )
+
+        self.assertEqual(events, [])
+
+    def test_host_registration_release_propagates_sync_error_without_unreg(self):
+        comfy_root = MODULE_PATH.parents[5]
+        raylight_src = MODULE_PATH.parents[2]
+        sys.path[:0] = [str(comfy_root), str(raylight_src)]
+        try:
+            from raylight.distributed_worker import ray_worker
+        finally:
+            del sys.path[:2]
+
+        events = []
+        worker = types.SimpleNamespace(
+            parallel_dict={"is_fsdp": True},
+            model=types.SimpleNamespace(
+                model=types.SimpleNamespace(
+                    _raylight_fsdp_host_registration=object()
+                )
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "sync failed"):
+            ray_worker._release_fsdp_host_registration_after_sampling(
+                worker,
+                synchronize_fn=lambda: (_ for _ in ()).throw(
+                    RuntimeError("sync failed")
+                ),
+                close_fn=lambda _model: events.append("close"),
+            )
+
+        self.assertEqual(events, [])
 
 
 if __name__ == "__main__":

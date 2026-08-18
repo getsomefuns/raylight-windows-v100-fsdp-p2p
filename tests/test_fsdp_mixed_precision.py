@@ -243,6 +243,12 @@ class FSDPMixedPrecisionTests(unittest.TestCase):
             "maybe_register_fsdp_cpu_offload_host_memory",
             inspect.getsource(patch_fsdp),
         )
+        self.assertGreaterEqual(
+            inspect.getsource(patch_fsdp).count(
+                "maybe_register_fsdp_cpu_offload_host_memory"
+            ),
+            2,
+        )
         self.assertIn(
             "close_fsdp_cpu_offload_host_memory",
             inspect.getsource(FSDPModelPatcher.free_fsdp_vram),

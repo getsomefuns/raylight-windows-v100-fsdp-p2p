@@ -421,6 +421,10 @@ def patch_fsdp(self):
     if isinstance(self.model.diffusion_model, FSDPModule):
         if self.fsdp_state_dict is not None:
             raise RuntimeError("FSDP initialization previously failed; reload the Raylight model before sampling again")
+        maybe_register_fsdp_cpu_offload_host_memory(
+            self.model.diffusion_model,
+            is_cpu_offload=self.is_cpu_offload,
+        )
         print("FSDP already registered, skip wrapping...")
         return self.model
 
