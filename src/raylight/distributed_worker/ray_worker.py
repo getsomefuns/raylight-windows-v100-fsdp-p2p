@@ -69,6 +69,7 @@ from raylight.comfy_dist.minimax_h3_fp16 import (
     minimax_h3_safe_fp16_construction,
     prepare_minimax_h3_safe_fp16_worker,
 )
+from raylight.distributed_worker.sampling_profiler import run_with_optional_profile
 from ray.exceptions import RayActorError
 
 
@@ -1576,15 +1577,19 @@ class RayWorker:
 
         with torch.no_grad():
             _raylight_rank_diag(self, invocation, "sample_begin")
-            samples = guider.sample(
-                noise,
-                latent_image,
-                sampler,
-                sigmas,
-                denoise_mask=noise_mask,
-                callback=callback,
-                disable_pbar=disable_pbar,
-                seed=sampling_seed,
+            samples = run_with_optional_profile(
+                lambda: guider.sample(
+                    noise,
+                    latent_image,
+                    sampler,
+                    sigmas,
+                    denoise_mask=noise_mask,
+                    callback=callback,
+                    disable_pbar=disable_pbar,
+                    seed=sampling_seed,
+                ),
+                rank=self.local_rank,
+                invocation=invocation,
             )
             _raylight_rank_diag(self, invocation, "sample_returned")
             samples = samples.to(comfy_model_management.intermediate_device())
