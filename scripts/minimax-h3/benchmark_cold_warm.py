@@ -435,7 +435,13 @@ def request_json(url: str, payload=None, timeout=30):
         raise RuntimeError(f"HTTP {exc.code} from {url}: {body}") from exc
 
 
-def server_environment(base: dict | None = None) -> dict:
+def server_environment(
+    base: dict | None = None,
+    *,
+    p2p_capacity_bytes: int = P2P_CAPACITY_BYTES,
+) -> dict:
+    if p2p_capacity_bytes <= 0:
+        raise ValueError("p2p_capacity_bytes must be positive")
     environment = dict(os.environ if base is None else base)
     environment.update(
         {
@@ -452,7 +458,7 @@ def server_environment(base: dict | None = None) -> dict:
             "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128",
             "CUDA_VISIBLE_DEVICES": "0,1",
             "RAYLIGHT_WINDOWS_P2P": "1",
-            "RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES": str(P2P_CAPACITY_BYTES),
+            "RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES": str(int(p2p_capacity_bytes)),
             "RAYLIGHT_WINDOWS_P2P_MIN_GIB_S": "50",
             "RAYLIGHT_WINDOWS_P2P_TIMEOUT_SECONDS": "10",
             "RAYLIGHT_P2P_PROFILE": "1",
@@ -966,7 +972,11 @@ def run_benchmark(
     duration: float | None = None,
     fps: int | None = None,
     expected_frames: int | None = None,
+    p2p_capacity_mib: int = P2P_CAPACITY_BYTES // 2**20,
 ) -> Path:
+    if p2p_capacity_mib <= 0:
+        raise ValueError("p2p_capacity_mib must be positive")
+    p2p_capacity_bytes = int(p2p_capacity_mib) * 2**20
     geometry_values = (width, height, duration, fps, expected_frames)
     if any(value is not None for value in geometry_values) and not all(
         value is not None for value in geometry_values
@@ -1034,6 +1044,7 @@ def run_benchmark(
         "steps": steps,
         "lora": lora_identity,
         "runtime_identity": runtime_identity,
+        "p2p_capacity_bytes": p2p_capacity_bytes,
         "geometry": (
             {
                 "width": geometry["width"],
@@ -1053,7 +1064,7 @@ def run_benchmark(
         process = subprocess.Popen(
             command,
             cwd=COMFY_ROOT,
-            env=server_environment(),
+            env=server_environment(p2p_capacity_bytes=p2p_capacity_bytes),
             stdout=stdout,
             stderr=stderr,
             creationflags=subprocess.CREATE_NO_WINDOW,
@@ -1213,11 +1224,19 @@ def parse_args(argv=None):
     parser.add_argument("--duration", type=float)
     parser.add_argument("--fps", type=int)
     parser.add_argument("--expected-frames", type=int)
+    parser.add_argument(
+        "--p2p-capacity-mib",
+        type=int,
+        default=P2P_CAPACITY_BYTES // 2**20,
+        help="per-rank Windows CUDA P2P IPC buffer capacity in MiB",
+    )
     args = parser.parse_args(argv)
     if args.runs < 1:
         raise ValueError("runs must be positive")
     if args.steps is not None and args.steps < 1:
         raise ValueError("steps must be positive")
+    if args.p2p_capacity_mib < 1:
+        raise ValueError("--p2p-capacity-mib must be positive")
     geometry_values = (args.width, args.height, args.duration, args.fps, args.expected_frames)
     if any(value is not None for value in geometry_values) and not all(
         value is not None for value in geometry_values
@@ -1248,6 +1267,7 @@ def main() -> int:
             duration=args.duration,
             fps=args.fps,
             expected_frames=args.expected_frames,
+            p2p_capacity_mib=args.p2p_capacity_mib,
         )
     )
     return 0

@@ -125,6 +125,13 @@ def test_server_environment_enables_native_windows_p2p():
     assert environment["USE_LIBUV"] == "0"
     assert environment["RAYLIGHT_GLOO_HOST"] == "127.0.0.1"
 
+
+def test_server_environment_accepts_explicit_p2p_capacity():
+    environment = benchmark.server_environment({}, p2p_capacity_bytes=256 * 2**20)
+
+    assert environment["RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES"] == "268435456"
+
+
 def test_configure_prompt_geometry_uses_exact_dimensions_duration_and_fps():
     prompt = {
         "10": {
@@ -299,6 +306,8 @@ def test_parse_args_accepts_exact_baseline_geometry():
             "24",
             "--expected-frames",
             "124",
+            "--p2p-capacity-mib",
+            "256",
         ]
     )
 
@@ -307,3 +316,4 @@ def test_parse_args_accepts_exact_baseline_geometry():
     assert args.duration == 5.0
     assert args.fps == 24
     assert args.expected_frames == 124
+    assert args.p2p_capacity_mib == 256
