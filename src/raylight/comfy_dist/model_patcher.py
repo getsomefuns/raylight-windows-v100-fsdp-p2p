@@ -22,7 +22,6 @@ from raylight import comfy_dist
 from .fsdp_utils import (
     format_fsdp_diagnostics,
     align_fp8_logical_dtype,
-    configure_minimax_h3_forward_prefetch,
     freeze_and_detect_qt,
     fully_shard_bottom_up,
     load_from_full_model_state_dict,
@@ -532,24 +531,6 @@ def patch_fsdp(self):
     )
 
     _pre_init_fsdp(diffusion_model)
-    if self.is_cpu_offload:
-        try:
-            prefetch_mib = int(os.environ.get("RAYLIGHT_FSDP_FORWARD_PREFETCH_MIB", "0"))
-        except ValueError as exc:
-            raise ValueError("RAYLIGHT_FSDP_FORWARD_PREFETCH_MIB must be an integer") from exc
-        if prefetch_mib < 0:
-            raise ValueError("RAYLIGHT_FSDP_FORWARD_PREFETCH_MIB must be non-negative")
-        if prefetch_mib:
-            prefetch = configure_minimax_h3_forward_prefetch(
-                diffusion_model,
-                max_prefetch_bytes=prefetch_mib * 1024 * 1024,
-            )
-            print(
-                "[FSDP_FORWARD_PREFETCH] "
-                f"budget={prefetch_mib}MiB configured={prefetch['configured']} "
-                f"skipped={prefetch['skipped']} "
-                f"max_target={prefetch['max_configured_bytes'] / 1024 / 1024:.2f}MiB"
-            )
     if os.environ.get("RAYLIGHT_RANK_DIAG", "0") == "1":
         adaln = getattr(diffusion_model, "adaln_single", None)
         linear = getattr(adaln, "linear", None)
