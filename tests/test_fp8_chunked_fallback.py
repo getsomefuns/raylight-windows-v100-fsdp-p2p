@@ -45,6 +45,71 @@ class FP8ChunkedFallbackTests(unittest.TestCase):
         torch.testing.assert_close(actual, expected)
         self.assertEqual(weight_rows, [2, 2, 2])
 
+    def test_linear_fallback_aligns_output_chunks_for_v100_tensor_cores(self):
+        input_tensor = torch.randn(3, 17, dtype=torch.float16)
+        qweight = torch.randn(40, 17, dtype=torch.float16)
+        expected = F.linear(input_tensor, qweight * 0.5)
+        original_linear = F.linear
+        weight_rows = []
+
+        def tracking_linear(value, weight, chunk_bias=None):
+            weight_rows.append(weight.shape[0])
+            return original_linear(value, weight, chunk_bias)
+
+        with (
+            mock.patch(
+                "raylight.comfy_dist.kitchen_patches.fp8.torch.nn.functional.linear",
+                side_effect=tracking_linear,
+            ),
+            mock.patch(
+                "raylight.comfy_dist.kitchen_patches.fp8.should_use_v100_chunked_fp8",
+                return_value=True,
+            ),
+        ):
+            actual = fp8_linear_fallback_chunked(
+                input_tensor,
+                qweight,
+                0.5,
+                None,
+                torch.float16,
+                max_temp_bytes=510,
+            )
+
+        self.assertGreater(len(weight_rows), 1)
+        self.assertTrue(all(width % 8 == 0 for width in weight_rows))
+        torch.testing.assert_close(actual, expected)
+
+    def test_linear_fallback_does_not_align_non_v100_or_non_fp16_chunks(self):
+        input_tensor = torch.randn(3, 17, dtype=torch.float16)
+        qweight = torch.randn(40, 17, dtype=torch.float16)
+        original_linear = F.linear
+        weight_rows = []
+
+        def tracking_linear(value, weight, chunk_bias=None):
+            weight_rows.append(weight.shape[0])
+            return original_linear(value, weight, chunk_bias)
+
+        with (
+            mock.patch(
+                "raylight.comfy_dist.kitchen_patches.fp8.torch.nn.functional.linear",
+                side_effect=tracking_linear,
+            ),
+            mock.patch(
+                "raylight.comfy_dist.kitchen_patches.fp8.should_use_v100_chunked_fp8",
+                return_value=False,
+            ),
+        ):
+            fp8_linear_fallback_chunked(
+                input_tensor,
+                qweight,
+                0.5,
+                None,
+                torch.float16,
+                max_temp_bytes=510,
+            )
+
+        self.assertEqual(weight_rows, [12, 12, 12, 4])
+
     def test_addmm_fallback_chunks_quantized_rhs_columns_with_bias(self):
         left = torch.arange(20, dtype=torch.float32).reshape(5, 4) / 10
         qright = torch.arange(24, dtype=torch.float32).reshape(4, 6) / 20
@@ -73,6 +138,83 @@ class FP8ChunkedFallbackTests(unittest.TestCase):
 
         torch.testing.assert_close(actual, expected)
         self.assertEqual(right_columns, [2, 2, 2])
+
+    def test_addmm_alignment_preserves_broadcast_bias_and_tail_chunk(self):
+        left = torch.randn(3, 4, dtype=torch.float16)
+        qright = torch.randn(4, 9, dtype=torch.float16)
+        bias = torch.randn(3, 1, dtype=torch.float16)
+        expected = torch.addmm(bias, left, qright * 0.5)
+        original_addmm = torch.addmm
+        right_columns = []
+
+        def tracking_addmm(chunk_bias, a, b):
+            right_columns.append(b.shape[1])
+            return original_addmm(chunk_bias, a, b)
+
+        with (
+            mock.patch(
+                "raylight.comfy_dist.kitchen_patches.fp8.torch.addmm",
+                side_effect=tracking_addmm,
+            ),
+            mock.patch(
+                "raylight.comfy_dist.kitchen_patches.fp8.should_use_v100_chunked_fp8",
+                return_value=True,
+            ),
+        ):
+            actual = fp8_addmm_fallback_chunked(
+                bias,
+                left,
+                qright,
+                0.5,
+                torch.float16,
+                max_temp_bytes=126,
+            )
+
+        self.assertEqual(right_columns, [8, 1])
+        torch.testing.assert_close(actual, expected)
+
+    def test_addmm_alignment_slices_full_bias_with_each_output_chunk(self):
+        left = torch.randn(3, 4, dtype=torch.float16)
+        qright = torch.randn(4, 9, dtype=torch.float16)
+        bias_base = torch.randn(3, 9, dtype=torch.float32)
+        expected = torch.addmm(bias_base.to(torch.float16), left, qright * 0.5)
+        original_addmm = torch.addmm
+        bias_shapes = []
+        bias_to_shapes = []
+
+        class TrackingBias(torch.Tensor):
+            def to(self, *args, **kwargs):
+                bias_to_shapes.append(tuple(self.shape))
+                return super().to(*args, **kwargs)
+
+        bias = bias_base.as_subclass(TrackingBias)
+
+        def tracking_addmm(chunk_bias, a, b):
+            bias_shapes.append(tuple(chunk_bias.shape))
+            return original_addmm(chunk_bias, a, b)
+
+        with (
+            mock.patch(
+                "raylight.comfy_dist.kitchen_patches.fp8.torch.addmm",
+                side_effect=tracking_addmm,
+            ),
+            mock.patch(
+                "raylight.comfy_dist.kitchen_patches.fp8.should_use_v100_chunked_fp8",
+                return_value=True,
+            ),
+        ):
+            actual = fp8_addmm_fallback_chunked(
+                bias,
+                left,
+                qright,
+                0.5,
+                torch.float16,
+                max_temp_bytes=126,
+            )
+
+        self.assertEqual(bias_shapes, [(3, 8), (3, 1)])
+        self.assertEqual(bias_to_shapes, [(3, 8), (3, 1)])
+        torch.testing.assert_close(actual, expected)
 
     def test_chunked_fallback_handles_no_bias(self):
         x = torch.tensor([[1.0, 2.0]], dtype=torch.float32)

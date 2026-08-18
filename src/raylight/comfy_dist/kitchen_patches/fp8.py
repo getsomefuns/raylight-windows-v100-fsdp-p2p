@@ -16,6 +16,23 @@ _ORIG_QT_POST = _MISSING
 _OUTPUT_ALLOC_RETRY_LOGGED = False
 
 
+def _align_v100_fp16_gemm_extent(extent: int, alignment: int = 8) -> int:
+    """Keep V100 FP16 fallback GEMM tiles on Tensor Core-friendly widths."""
+    if extent < alignment:
+        return extent
+    return max(alignment, extent - (extent % alignment))
+
+
+def _maybe_align_v100_fp16_gemm_extent(
+    tensor: torch.Tensor,
+    dtype: torch.dtype,
+    extent: int,
+) -> int:
+    if dtype is not torch.float16 or not should_use_v100_chunked_fp8(tensor):
+        return extent
+    return _align_v100_fp16_gemm_extent(extent)
+
+
 def allocate_output_with_cache_retry(shape, *, device, dtype):
     """Retry one final-output allocation after releasing fragmented cache blocks."""
     global _OUTPUT_ALLOC_RETRY_LOGGED
@@ -80,7 +97,11 @@ def fp8_linear_fallback_chunked(
         1,
         (weight_qdata.shape[-1] + input_rows) * torch.empty((), dtype=dtype).element_size(),
     )
-    outputs_per_chunk = max(1, max_temp_bytes // temp_bytes_per_output)
+    outputs_per_chunk = _maybe_align_v100_fp16_gemm_extent(
+        input_tensor,
+        dtype,
+        max(1, max_temp_bytes // temp_bytes_per_output),
+    )
     scale_value = scale
     if isinstance(scale_value, torch.Tensor):
         scale_value = scale_value.to(device=weight_qdata.device, dtype=dtype)
@@ -130,16 +151,25 @@ def fp8_addmm_fallback_chunked(
         1,
         (right_qdata.shape[0] + left.shape[0]) * torch.empty((), dtype=dtype).element_size(),
     )
-    columns_per_chunk = max(1, max_temp_bytes // temp_bytes_per_output)
+    columns_per_chunk = _maybe_align_v100_fp16_gemm_extent(
+        left,
+        dtype,
+        max(1, max_temp_bytes // temp_bytes_per_output),
+    )
     scale_value = scale
     if isinstance(scale_value, torch.Tensor):
         scale_value = scale_value.to(device=right_qdata.device, dtype=dtype)
+
+    broadcast_bias = torch.broadcast_to(
+        bias,
+        (left.shape[0], output_columns),
+    )
 
     for start in range(0, output_columns, columns_per_chunk):
         end = min(start + columns_per_chunk, output_columns)
         right_chunk = right_qdata[:, start:end].to(dtype=dtype, copy=True)
         right_chunk.mul_(scale_value)
-        bias_chunk = bias[..., start:end].to(device=left.device, dtype=dtype)
+        bias_chunk = broadcast_bias[:, start:end].to(device=left.device, dtype=dtype)
         output_chunk = torch.addmm(bias_chunk, left, right_chunk)
         output[:, start:end].copy_(output_chunk)
 
