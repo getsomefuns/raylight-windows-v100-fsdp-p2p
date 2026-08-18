@@ -146,23 +146,23 @@ SAFE_FP16_LOADER_VALUE = "fp16_h3_safe"
 
 ### Task 5: Run staged CUDA validation
 
-- [ ] Re-run the two-rank model-load probe after the reviewed LoRA projection fix and assert 684 FSDP wrappers per rank, FP8 checkpoint storage, CUDA P2P collectives and no host-staged tensor transport.
-- [ ] Re-run the one-step reduced I2V smoke and record per-rank dtype/storage plus max-absolute and finite diagnostics.
-- [ ] Re-run the matching reduced REF2VA smoke with the Turbo LoRA and the same diagnostics.
-- [ ] Reject immediately on NaN/Inf, black output, rank mismatch, LoRA dtype mismatch, collective fallback or an FP32 attention/MLP branch.
-- [ ] If smoke passes, run one cold full I2V Turbo 8 and one cold full REF2VA Turbo 4 with the accepted O5 inputs and settings.
-- [ ] Record preprocessing, worker/model load, main sampling, sampler total, decode/write, VRAM, GPU utilization, physical/committed memory, pagefile and P2P traffic.
+- [x] Re-run the two-rank model-load probe after the reviewed LoRA projection fix and assert 684 FSDP wrappers per rank, FP8 checkpoint storage, CUDA P2P collectives and no host-staged tensor transport.
+- [x] Re-run the one-step reduced I2V smoke and record per-rank dtype/storage plus max-absolute and finite diagnostics.
+- [x] Re-run the matching reduced REF2VA smoke with the Turbo LoRA and the same diagnostics.
+- [x] Reject immediately on NaN/Inf, black output, rank mismatch, LoRA dtype mismatch, collective fallback or an FP32 attention/MLP branch.
+- [x] If smoke passes, run one cold full I2V Turbo 8 and one cold full REF2VA Turbo 4 with the accepted O5 inputs and settings.
+- [x] Record preprocessing, worker/model load, main sampling, sampler total, decode/write, VRAM, GPU utilization, physical/committed memory, pagefile and P2P traffic.
 
 ### Task 6: Compare, review and release locally
 
-- [ ] Compare safe FP16 against the Task 0 matched FP32-compute baselines using end-to-end and stage times separately; publish measured values without substituting external or projected figures.
-- [ ] Validate video dimensions/frame counts, unique-frame hashes, black detection, finite non-silent audio and same-seed visual behavior.
+- [x] Compare safe FP16 against the Task 0 matched FP32-compute baselines using end-to-end and stage times separately; publish measured values without substituting external or projected figures.
+- [x] Validate video dimensions/frame counts, unique-frame hashes, black detection, finite non-silent audio and same-seed visual behavior.
 - [ ] Require `baseline stable s/it / safe-FP16 stable s/it >= 4.0` for both workflows as the initial gate; separately report progress toward the `11x` optimization target.
 - [ ] Require model load, preprocessing, VAE decode and media-save time to be no slower than their matched baselines, and require improved end-to-end wall time.
-- [ ] Run `py_compile`, the complete pytest suite, workflow hash guards and a code review with zero unresolved High/Medium findings.
-- [ ] Update the O6 status, both READMEs and `docs/testing/minimax-h3/README.md`, then commit the complete consistent state.
+- [ ] Run `py_compile`, the complete pytest suite, workflow hash guards and a code review with zero unresolved High/Medium findings before a public release.
+- [x] Update the O6 status, both READMEs, bilingual upgrade records and `docs/testing/minimax-h3/README.md` to reflect the measured functional/quality pass and open performance gate.
 - [ ] Keep safe FP16 opt-in until every correctness and performance gate passes.
 
 ## Current gate
 
-Tasks 0-4 are implemented and independently reviewed with zero unresolved High/Medium/Low findings. Task 5 starts from a clean deployment commit and re-runs both reduced CUDA smokes before the full-resolution performance/quality runs.
+Tasks 0-5 are implemented. Both reduced smokes and full-resolution I2V/REF2VA runs pass numerical, rank, P2P and media checks. Initial full safe-FP16 speedups are 3.299x and 3.416x; the best optional REF2VA experiment reaches 3.714x. The 4x gate therefore remains open, so the mode stays opt-in. Commit `30cbb69` is the documented runtime freeze point after rejected prefetch and single-ring experiments were fully reverted. See the bilingual records in `docs/releases/` for the complete timing/resource matrix.

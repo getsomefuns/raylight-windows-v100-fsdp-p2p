@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+MiniMax H3 O6 现已加入显式 `fp16_h3_safe` 模式：FP32 数值岛保护残差与敏感输出，主 Attention/MLP 分支使用 FP16。正式 I2V/REF2VA 采样分别达到 3.299×/3.416×，REF2VA 的当前最佳实验配置达到 3.714×；质量验收通过，但 4× 初始门槛尚未通过。完整的实装、资源数据和失败实验见[中文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md)与[英文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md)。
+
 当前实现不是完整的 Windows NCCL，也不是通用 PyTorch `ProcessGroup`。它是针对
 单机、双 rank、Windows V100 推理所需 collective 的定向兼容层。
 
@@ -30,6 +32,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - FSDP 测试与验收：[docs/WINDOWS_V100_FSDP_TESTING.md](docs/WINDOWS_V100_FSDP_TESTING.md)
 - P2P/Ulysses 历史测试：[docs/TESTING.md](docs/TESTING.md)
+- MiniMax H3 O6 安全 FP16 升级记录：[中文](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) / [English](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -184,7 +187,7 @@ Gloo/TCPStore 仍承担 rendezvous、进程组建立、控制和少量不符合�
 | CUDA 数据通信 | NCCL | P2P `all_to_all` | P2P `all_gather`，并保留 `all_to_all` |
 | 支持规模 | NCCL 支持多卡、多机 | 严格双卡、单机 | 严格双卡、单机 |
 | 主要价值 | 通用性和标准实现 | 提升已有模型的采样速度 | 让单卡装不下的模型可以运行 |
-| 当前性能状态 | 随上游模型/硬件而异 | 热对热约快 10.28% | LTX 正确性通过；MiniMax H3 O1-O5 与 Turbo 工作流通过，O6 新基线待测 |
+| 当前性能状态 | 随上游模型/硬件而异 | 热对热约快 10.28% | LTX 正确性通过；MiniMax H3 安全 FP16 功能/质量通过，采样 3.299×–3.714×，4× 门槛未通过 |
 
 原版 Raylight 当前把 LTX 2/2.3/2.5 的 FSDP 标记为“逻辑支持、等待测试”。
 本分支完成了 Windows + 双 V100 的 LTX 2.3 与 MiniMax H3 实际输出验收，但适用范围更窄。
@@ -554,11 +557,11 @@ FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性�
 | Worker 生命周期 | 同 checkpoint 复用；切换 checkpoint 时回收旧 actor，防止提交内存累积 |
 | Turbo 工作流 | 可直接载入的 Turbo8 I2V 与 Turbo4 REF2VA 已生成并通过节点/API 检查 |
 | 已验收完整规格 | I2V 640x640、56 帧；REF2VA 864x480、124 帧 |
-| 当前计算策略 | FP8 仅用于存储；V100 扩散计算回退 FP32 |
-| O6 | Task 0 本机基线已完成；安全 FP16 尚未开发 |
-| O7 | LTX/LTXAV 模型专用安全 FP16 预研，等待 O6 结束后校正 |
+| 当前计算策略 | 默认模式为 FP8 存储、FP32 计算；`fp16_h3_safe` 使用 FP32 数值岛和 FP16 Attention/MLP |
+| O6 | 功能与质量通过；I2V/REF2VA 为 3.299×/3.416×，REF2VA 可选实验最佳 3.714×；4× 门槛未通过 |
+| O7 | LTX/LTXAV 模型专用安全 FP16 预研，等待 O6 性能收尾后校正 |
 
-O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒、采样 160.72 s/it；REF2VA Turbo4 端到端 932.03 秒、采样 185.20 s/it。安全 FP16 必须分别低于 14.6109 和 16.8367 s/it，才算严格超过 11 倍；模型加载、预处理、VAE 解码和视频保存也不得慢于对应基线。O5 的旧规格记录不作为 O6 分母。
+O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒、采样 160.72 s/it；REF2VA Turbo4 端到端 932.03 秒、采样 185.20 s/it。初始 4× 门槛分别为不高于 40.1799 和 46.3008 s/it；当前结果尚未达到。11× 仅保留为后续研究目标，不是当前版本能力。O5 的旧规格记录不作为 O6 分母。
 
 - MiniMax 验证汇总：[docs/testing/minimax-h3/README.md](docs/testing/minimax-h3/README.md)
 - O6 本机 FP32 基线：[docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md)
@@ -644,8 +647,8 @@ raylight/
 
 ## 后续优化方向
 
-- O6 的 O1-O5 同步与两套 1120x768、124 帧、24 FPS 本机 FP32 对照组已完成。
-- O6 为 MiniMax H3 增加显式安全 FP16 路径；采样速度以同规格本机基线为分母，验收要求严格高于 11 倍，其他阶段不得回退。
+- O6 已完成 MiniMax H3 显式安全 FP16 功能和质量适配；继续优化 I2V 3.299×、REF2VA 最佳 3.714× 到双工作流至少 4×。
+- 保留 FP32 数值岛和当前质量门槛；不得用不完整 tqdm 值、microbenchmark 或牺牲同步/媒体正确性替代正式同规格结果。
 - O7 评估 LTX/LTXAV 模型专用 FP32 数值岛与 FP16 矩阵计算，不启用全局 LTX FP16。
 - 分析 CUDA P2P 微基准约 108 GiB/s、项目探针约 59 GiB/s 与 FSDP 实际 all-gather 的差距。
 - 降低 FSDP 逐层 all-gather、LoRA sidecar、Python 控制面和同步开销。

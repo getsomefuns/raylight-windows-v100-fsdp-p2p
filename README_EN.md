@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+MiniMax H3 O6 now includes the explicit `fp16_h3_safe` mode: FP32 numerical islands protect residuals and sensitive outputs while dominant attention/MLP branches use FP16. Full I2V/REF2VA sampling reaches 3.299x/3.416x, and the best current REF2VA experimental configuration reaches 3.714x. Quality gates pass, but the initial 4x gate does not. See the complete [English upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) or [Chinese upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) for shipped changes, resource data, and rejected experiments.
+
 This is not Windows NCCL and not a general PyTorch `ProcessGroup`. It is a targeted compatibility layer for a single machine, exactly two ranks, Windows V100 inference.
 
 ## Upstream and authorship
@@ -20,6 +22,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP test and acceptance record: [docs/WINDOWS_V100_FSDP_TESTING.md](docs/WINDOWS_V100_FSDP_TESTING.md)
 - Historical P2P/Ulysses record: [docs/TESTING.md](docs/TESTING.md)
+- MiniMax H3 O6 safe-FP16 upgrade record: [English](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) / [中文](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -140,7 +143,7 @@ Gloo/TCPStore still handles rendezvous, group creation, barriers, and unmatched 
 | CUDA data path | NCCL | P2P all-to-all | P2P all-gather plus all-to-all |
 | Scale | NCCL multi-GPU/multi-node | exactly two ranks | exactly two ranks |
 | Main value | standard general implementation | faster sampling for models that already fit | run a model that does not fit one 16 GB GPU |
-| Current performance status | model/hardware dependent | 10.28% fair warm-to-warm gain | LTX correctness accepted; MiniMax H3 O1-O5/Turbo accepted; new O6 baseline pending |
+| Current performance status | model/hardware dependent | 10.28% fair warm-to-warm gain | LTX correctness accepted; MiniMax H3 safe-FP16 functionality/quality pass at 3.299x-3.714x sampling, below the 4x gate |
 
 ## Host RAM and page file
 
@@ -370,11 +373,11 @@ These results prove sharding, dual-GPU computation, and correct output. LTX perf
 | Worker lifecycle | same checkpoint reuses actors; changed checkpoints recycle actors and reclaim committed memory |
 | Turbo workflows | loadable Turbo8 I2V and Turbo4 REF2VA workflows pass node/API validation |
 | Accepted full profiles | I2V 640x640/56 frames; REF2VA 864x480/124 frames |
-| Current compute policy | FP8 storage with FP32 V100 diffusion compute |
-| O6 | Task 0 matched local baselines complete; safe FP16 is not implemented |
-| O7 | preliminary model-specific safe-FP16 research for LTX/LTXAV after O6 |
+| Current compute policy | Default uses FP8 storage with FP32 compute; `fp16_h3_safe` uses FP32 numerical islands with FP16 attention/MLP |
+| O6 | Function and quality pass; I2V/REF2VA reach 3.299x/3.416x and optional REF2VA reaches 3.714x; the 4x gate remains open |
+| O7 | preliminary model-specific safe-FP16 research for LTX/LTXAV after O6 performance closure |
 
-The matched local FP32 baselines are now locked. I2V Turbo8 takes 1463.67 s end to end and 160.72 s/it; REF2VA Turbo4 takes 932.03 s and 185.20 s/it. Safe FP16 must be below 14.6109 and 16.8367 s/it respectively to be strictly more than 11x faster. Model load, preprocessing, VAE decode, and media write must not regress. Older O5 geometry is not an O6 denominator.
+The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to end and 160.72 s/it; REF2VA Turbo4 takes 932.03 s and 185.20 s/it. The initial 4x limits are 40.1799 and 46.3008 s/it, and current results remain above them. The 11x value is a later research target, not a current capability. Older O5 geometry is not an O6 denominator.
 
 - [MiniMax validation summary](docs/testing/minimax-h3/README.md)
 - [O6 matched local FP32 baseline](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md)

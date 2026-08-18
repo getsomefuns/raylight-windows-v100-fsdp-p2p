@@ -1,4 +1,4 @@
-# MiniMax H3 O6 Matched FP32 Baseline — 2026-08-18
+# MiniMax H3 O6 Matched FP32 and Safe-FP16 Validation — 2026-08-18
 
 ## Validation target
 
@@ -79,6 +79,17 @@ Safe FP16 must satisfy the initial sampling acceleration gate for both workflows
 
 Model loading, preprocessing, VAE decode and video save must each be no slower than the matched value above; end-to-end wall time must improve. Numerical correctness, finite tensors, two-rank completion, CUDA P2P transport and media acceptance remain mandatory regardless of speed.
 
+## Implemented safe-FP16 result
+
+The opt-in worker-side implementation keeps FP32 numerical islands around FP16 attention/MLP computation while preserving FP8 checkpoint/FSDP storage. Both full workflows complete with exact finite output across two ranks, 124/124 unique decoded frames, no detected black interval, H.264 1120x768 video and 32 kHz stereo AAC.
+
+| Workflow | FP32 baseline | Initial safe FP16 | Initial speedup | Best accepted experiment | Best speedup | 4x result |
+|---|---:|---:|---:|---:|---:|---|
+| I2V Turbo8 | 160.7195 s/it | 48.7121 s/it | 3.299x | 48.7121 s/it | 3.299x | FAIL |
+| REF2VA Turbo4 | 185.2034 s/it | 54.2174 s/it | 3.416x | 49.8680 s/it with optional 5 GiB host registration | 3.714x | FAIL |
+
+The functional and quality goals pass, but O6 does not pass its initial 4x performance gate. `fp16_h3_safe` therefore remains explicit and experimental. V100 GEMM extent alignment is retained as an automatic matching-path improvement. Bounded host registration is implemented but remains disabled by default because it improves sampling while the matched cold end-to-end result regresses. Rejected kernel, chunk-size, attention, topology, registration-capacity and prefetch experiments are documented with resource data in the [English](../../releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) and [Chinese](../../releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) upgrade records.
+
 ## Evidence references
 
 Raw logs, telemetry CSVs, API prompts and benchmark JSON remain local:
@@ -87,5 +98,9 @@ Raw logs, telemetry CSVs, API prompts and benchmark JSON remain local:
 - `logs/minimax-h3/o2/20260818-162159-ref2va-full-o6-baseline-fp32-p2p256/`
 - `ComfyUI/output/video/raylight_o3/minimax_h3_i2v_o6-baseline-fp32-p2p256_run0_00001_.mp4`
 - `ComfyUI/output/video/raylight_o3/minimax_h3_ref2va_o6-baseline-fp32-p2p256_run0_00001_.mp4`
+- `logs/minimax-h3/o2/20260818-184842-i2v-full-o6-safe-fp16-full-reviewed/`
+- `logs/minimax-h3/o2/20260818-185943-ref2va-full-o6-safe-fp16-full-reviewed/`
+- `logs/minimax-h3/o2/20260818-201232-ref2va-full-o6-safe-fp16-align8-full-reviewed/`
+- `logs/minimax-h3/o2/20260818-212923-ref2va-full-o6-safe-fp16-hostreg5g-scoped-full/`
 
 These are one cold run per workflow under a fixed machine state. If geometry, frame count, step count, P2P capacity, precision policy, model assets or core runtime versions change, a new matched baseline is required.

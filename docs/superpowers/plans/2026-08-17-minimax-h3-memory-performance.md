@@ -101,7 +101,7 @@ Keep the accepted full I2V and REF2VA workflows correct while making repeated in
 
 ## Phase O6: safe FP16 compute for MiniMax H3 on Raylight FSDP
 
-**Status: approved for baseline preparation on 2026-08-18; implementation has not started.** The external MIT project `Amduraznak/minimax-h3-fp16-fix` provides a credible explanation for the black-output failure seen when MiniMax H3 is forced globally to FP16. Its drop-in custom-node installation does not reach Raylight actors, but its FP32-island/FP16-matmul design can be evaluated through a worker-side integration. The detailed implementation and validation plan is in `docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md`.
+**Status: functional and quality implementation complete on 2026-08-18; initial 4x performance gate remains open.** The model-specific `fp16_h3_safe` worker integration is implemented and validated with FP32 numerical islands, FP16 attention/MLP branches, FP8 FSDP storage, Turbo LoRA, exact two-rank output and valid media. Full I2V/REF2VA sampling reaches 3.299x/3.416x, and the best optional REF2VA host-registration experiment reaches 3.714x. Details and rejected experiments are recorded in the bilingual release notes under `docs/releases/`.
 
 ### O6 pre-development baseline
 
@@ -123,7 +123,7 @@ Keep the accepted full I2V and REF2VA workflows correct while making repeated in
 - FSDP remains at 684 wrappers per rank, CPU offload remains available, CUDA P2P remains active, and no tensor collective falls back to host-staged Gloo.
 - Both Turbo LoRAs load all 208 grouped sidecar adapters with zero unsupported entries and execute in the branch input dtype.
 - Smoke and full runs have finite rank-matched outputs, valid video/audio, no black interval, temporal variation and no NaN/Inf.
-- For each workflow, stable sampling throughput must be strictly more than 11x faster than its matched local pre-O6 baseline. The exact baseline and resulting numeric threshold are locked only after the two pre-development runs complete.
+- For each workflow, the initial gate is at least 4x faster stable sampling than its matched local pre-O6 baseline. The later 11x goal is tracked separately and is not substituted for the initial release gate.
 - Worker/model load, preprocessing, VAE decode and media-write stages must be no slower than their matched local baselines. End-to-end time must improve; no faster sampler may hide a regression elsewhere.
 - Peak VRAM, committed memory and pagefile remain within the O4 accepted operating envelope. A speed gain cannot be accepted by weakening numerical or media gates.
 
@@ -146,4 +146,4 @@ The detailed preliminary O7 plan is in `docs/superpowers/plans/2026-08-18-ltx-sa
 
 - Update the maintained MiniMax validation log after every accepted run.
 - Keep raw logs, telemetry, generated media and model weights out of the repository.
-- Before O6 implementation, keep README, implementation plans, validation summaries and the public GitHub repository synchronized with the accepted O1-O5 state and the pending O6/O7 status.
+- Keep README, implementation plans, validation summaries and release notes synchronized with the actual O6 state before the next public GitHub update. O6 is opt-in while its 4x gate remains open.
