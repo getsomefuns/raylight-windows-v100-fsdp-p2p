@@ -1,5 +1,7 @@
 # MiniMax H3 O6 Matched FP32 and Safe-FP16 Validation — 2026-08-18
 
+[简体中文](SAFE_FP16_FSDP_2026-08.zh-CN.md) | [English](SAFE_FP16_FSDP_2026-08.md)
+
 ## Validation target
 
 Lock the local comparison denominator for O6 safe-FP16 work. No external or projected timing is used. Both runs use the current accepted FP32-compute implementation, identical 1120x768 geometry, 124 frames at 24 FPS, the accepted O5 prompts/inputs, FSDP CPU offload, two V100 ranks and Windows CUDA P2P.

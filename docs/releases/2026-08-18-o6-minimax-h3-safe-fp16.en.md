@@ -191,7 +191,7 @@ RayUNETLoader must retain `weight_dtype=fp16_h3_safe` in these workflows. Ordina
 
 - Relevant safe-FP16, FP8 fallback, host-registration, sampling-profiler, and sampler-lifecycle tests: 64 passed plus 2 passed subtests.
 - Six core runtime modules pass `py_compile`.
-- The Chinese and English records each contain 210 lines, 20 headings, and 9 tables; the structures match. A relative-link check across eight related Markdown files reports zero missing targets.
+- The Chinese and English records each contain 210 lines, 20 headings, and 9 tables; the structures match. A relative-link check across ten related Markdown files reports zero missing targets.
 - Independent code review: High 0, Medium 0, Low 0.
 - The runtime-code tree is frozen at `30cbb6965d8f956fd9abb462a8103862097e7056`. Deployment is repeated after the documentation commit, and source HEAD must match the ComfyUI deployment marker.
 

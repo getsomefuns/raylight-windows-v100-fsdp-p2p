@@ -191,7 +191,7 @@ forward-prefetch 运行没有真正配置任何模块，因此 10.1368 s/it 只�
 
 - 相关 safe-FP16、FP8 fallback、host registration、sampling profiler 和 sampler lifecycle 测试：64 passed，另有 2 个 subtests passed。
 - 六个核心运行时模块通过 `py_compile`。
-- 中英文升级记录各 210 行、20 个标题、9 个表格，结构一致；8 份相关 Markdown 的本地相对链接检查为 0 缺失。
+- 中英文升级记录各 210 行、20 个标题、9 个表格，结构一致；10 份相关 Markdown 的本地相对链接检查为 0 缺失。
 - 独立代码审查：High 0、Medium 0、Low 0。
 - 运行时代码冻结树为 `30cbb6965d8f956fd9abb462a8103862097e7056`；文档提交完成后重新部署，并要求源码 HEAD 与 ComfyUI 部署标记一致。
 

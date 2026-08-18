@@ -380,9 +380,9 @@ These results prove sharding, dual-GPU computation, and correct output. LTX perf
 The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to end and 160.72 s/it; REF2VA Turbo4 takes 932.03 s and 185.20 s/it. The initial 4x limits are 40.1799 and 46.3008 s/it, and current results remain above them. The 11x value is a later research target, not a current capability. Older O5 geometry is not an O6 denominator.
 
 - [MiniMax validation summary](docs/testing/minimax-h3/README.md)
-- [O6 matched local FP32 baseline](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md)
+- O6 matched FP32/safe-FP16 report: [English](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md) / [中文](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.zh-CN.md)
 - [Turbo workflow usage](docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md)
-- [O6 implementation and baseline plan](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md)
+- O6 implementation and baseline plan: [English](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md) / [中文](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.zh-CN.md)
 - [O7 preliminary LTX research plan](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
 
 ## Important fixes retained in this branch

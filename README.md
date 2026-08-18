@@ -564,9 +564,9 @@ FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性�
 O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒、采样 160.72 s/it；REF2VA Turbo4 端到端 932.03 秒、采样 185.20 s/it。初始 4× 门槛分别为不高于 40.1799 和 46.3008 s/it；当前结果尚未达到。11× 仅保留为后续研究目标，不是当前版本能力。O5 的旧规格记录不作为 O6 分母。
 
 - MiniMax 验证汇总：[docs/testing/minimax-h3/README.md](docs/testing/minimax-h3/README.md)
-- O6 本机 FP32 基线：[docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md)
+- O6 本机 FP32/安全 FP16 汇总：[中文](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.zh-CN.md) / [English](docs/testing/minimax-h3/SAFE_FP16_FSDP_2026-08.md)
 - Turbo 使用说明：[docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md](docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md)
-- O6 计划：[docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md)
+- O6 计划：[中文](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.zh-CN.md) / [English](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md)
 - O7 预研：[docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
 
 ## 已知限制

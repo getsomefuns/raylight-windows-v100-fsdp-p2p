@@ -1,5 +1,7 @@
 # MiniMax H3 Safe FP16 on Raylight FSDP Implementation Plan
 
+[简体中文](2026-08-18-minimax-h3-safe-fp16-fsdp.zh-CN.md) | [English](2026-08-18-minimax-h3-safe-fp16-fsdp.md)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an opt-in, numerically safe MiniMax H3 FP16 compute path for native-Windows dual-V100 Raylight FSDP while preserving FP8 checkpoint storage, CUDA P2P and the accepted FP32-compute workflows.
