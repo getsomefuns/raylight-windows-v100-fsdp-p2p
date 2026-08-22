@@ -1,6 +1,7 @@
 import os
 import sys
 import gc
+import copy
 import json
 import logging
 import functools
@@ -282,6 +283,32 @@ def prepare_sampling_with_cuda_trim(fn, *args, **kwargs):
     torch.cuda.synchronize()
     torch.cuda.empty_cache()
     return result
+
+
+def _mmh3director_sample_streams(samples):
+    streams = list(samples.unbind()) if getattr(samples, "is_nested", False) else [samples]
+    if not streams or any(not isinstance(stream, torch.Tensor) for stream in streams):
+        raise TypeError(f"MMH3Director sampling returned unsupported type {type(samples).__name__}")
+    return streams
+
+
+def _mmh3director_finite_summary(samples):
+    streams = _mmh3director_sample_streams(samples)
+    rows = []
+    finite = True
+    for stream in streams:
+        stream_finite = True
+        if stream.is_floating_point() or stream.is_complex():
+            stream_finite = bool(torch.isfinite(stream).all().item())
+        finite = finite and stream_finite
+        rows.append(
+            {
+                "shape": list(stream.shape),
+                "dtype": str(stream.dtype),
+                "finite": stream_finite,
+            }
+        )
+    return {"finite": finite, "streams": rows}
 
 
 # Developer reminder, Checking model parameter outside ray actor is very expensive (e.g Comfy main thread)
@@ -645,6 +672,8 @@ class RayWorker:
         self._windows_p2p = None
         self._windows_p2p_original_collectives = None
         self._sampler_invocation = 0
+        self._mmh3director_active_operation = None
+        self._mmh3director_last_status = None
 
         self.is_model_loaded = False
         self.is_cpu_offload = self.parallel_dict.get("fsdp_cpu_offload", False)
@@ -1196,6 +1225,58 @@ class RayWorker:
 
     def get_is_model_loaded(self):
         return self.is_model_loaded
+
+    def get_mmh3director_proxy_metadata(self):
+        if not self.is_model_loaded or self.model is None:
+            return None
+
+        base_model = getattr(self.model, "model", self.model)
+        model_config = getattr(base_model, "model_config", None)
+        if model_config is None:
+            raise RuntimeError(f"rank {self.local_rank} loaded model has no model_config")
+
+        unet_config = getattr(model_config, "unet_config", {}) or {}
+        model_family = str(unet_config.get("image_model", type(model_config).__name__))
+        sampling_settings = copy.deepcopy(getattr(model_config, "sampling_settings", {}) or {})
+        try:
+            latent_format = self.model.get_model_object("latent_format")
+        except (AttributeError, KeyError):
+            latent_format = getattr(base_model, "latent_format", None)
+        if latent_format is None:
+            latent_format_type = getattr(model_config, "latent_format", None)
+            latent_format = latent_format_type() if callable(latent_format_type) else latent_format_type
+        if latent_format is None:
+            raise RuntimeError(f"rank {self.local_rank} loaded model has no latent_format")
+
+        try:
+            model_sampling = self.model.get_model_object("model_sampling")
+        except (AttributeError, KeyError):
+            model_sampling = getattr(base_model, "model_sampling", None)
+        noise_scale = getattr(model_sampling, "noise_scale", sampling_settings.get("noise_scale"))
+
+        return {
+            "rank": int(self.local_rank),
+            "model_family": model_family,
+            "sampling_settings": sampling_settings,
+            "latent_channels": int(latent_format.latent_channels),
+            "latent_dimensions": int(latent_format.latent_dimensions),
+            "spacial_downscale_ratio": int(latent_format.spacial_downscale_ratio),
+            "temporal_downscale_ratio": int(latent_format.temporal_downscale_ratio),
+            "noise_scale": None if noise_scale is None else float(noise_scale),
+        }
+
+    def get_mmh3director_sample_status(self, operation_id):
+        active = getattr(self, "_mmh3director_active_operation", None)
+        if active is not None and active.get("operation_id") == operation_id:
+            return dict(active)
+        completed = getattr(self, "_mmh3director_last_status", None)
+        if completed is not None and completed.get("operation_id") == operation_id:
+            return dict(completed)
+        return {
+            "operation_id": operation_id,
+            "rank": int(self.local_rank),
+            "state": "unknown",
+        }
 
     def patch_cfg(self):
         if CFGParallelInjectRegistry.has_direct_handler(self.model):
@@ -1820,6 +1901,151 @@ class RayWorker:
             gc.collect()
             if self.local_rank == 0:
                 print(f"[Rank {self.local_rank}] VAE cache freed")
+
+    @_scoped_fsdp_host_registration
+    @patch_temp_fix_ck_ops
+    @patch_ray_tqdm
+    @patch_enable_comfy_kitchen_fsdp
+    @trace_a2a_capture
+    @trace_windows_p2p_profile
+    def sample_mmh3director_request(self, request):
+        import comfy.model_management as comfy_model_management
+        import comfy.sample as comfy_sample
+        from comfy_extras.nodes_minimax_h3 import MiniMaxH3SigmaShift
+
+        if not isinstance(request, dict):
+            raise TypeError("MMH3Director worker request must be a dict")
+        operation_id = request.get("operation_id")
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ValueError("MMH3Director worker request requires a non-empty operation_id")
+
+        self._mmh3director_active_operation = {
+            "operation_id": operation_id,
+            "rank": int(self.local_rank),
+            "state": "running",
+        }
+        model_for_sampling = None
+        try:
+            if not self.is_model_loaded or self.model is None:
+                raise RuntimeError(f"rank {self.local_rank} has no loaded model")
+            if "callback" in request:
+                raise ValueError("MMH3Director callback closures must not be serialized to Ray workers")
+
+            required = (
+                "noise",
+                "steps",
+                "cfg",
+                "sampler_name",
+                "scheduler",
+                "positive",
+                "negative",
+                "latent_image",
+            )
+            missing = [name for name in required if name not in request]
+            if missing:
+                raise ValueError(f"MMH3Director worker request missing field(s): {', '.join(missing)}")
+
+            positive = request["positive"]
+            negative = request["negative"]
+            _restore_controlnet_refs(positive, self.cached_controlnet, self.vae_model)
+            _restore_controlnet_refs(negative, self.cached_controlnet, self.vae_model)
+            _remap_conditioning_devices(positive, negative)
+            _prepare_control_models(positive, negative)
+
+            if self.parallel_dict.get("is_fsdp") is True:
+                self._patch_fsdp_for_sampling()
+                self.state_dict = None
+
+            metadata = self.get_mmh3director_proxy_metadata()
+            incoming_options = request.get("model_options") or {}
+            transformer_options = incoming_options.get("transformer_options") or {}
+            shift_video = float(
+                transformer_options.get(
+                    "minimax_h3_sigma_shift_video",
+                    metadata["sampling_settings"].get("shift", 12.0),
+                )
+            )
+            shift_audio = float(
+                transformer_options.get(
+                    "minimax_h3_sigma_shift_audio",
+                    metadata["sampling_settings"].get("audio_shift", 3.0),
+                )
+            )
+            model_for_sampling = MiniMaxH3SigmaShift.execute(
+                self.model,
+                shift_video,
+                shift_audio,
+            )[0]
+
+            merged_options = dict(getattr(model_for_sampling, "model_options", {}) or {})
+            merged_transformer_options = dict(merged_options.get("transformer_options", {}) or {})
+            merged_transformer_options.update(copy.deepcopy(transformer_options))
+            merged_options["transformer_options"] = merged_transformer_options
+            for name, value in incoming_options.items():
+                if name != "transformer_options":
+                    merged_options[name] = copy.deepcopy(value)
+            model_for_sampling.model_options = merged_options
+
+            with torch.no_grad():
+                samples = comfy_sample.sample(
+                    model_for_sampling,
+                    request["noise"],
+                    int(request["steps"]),
+                    float(request["cfg"]),
+                    request["sampler_name"],
+                    request["scheduler"],
+                    positive,
+                    negative,
+                    request["latent_image"],
+                    denoise=float(request.get("denoise", 1.0)),
+                    disable_noise=bool(request.get("disable_noise", False)),
+                    start_step=request.get("start_step"),
+                    last_step=request.get("last_step"),
+                    force_full_denoise=bool(request.get("force_full_denoise", False)),
+                    noise_mask=request.get("noise_mask"),
+                    sigmas=request.get("sigmas"),
+                    callback=None,
+                    disable_pbar=bool(request.get("disable_pbar", False)) or self.local_rank != 0,
+                    seed=request.get("seed"),
+                )
+
+            summary = _mmh3director_finite_summary(samples)
+            if not summary["finite"]:
+                raise ValueError(f"rank {self.local_rank} MMH3Director samples contain NaN/Inf")
+
+            result = {
+                "rank": int(self.local_rank),
+                "operation_id": operation_id,
+                "samples": samples,
+                "finite": True,
+                "streams": summary["streams"],
+            }
+            self._mmh3director_last_status = {
+                "operation_id": operation_id,
+                "rank": int(self.local_rank),
+                "state": "completed",
+                "finite": True,
+                "streams": summary["streams"],
+            }
+            return result
+        except BaseException as error:
+            self._mmh3director_last_status = {
+                "operation_id": operation_id,
+                "rank": int(self.local_rank),
+                "state": "failed",
+                "error_type": type(error).__name__,
+                "error": str(error),
+            }
+            raise
+        finally:
+            self._mmh3director_active_operation = None
+            if model_for_sampling is not None:
+                try:
+                    model_for_sampling.cleanup()
+                except Exception:
+                    pass
+            comfy_model_management.soft_empty_cache()
+            gc.collect()
 
     @_scoped_fsdp_host_registration
     @patch_temp_fix_ck_ops

@@ -30,7 +30,7 @@ class RayMMH3DirectorModelAdapter:
                 f"RAY_ACTORS world_size={configured_world_size} disagrees with {len(workers)} workers"
             )
 
-        futures = [worker.get_mmh3director_model_metadata.remote() for worker in workers]
+        futures = [worker.get_mmh3director_proxy_metadata.remote() for worker in workers]
         rows = ray.get(futures)
         for rank, row in enumerate(rows):
             if row is None:

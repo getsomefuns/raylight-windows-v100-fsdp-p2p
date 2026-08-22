@@ -188,7 +188,11 @@ class A2ATraceTests(unittest.TestCase):
             advanced_source.index("_release_fsdp_host_registration_after_sampling(self)"),
             advanced_source.index("sampler_return"),
         )
-        self.assertEqual(source.count("@_scoped_fsdp_host_registration"), 3)
+        director_start = source.index("    def sample_mmh3director_request(")
+        director_scope = source.rfind("    @_scoped_fsdp_host_registration", 0, director_start)
+        self.assertGreaterEqual(director_scope, 0)
+        self.assertLess(director_start - director_scope, 500)
+        self.assertEqual(source.count("@_scoped_fsdp_host_registration"), 4)
 
     def test_host_registration_release_synchronizes_before_close(self):
         comfy_root = MODULE_PATH.parents[5]

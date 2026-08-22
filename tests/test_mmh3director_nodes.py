@@ -31,7 +31,7 @@ class _RemoteMethod:
 
 class _Actor:
     def __init__(self, metadata):
-        self.get_mmh3director_model_metadata = _RemoteMethod(metadata)
+        self.get_mmh3director_proxy_metadata = _RemoteMethod(metadata)
 
 
 def test_adapter_node_has_one_input_one_output_and_fixed_registration():
@@ -66,7 +66,7 @@ def test_adapter_reads_metadata_from_every_rank_and_returns_weightless_proxy():
     assert proxy.ray_actors is ray_actors
     assert proxy.session_id == "session-a"
     assert proxy.generation_id == 11
-    assert [actor.get_mmh3director_model_metadata.calls for actor in actors] == [1, 1]
+    assert [actor.get_mmh3director_proxy_metadata.calls for actor in actors] == [1, 1]
 
 
 @pytest.mark.parametrize(
