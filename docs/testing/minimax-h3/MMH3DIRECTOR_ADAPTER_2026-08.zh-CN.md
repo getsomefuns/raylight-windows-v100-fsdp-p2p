@@ -47,6 +47,44 @@
 | `Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json` | `af038101e582efd163d93f1fd22be7abe5d0c3a93b00b90c332f52d9ff2377ee` |
 | `Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json` | `fccd1b7ed6519cc81fa66f26a956061587f8cebce567f3ddef07ba0752a32f35` |
 
-## 3. 当前结论
+## 3. 已实现结构
 
-O8 的开发起点满足测试、双卡身份、TCC、依赖版本、P2P 正确性和带宽门槛。尚未开始适配器运行时代码，不能在本阶段宣称 Director 已经获得 Raylight FSDP 支持。
+- 新增显式节点 `Ray MODEL Adapter (MMH3Director)`：输入一个已加载的 `RAY_ACTORS`，输出不持有权重的 `MODEL` 代理。
+- 只有该代理进入 `comfy.sample.sample()` 时才转交两个 Ray Worker；普通 ComfyUI `MODEL` 继续原样调用原采样函数。
+- Director 准备的 conditioning、latent、noise、sigmas、seed、steps、sampler、scheduler 和 shift 原样送到两个 rank；本地主进程不进行第二次扩散采样。
+- 两个 rank 的 operation ID、rank、shape、dtype、finite 值及最终张量完全相等才返回 Director；失败时禁止回退到单卡本地采样。
+- 保留原 Director 节点作为唯一生成参数面板；示例图只有 `RayInitializer → RayLoraLoader → RayUNETLoader → Ray MODEL Adapter → MiniMaxH3Director` 一条模型路径，没有 XFuser sampler/guider/scheduler 重复栈。
+- 当前适配目标锁定 MiniMaxH3Director `1.0.0`、提交 `d655912`；不匹配的采样接口会给出明确错误。
+
+示例工作流：`example_workflows/MMH3Director_Windows_V100_FSDP.json`。本机部署副本：`ComfyUI/user/default/workflows/MMH3Director.json`。
+
+## 4. 首轮实机 t2v 结果（2026-08-23）
+
+所有结果均使用两张 V100、TCC、FSDP CPU offload、Ulysses 2、CUDA P2P、256 MiB buffer、`fp16_h3_safe`、FL2VA FP8 checkpoint 与官方 Turbo8 LoRA。日志诊断开关保持关闭；P2P 启动健康检查约 58.88 GiB/s/方向。
+
+| 运行 | 几何 / 时长 | 状态 | 采样 | 端到端 | GPU 显存峰值 MiB | GPU 利用率峰值 | 物理 / 虚拟 / pagefile 峰值 MiB |
+|---|---|---|---:|---:|---:|---:|---:|
+| 缩小冷启动，交接修复后 | 864×480 / 52 帧 / 24 FPS / 2.167 秒 | 通过 | 约 1:16；8.85 s/it | 259.77 秒 | 全流程 13738 / 5027；采样约 5186 / 5027 | 99% / 96% | 90575.9 / 132370.9 / 1467 |
+| 缩小热运行，seed 43 | 同上 | 通过；复用 PID 20012 / 22160 | 约 1:13；8.83 s/it | 131.67 秒 | 全流程 15302 / 5027；采样约 5190 / 5027 | 99% / 94% | 78081.3 / 96592.7 / 1467 |
+| 720p 档冷启动 | 1280×704 / 124 帧 / 24 FPS / 5.167 秒 | 通过 | 约 5:51；42.2 s/it | 595.10 秒 | 全流程 15422 / 14664；采样约 14822 / 14664 | 100% / 100% | 97763.8 / 138466.8 / 1467 |
+| 720p 档热运行 | 同上 | 通过 | 约 5:49；42.0 s/it | 470.82 秒 | 14826 / 14664 | 100% / 100% | 82795.5 / 101251.1 / 1467 |
+
+原版 Director 单卡同规格 720p 档冷启动为 41:21、271.81 s/it。当前双卡冷启动端到端约快 4.17 倍、单步约快 6.44 倍；热运行端到端约快 5.27 倍、单步约快 6.47 倍。冷/热条件不同，因此热运行加速比只代表交互复用收益，不伪装成严格冷启动对照。
+
+## 5. 预处理显存交接缺陷与修复
+
+首个 864×480 冷启动虽然成功，但文本编码器与两个 Ray rank 在 GPU0 上重叠，采样全流程峰值达到 16198 / 4721 MiB。根因不是 FSDP 分片失衡，而是 Director 必须先在主进程完成文本编码，原桥接入口没有在远程采样前卸载这些预处理模型。
+
+`40a71db` 在代理采样开始前调用 ComfyUI 标准的 `unload_all_models()` 与 `soft_empty_cache()`，并在 CUDA 可用时同步设备。修复后的 864×480 采样显存约为 5186 / 5027 MiB；1280×704 采样约为 14822 / 14664 MiB。显存交接换来主存中保留可重载的 CLIP/VAE 权重，因此冷启动物理/虚拟峰值会上升；本机仍通过，没有发生 pagefile 激增或 OOM。该权衡必须保留在后续更长/更大模式的资源门槛中。
+
+## 6. 输出与复用检查
+
+- 冷、热 720p 输出均为 H.264 1280×704、124 帧、24 FPS、5.167 秒，并含 32 kHz 双声道 AAC。
+- 接触表检查显示连续运动、无黑屏、彩色噪声、乱码或冻结段；提示词要求三名机器人，但画面主要维持两名，属于与原版单卡基线相同类别的主体数量服从度偏差，不是分布式数值损坏。
+- 相同 seed 的冷/热 MP4 容器 SHA256 不同，但视频码流 MD5 `3c38daa0228f118cb5dbd951114d7e27`、音频码流 MD5 `b4cb8900c83a5d70b69c07fcb004d02b` 和最后一帧解码 MD5 `84d8b99e1cf05a6b9abfdfda93f55f34` 完全一致。
+- 同一会话改 seed 热运行复用 worker PID 20012 / 22160，只产生一个新的远程 operation，没有第二次 Gloo 初始化或 FSDP 注册。
+- 原始 prompt、history、遥测 CSV、日志和接触表保留在本机 `<环境根目录>/o8_artifacts/mmh3director_adapter`；视频保留在 `ComfyUI/output/video/O8_MMH3Director`，不提交 Git。
+
+## 7. 当前结论与未完成门槛
+
+O8 已证明 Director t2v 能通过新的 MODEL 代理在两张 V100 上实际执行一次 FSDP + CUDA P2P 扩散采样，完整 720p 档冷/热生成均正确，且明显快于原版单卡。适配器仍处于 Task 8 验收中：i2v、fl2v、r2v、v2v、rv2v、真实多段/Refine、旧 LTX/MiniMax 工作流回归及最终完整回收尚需继续验证，因此本记录不把 O8 标记为全部完成。
