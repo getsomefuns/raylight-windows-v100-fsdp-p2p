@@ -122,3 +122,113 @@ def test_converter_serializes_combo_and_dynamic_combo_widgets():
     prompt = converter.workflow_to_prompt(workflow, object_info)
 
     assert prompt["7"]["inputs"] == {"format": "auto", "codec": "h264"}
+
+
+def test_converter_skips_mmh3director_frontend_only_widget_slots():
+    converter = _load_converter()
+    timeline = '{"totalFrames":124,"frameRate":24}'
+    workflow = {
+        "nodes": [
+            {
+                "id": 5,
+                "type": "MiniMaxH3Director",
+                "mode": 0,
+                "inputs": [],
+                "widgets_values": [
+                    "t2v",
+                    "prompt",
+                    "sample group",
+                    1.0,
+                    42,
+                    "fixed",
+                    24,
+                    1280,
+                    704,
+                    1280,
+                    124,
+                    timeline,
+                    "advanced group",
+                    8,
+                    "res_multistep",
+                    "simple",
+                    12.0,
+                    3.0,
+                    "performance group",
+                    True,
+                    False,
+                ],
+            }
+        ],
+        "links": [],
+    }
+    input_names = [
+        "task_type",
+        "global_prompt",
+        "bd_grp_sample",
+        "cfg",
+        "seed",
+        "frame_rate",
+        "width",
+        "height",
+        "ref_max_size",
+        "total_frames",
+        "timeline_data",
+        "bd_grp_advanced",
+        "steps",
+        "sampler",
+        "scheduler",
+        "shift_video",
+        "shift_audio",
+        "bd_grp_perf",
+        "clear_vram_between_segments",
+        "export_source_images",
+    ]
+    object_info = {
+        "MiniMaxH3Director": {
+            "input": {
+                "required": {
+                    name: [
+                        "STRING"
+                        if name in {"global_prompt", "timeline_data"}
+                        else "BOOLEAN"
+                        if name in {"clear_vram_between_segments", "export_source_images"}
+                        else "FLOAT"
+                        if name in {"cfg", "frame_rate", "shift_video", "shift_audio"}
+                        else "INT"
+                        if name in {"seed", "width", "height", "ref_max_size", "total_frames", "steps"}
+                        else "BDGROUP"
+                        if name in {"bd_grp_sample", "bd_grp_advanced", "bd_grp_perf"}
+                        else ["t2v", "res_multistep", "simple"],
+                        {},
+                    ]
+                    for name in input_names
+                }
+            },
+            "input_order": {"required": input_names},
+        }
+    }
+
+    prompt = converter.workflow_to_prompt(workflow, object_info)
+
+    assert prompt["5"]["inputs"] == {
+        "task_type": "t2v",
+        "global_prompt": "prompt",
+        "bd_grp_sample": "sample group",
+        "cfg": 1.0,
+        "seed": 42,
+        "frame_rate": 24,
+        "width": 1280,
+        "height": 704,
+        "ref_max_size": 1280,
+        "total_frames": 124,
+        "timeline_data": timeline,
+        "bd_grp_advanced": "advanced group",
+        "steps": 8,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "shift_video": 12.0,
+        "shift_audio": 3.0,
+        "bd_grp_perf": "performance group",
+        "clear_vram_between_segments": True,
+        "export_source_images": False,
+    }

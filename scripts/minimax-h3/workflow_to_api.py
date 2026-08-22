@@ -11,7 +11,13 @@ from typing import Any
 
 
 UI_ONLY_NODE_TYPES = {"Note", "MarkdownNote"}
-WIDGET_TYPES = {"STRING", "INT", "FLOAT", "BOOLEAN"}
+WIDGET_TYPES = {"STRING", "INT", "FLOAT", "BOOLEAN", "BDGROUP"}
+FRONTEND_ONLY_WIDGET_INDEXES = {
+    # Director 1.0.0 / d655912 stores an output-mode selector in widgets_values
+    # even though it is not a server input. Its BDGROUP labels are real backend
+    # inputs and must remain in the API prompt.
+    "MiniMaxH3Director": frozenset({5}),
+}
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -59,7 +65,12 @@ def workflow_to_prompt(workflow: dict[str, Any], object_info: dict[str, Any]) ->
         definition = object_info[node_type]
         definitions = definition.get("input", {})
         input_order = definition.get("input_order", {})
-        widgets = _as_list(node.get("widgets_values"))
+        frontend_only_indexes = FRONTEND_ONLY_WIDGET_INDEXES.get(node_type, ())
+        widgets = [
+            value
+            for index, value in enumerate(_as_list(node.get("widgets_values")))
+            if index not in frontend_only_indexes
+        ]
         widget_index = 0
 
         for section in ("required", "optional"):
