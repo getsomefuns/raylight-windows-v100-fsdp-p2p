@@ -130,6 +130,15 @@ def _assert_rank_samples_equal(reference, current, rank: int) -> None:
             raise ValueError(f"rank {rank} samples differ from rank 0")
 
 
+def _release_main_process_models_before_remote_sampling() -> None:
+    """Free Director preprocessing VRAM before both Ray ranks begin sampling."""
+
+    comfy.model_management.unload_all_models()
+    comfy.model_management.soft_empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
 def dispatch_mmh3director_sample(
     model,
     noise,
@@ -169,6 +178,7 @@ def dispatch_mmh3director_sample(
         )
 
     ensure_mmh3director_compatibility()
+    _release_main_process_models_before_remote_sampling()
     operation_id = uuid.uuid4().hex
     request = {
         "operation_id": operation_id,

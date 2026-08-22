@@ -35,6 +35,8 @@ class _SampleRemote:
         self.actor = actor
 
     def remote(self, request):
+        if hasattr(self.actor, "trace"):
+            self.actor.trace.append(f"sample-rank-{self.actor.rank}")
         self.actor.sample_calls += 1
         self.actor.operation_ids.append(request["operation_id"])
         return {
@@ -160,3 +162,48 @@ def test_director_callback_runs_once_on_the_final_finite_latent():
     assert (step, total_steps) == (3, 4)
     assert torch.equal(x0, output)
     assert torch.equal(current, output)
+
+
+def test_preprocessing_models_are_released_before_remote_sampling():
+    actors = [_Actor(0), _Actor(1)]
+    trace = []
+    for actor in actors:
+        actor.trace = trace
+    proxy = _build_proxy(actors)
+    latent = torch.zeros(1, 32, 2, 2, 2)
+
+    with (
+        mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
+        mock.patch.object(bridge.ray, "get", side_effect=lambda value: value),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_device", return_value=torch.device("cpu")),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_dtype", return_value=torch.float32),
+        mock.patch.object(
+            bridge.comfy.model_management,
+            "unload_all_models",
+            side_effect=lambda: trace.append("unload-main-models"),
+        ) as unload_all_models,
+        mock.patch.object(
+            bridge.comfy.model_management,
+            "soft_empty_cache",
+            side_effect=lambda: trace.append("empty-main-cache"),
+        ) as soft_empty_cache,
+        mock.patch.object(bridge.torch.cuda, "is_available", return_value=False),
+        mock.patch.object(sampling_lifecycle.gc, "collect"),
+    ):
+        bridge.dispatch_mmh3director_sample(
+            proxy,
+            torch.ones_like(latent),
+            4,
+            1.0,
+            "euler",
+            "simple",
+            [],
+            [],
+            latent,
+            seed=7,
+        )
+
+    unload_all_models.assert_called_once_with()
+    soft_empty_cache.assert_called_once_with()
+    assert trace[:2] == ["unload-main-models", "empty-main-cache"]
+    assert trace[2:] == ["sample-rank-0", "sample-rank-1"]
