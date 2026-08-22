@@ -18,9 +18,20 @@ from raylight.distributed_worker.utils import Noise_EmptyNoise, Noise_RandomNois
 
 
 def _release_main_cuda_for_ray_sampling():
+    total_started_ns = time.perf_counter_ns()
+    phase_started_ns = time.perf_counter_ns()
     comfy.model_management.unload_all_models()
+    unload_seconds = (time.perf_counter_ns() - phase_started_ns) / 1e9
+
+    phase_started_ns = time.perf_counter_ns()
     gc.collect()
+    gc_seconds = (time.perf_counter_ns() - phase_started_ns) / 1e9
+
+    phase_started_ns = time.perf_counter_ns()
     comfy.model_management.soft_empty_cache()
+    empty_cache_seconds = (time.perf_counter_ns() - phase_started_ns) / 1e9
+    total_seconds = (time.perf_counter_ns() - total_started_ns) / 1e9
+
     if os.environ.get("RAYLIGHT_RANK_DIAG", "0") == "1" and torch.cuda.is_available():
         device = torch.cuda.current_device()
         print(
@@ -31,6 +42,10 @@ def _release_main_cuda_for_ray_sampling():
                     "reserved": torch.cuda.memory_reserved(device),
                     "device": device,
                     "event": "released_before_ray_sampling",
+                    "unload_seconds": unload_seconds,
+                    "gc_seconds": gc_seconds,
+                    "empty_cache_seconds": empty_cache_seconds,
+                    "total_seconds": total_seconds,
                     "time_ns": time.time_ns(),
                 },
                 sort_keys=True,
