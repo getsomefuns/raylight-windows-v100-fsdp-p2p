@@ -223,6 +223,40 @@ def test_worker_non_finite_output_fails_and_records_bounded_status():
     assert set(vars(worker)) >= {"_mmh3director_active_operation", "_mmh3director_last_status"}
 
 
+def test_failed_segment_does_not_pollute_the_next_hot_operation():
+    worker = _worker()
+    failed_request = _request(operation_id="operation-failed")
+    next_request = _request(operation_id="operation-next")
+    shifted_model = _ModelPatcher()
+    next_samples = next_request["latent_image"] + 3
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            return_value=(shifted_model,),
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch(
+            "comfy.sample.sample",
+            side_effect=[RuntimeError("first segment failed"), next_samples],
+        ),
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+    ):
+        with pytest.raises(RuntimeError, match="first segment failed"):
+            _unwrapped_sample(worker, failed_request)
+        assert worker.get_mmh3director_sample_status("operation-failed")["state"] == "failed"
+
+        result = _unwrapped_sample(worker, next_request)
+
+    assert torch.equal(result["samples"], next_samples)
+    assert worker._mmh3director_active_operation is None
+    assert worker.get_mmh3director_sample_status("operation-next")["state"] == "completed"
+    assert worker.get_mmh3director_sample_status("operation-failed")["state"] == "unknown"
+
+
 def test_existing_common_ksampler_public_signature_is_unchanged():
     assert tuple(inspect.signature(ray_worker.RayWorker.common_ksampler).parameters) == (
         "self",

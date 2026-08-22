@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import importlib
 import inspect
+import logging
 import sys
 import uuid
 from typing import Callable
@@ -12,6 +13,8 @@ import torch
 
 import comfy.model_management
 import comfy.sample
+
+from raylight.distributed_worker.sampling_lifecycle import clear_ray_worker_vram_after_sampling
 
 from .proxy import RayMMH3DirectorModelProxy
 
@@ -41,6 +44,7 @@ _BRIDGE_MARKER = "_raylight_mmh3director_sample_bridge"
 _ORIGINAL_MARKER = "_raylight_mmh3director_original_sample"
 _original_comfy_sample: Callable | None = None
 _installed_wrapper: Callable | None = None
+_LOG = logging.getLogger("raylight.mmh3director")
 
 
 def validate_mmh3director_sample_single_stage(sample_single_stage: Callable) -> None:
@@ -190,49 +194,80 @@ def dispatch_mmh3director_sample(
         "model_options": copy.deepcopy(model.model_options),
     }
 
-    try:
-        futures = [worker.sample_mmh3director_request.remote(request) for worker in workers]
-        results = ray.get(futures)
-    except Exception as error:
-        raise RuntimeError(
-            f"MMH3Director remote sampling operation {operation_id} failed before rank validation"
-        ) from error
-
-    if not isinstance(results, (list, tuple)) or len(results) != len(workers):
-        received = len(results) if isinstance(results, (list, tuple)) else 0
-        raise RuntimeError(
-            f"MMH3Director operation {operation_id} returned {received}/{len(workers)} rank results"
-        )
-
-    reference_samples = None
-    for expected_rank, result in enumerate(results):
-        if result is None:
-            raise RuntimeError(f"MMH3Director operation {operation_id} missing result for rank {expected_rank}")
-        if not isinstance(result, dict):
-            raise TypeError(
-                f"MMH3Director operation {operation_id} rank {expected_rank} returned {type(result).__name__}"
-            )
-        actual_rank = result.get("rank")
-        if actual_rank != expected_rank:
-            raise ValueError(
-                f"MMH3Director operation {operation_id} expected rank {expected_rank}, got rank {actual_rank}"
-            )
-        if result.get("operation_id") != operation_id:
-            raise ValueError(f"rank {expected_rank} returned a mismatched MMH3Director operation_id")
-        if "samples" not in result:
-            raise RuntimeError(f"MMH3Director operation {operation_id} missing samples for rank {expected_rank}")
-        samples = result["samples"]
-        _validate_finite_samples(samples, expected_rank)
-        if reference_samples is None:
-            reference_samples = samples
-        else:
-            _assert_rank_samples_equal(reference_samples, samples, expected_rank)
-
-    del callback  # Director callback closures must never cross the Ray boundary.
-    return reference_samples.to(
-        device=comfy.model_management.intermediate_device(),
-        dtype=comfy.model_management.intermediate_dtype(),
+    print(
+        f"[Raylight] MMH3Director remote sampling started operation={operation_id} ranks={len(workers)}",
+        flush=True,
     )
+    sampling_error = None
+    try:
+        try:
+            futures = [worker.sample_mmh3director_request.remote(request) for worker in workers]
+            results = ray.get(futures)
+        except Exception as error:
+            raise RuntimeError(
+                f"MMH3Director remote sampling operation {operation_id} failed before rank validation"
+            ) from error
+
+        if not isinstance(results, (list, tuple)) or len(results) != len(workers):
+            received = len(results) if isinstance(results, (list, tuple)) else 0
+            raise RuntimeError(
+                f"MMH3Director operation {operation_id} returned {received}/{len(workers)} rank results"
+            )
+
+        reference_samples = None
+        for expected_rank, result in enumerate(results):
+            if result is None:
+                raise RuntimeError(f"MMH3Director operation {operation_id} missing result for rank {expected_rank}")
+            if not isinstance(result, dict):
+                raise TypeError(
+                    f"MMH3Director operation {operation_id} rank {expected_rank} returned {type(result).__name__}"
+                )
+            actual_rank = result.get("rank")
+            if actual_rank != expected_rank:
+                raise ValueError(
+                    f"MMH3Director operation {operation_id} expected rank {expected_rank}, got rank {actual_rank}"
+                )
+            if result.get("operation_id") != operation_id:
+                raise ValueError(f"rank {expected_rank} returned a mismatched MMH3Director operation_id")
+            if "samples" not in result:
+                raise RuntimeError(f"MMH3Director operation {operation_id} missing samples for rank {expected_rank}")
+            samples = result["samples"]
+            _validate_finite_samples(samples, expected_rank)
+            if reference_samples is None:
+                reference_samples = samples
+            else:
+                _assert_rank_samples_equal(reference_samples, samples, expected_rank)
+
+        normalized = reference_samples.to(
+            device=comfy.model_management.intermediate_device(),
+            dtype=comfy.model_management.intermediate_dtype(),
+        )
+        if callback is not None:
+            callback(max(0, int(steps) - 1), normalized, normalized, int(steps))
+        print(
+            f"[Raylight] MMH3Director remote sampling completed operation={operation_id} ranks={len(workers)}",
+            flush=True,
+        )
+        return normalized
+    except BaseException as error:
+        sampling_error = error
+        print(
+            f"[Raylight] MMH3Director remote sampling failed operation={operation_id} "
+            f"error={type(error).__name__}",
+            flush=True,
+        )
+        raise
+    finally:
+        try:
+            clear_ray_worker_vram_after_sampling(model.ray_actors)
+        except BaseException:
+            if sampling_error is None:
+                raise
+            _LOG.exception(
+                "MMH3Director worker cleanup failed after sampling operation %s; preserving %s",
+                operation_id,
+                type(sampling_error).__name__,
+            )
 
 
 def _raylight_sample_dispatch(model, *args, **kwargs):

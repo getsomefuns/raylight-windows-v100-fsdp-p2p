@@ -98,9 +98,21 @@ class _SampleRemote:
         }
 
 
+class _ParallelRemote:
+    def remote(self):
+        return {"clear_vram_after_sampling": False}
+
+
+class _ClearRemote:
+    def remote(self):
+        return True
+
+
 class _Actor:
     def __init__(self, rank, samples=None):
         self.sample_mmh3director_request = _SampleRemote(rank, samples=samples)
+        self.get_parallel_dict = _ParallelRemote()
+        self.clear_sampling_vram = _ClearRemote()
 
 
 def _proxy(model_family="minimax_h3", samples_by_rank=None):

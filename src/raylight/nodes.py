@@ -27,6 +27,9 @@ from .distributed_worker.ray_worker import (
     ray_nccl_tester,
 )
 from .distributed_worker.parallel_group_manager import validate_hybrid_topology
+from .distributed_worker.sampling_lifecycle import (
+    clear_ray_worker_vram_after_sampling as _clear_ray_worker_vram_after_sampling,
+)
 from .distributed_worker.ray_worker_vae import combine_dist_vae_partials, combine_seedvr2_vae_partials
 from .comfy_dist.minimax_h3_fp16 import SAFE_FP16_LOADER_VALUE, ray_unet_model_options
 
@@ -37,20 +40,6 @@ class AnyType(str):
 
 
 any_type = AnyType("*")
-
-
-def _clear_ray_worker_vram_after_sampling(ray_actors):
-    gpu_actors = ray_actors["workers"]
-    if not gpu_actors:
-        return
-    parallel_dict = ray.get(gpu_actors[0].get_parallel_dict.remote())
-    if not parallel_dict.get("clear_vram_after_sampling", False):
-        return
-
-    ray.get([actor.clear_sampling_vram.remote() for actor in gpu_actors])
-    gc.collect()
-    comfy.model_management.unload_all_models()
-    comfy.model_management.soft_empty_cache()
 
 
 def _raylight_ray_tmpdir() -> Path:
