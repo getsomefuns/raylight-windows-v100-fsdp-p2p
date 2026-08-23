@@ -85,6 +85,42 @@ Commit `40a71db` calls ComfyUI's standard `unload_all_models()` and `soft_empty_
 - A changed-seed warm run reused worker PIDs 20012 / 22160, issued exactly one new remote operation, and did not repeat Gloo initialization or FSDP registration.
 - Raw prompts, history, telemetry CSVs, logs, and contact sheets stay under local `<environment-root>/o8_artifacts/mmh3director_adapter`; videos stay under `ComfyUI/output/video/O8_MMH3Director` and are not committed.
 
-## 7. Current conclusion and open gates
+## 7. Director mode, Refine, and multi-segment acceptance
 
-O8 now proves that Director t2v uses the MODEL proxy to execute exactly one FSDP + CUDA P2P diffusion pass across both V100s. Full 720p-class cold and warm outputs are correct and materially faster than the upstream single-GPU baseline. Task 8 remains open: i2v, fl2v, r2v, v2v, rv2v, real multi-segment/Refine, old LTX/MiniMax regressions, and final full reclamation still require validation, so this report does not yet mark all of O8 complete.
+| Mode | Geometry | End to end | Sampling | Peak GPU MiB | Result |
+|---|---|---:|---:|---:|---|
+| i2v | 864x480 / 39 frames / 24 FPS | 135.77 s | about 8.50 s/it | 15692 / 4861 | Pass |
+| fl2v | 864x480 / 39 frames / 24 FPS | 140.35 s | about 8.50 s/it | 15833 / 4923 | Pass |
+| refine | same, main 8 + refine 2 steps | 170.28 s | main 8.13, refine 4.26 s/it | 15541 / 4861 | Pass; same-model reuse |
+| r2v | 864x480 / 39 frames / 24 FPS | 176.70 s | 7.40 s/it (4 steps) | 15538 / 4781 | Pass; REF2VA checkpoint switch |
+| v2v | 864x480 / 39 frames / 24 FPS | 137.76 s | one remote sample | 15821 / 5681 | Pass; mismatched mode fails before GPU work |
+| rv2v | 864x480 / 39 frames / 24 FPS | 133.39 s | one remote sample | 16039 / 6867 | Pass |
+| two-segment r2v | 864x480 / 78 frames / 24 FPS / 3.25 s | 196.90 s | two remote operations | 15543 / 4787 | Pass; worker/FSDP/Gloo reuse |
+
+Each Director pass produces exactly one unique remote operation and zero local diffusion samples. The real two-segment R2V run produces exactly two operations without another model load, Gloo initialization, or FSDP registration. A negative test connecting an R2V group while selecting `v2v` fails before GPU execution, proving that mode contracts are not silently ignored.
+
+## 8. Legacy-workflow performance regression
+
+Each legacy path ran once cold and three times warm. The gate uses the median of the three matched warm runs. No unexplained sampling regression exceeded 5%.
+
+| Workflow | Current warm median | Historical reference | Change | Result |
+|---|---:|---:|---:|---|
+| MiniMax I2V Turbo8, 448x448 / 39 frames | E2E 109.44 s; sample 94.22 s | 107.35 / 96.15 s | E2E +1.95%; sample about -2.0% | Pass |
+| MiniMax REF2VA Turbo4, 608x352 / 56 frames | E2E 82.96 s; sample 64.58 s | 82.07 / 67.14 s | E2E +1.08%; sample about -3.8% | Pass |
+| LTX 2.3 two-stage, 1280x704 / 121 frames | E2E 392.73 s; stages 15.0 / 47.8 s/it | 15.0 / 45.6 s/it | stage two about +4.82% | Pass, close to the gate |
+| O6 REF2VA safe-FP16, 1120x768 / 124 frames | 49.48 s/it | 54.22 s/it | about -8.7% | Pass |
+| O6 REF2VA FP32, same geometry | 177.89 s/it | 185.20 s/it | about -3.95% | Pass |
+
+An initial REF2VA sequence contained roughly 99-second E2E outliers, while remote submission to worker entry was only 0.2-0.4 seconds. New phase timing identified main-process VAE/preprocessing-model offload to host memory (normally 7.3-8.7 seconds, longer in the outlier) rather than Ray, Gloo, CUDA P2P, or rank skew. A matched repeat passed at an 82.96-second warm median. These timings are diagnostic-only and remain silent by default.
+
+## 9. Resources, media, and reclamation
+
+- Both GPUs reach high utilization during sampling; all received tensors are finite and the two ranks agree exactly.
+- Representative Director, MiniMax, O6, and LTX media pass ffprobe decode; black intervals are zero, audio NaN/Inf is zero, and no decode errors occur.
+- Same-checkpoint warm runs reuse workers and FSDP shards. FL2VA/REF2VA checkpoint changes recycle both workers as a pair.
+- Final `RayKill` removes both workers, raylet, and GCS. GPU processes disappear and physical/virtual commit falls from about 76835/95561 MiB to 34196/44655 MiB. The roughly 700 MiB CUDA context per worker is released too.
+- Raw logs, telemetry, and videos remain in the local evidence tree; Git stores maintainable conclusions and paths only.
+
+## 10. Final conclusion
+
+Task 8 is complete. O8 validates t2v, i2v, fl2v, r2v, v2v, rv2v, same-model Refine, and real multi-segment generation. Each pass executes exactly one FSDP + CUDA P2P diffusion operation on the two Ray workers with no duplicate local sample. Media, reuse, checkpoint switching, final reclamation, and all five legacy performance gates pass. This does not claim that CLIP, Video/Audio VAE, or mux/save are FSDP-sharded; those remain in the Director/ComfyUI main process.

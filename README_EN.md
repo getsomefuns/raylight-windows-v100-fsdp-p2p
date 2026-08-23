@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.10.0 adds the explicit opt-in `Ray MODEL Adapter (MMH3Director)`. Director remains the compact generation-control panel while its diffusion sample executes on the dual-V100 FSDP/P2P workers. Real-machine acceptance covers t2v, i2v, fl2v, r2v, v2v, rv2v, same-model Refine, and multi-segment R2V. See the [O8 English release note](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md) and [validation summary](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.md).
+
 MiniMax H3 O6 now includes the explicit `fp16_h3_safe` mode: FP32 numerical islands protect residuals and sensitive outputs while dominant attention/MLP branches use FP16. Full I2V/REF2VA sampling reaches 3.299x/3.416x, and the best current REF2VA experimental configuration reaches 3.714x. Quality gates pass, but the initial 4x gate does not. See the complete [English upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) or [Chinese upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) for shipped changes, resource data, and rejected experiments.
 
 Launcher update (2026-08-19): the generic launcher now defaults to a 256 MiB P2P buffer per GPU, exposes explicit 128/256/512 MiB choices, and keeps Rank/P2P diagnostics off unless requested. See the [English release note](docs/releases/2026-08-19-launcher-controls.en.md) or [Chinese release note](docs/releases/2026-08-19-launcher-controls.zh-CN.md).
@@ -19,6 +21,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
+- Current branch version: 1.10.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -26,6 +29,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - Historical P2P/Ulysses record: [docs/TESTING.md](docs/TESTING.md)
 - MiniMax H3 O6 safe-FP16 upgrade record: [English](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) / [中文](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md)
 - Launcher capacity and diagnostic controls: [English](docs/releases/2026-08-19-launcher-controls.en.md) / [中文](docs/releases/2026-08-19-launcher-controls.zh-CN.md)
+- MiniMaxH3Director MODEL adapter 1.10.0: [English](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md) / [中文](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -57,6 +61,29 @@ It does not:
 - turn two 16 GB GPUs into a transparent 32 GB device;
 - shard every model or every ComfyUI node;
 - support GGUF with FSDP, training/backward collectives, multi-node execution, or arbitrary GPU counts.
+
+## MiniMaxH3Director adapter
+
+### Two workflow paths
+
+| Path | Sampling control surface | Best for | Compatibility |
+|---|---|---|---|
+| Explicit Ray sampler | `RayUNETLoader` plus XFuser sampler/guider/scheduler nodes | LTX and existing MiniMax H3 I2V/REF2VA graphs with decomposed controls | Fully retained; old JSON needs no migration |
+| Director MODEL proxy | `RayUNETLoader` → `Ray MODEL Adapter (MMH3Director)` → `MiniMaxH3Director` | One Director node for seed, steps, sampler, scheduler, shifts, duration, FPS, geometry, segments, and output | New in 1.10.0; enabled only when explicitly connected |
+
+The proxy carries no weights. It only marks which Ray workers must execute this MODEL's sampling request. After Director prepares conditioning, latent, noise, and sigmas, its normal `comfy.sample.sample()` call is intercepted for this exact proxy type, executed by both workers, and returned as latent so Director can continue VAE, audio, mux, and save. Director therefore does not sample locally and then sample again in Raylight.
+
+Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is explicit and never silently falls back to GPU 0. MiniMaxH3Director source is unmodified; the compatibility target is 1.0.0 at commit `d655912`.
+
+### Boundaries
+
+- Validated: t2v, i2v, fl2v, r2v, v2v, rv2v, same-checkpoint Refine, and multi-segment R2V.
+- One Director pass maps to one remote operation. Segments invoke separate passes but reuse the same workers, Gloo group, and FSDP shards.
+- Director owns all generation arguments. Raylight owns GPU count, parallel degrees, FSDP, CPU offload, attention, and worker lifecycle.
+- Only the Diffusion Model is FSDP-sharded. CLIP/Text Encoder, Video VAE, Audio VAE, preprocessing, mux, and save remain in the ComfyUI main process.
+- Main-process preprocessing models are released from GPU before remote sampling to avoid rank-0 overlap. Reloadable weights can remain in RAM/commit, so multi-segment and long jobs must be sized against host memory and pagefile too.
+- Same-model Refine is validated. A custom refine path requiring another checkpoint, different weights, or bypassing standard `comfy.sample.sample()` is outside the guarantee.
+- Remote workers expose no separate per-frame preview stream. Director resumes its normal preview/decode path after receiving latent.
 
 ## Current FSDP capability
 
@@ -441,6 +468,19 @@ ComfyUI Manager commonly writes `<ComfyUI>\user\comfyui_8188.log`.
 Do not enable the sampling profiler, pin-memory experiment, 6 GiB registration, global FP16 allowlist,
 FlashAttention, `--highvram`, or `--disable-smart-memory` when reproducing the accepted O6 result.
 
+### 8. Run the MiniMaxH3Director dual-GPU workflow
+
+1. Start ComfyUI with `start_raylight_p2p.ps1` from the environment root. The accepted default is a 256 MiB buffer with detailed diagnostics off.
+2. Load `example_workflows/MMH3Director_Windows_V100_FSDP.json`. A local deployed copy normally lives at `<ComfyUI>\user\default\workflows\MMH3Director.json`.
+3. Keep `GPU=2`, `ulysses_degree=2`, `ring_degree=1`, `FSDP=true`, and `FSDP_CPU_OFFLOAD=true` in Ray initialization. Use `fp16_h3_safe` on V100; match the checkpoint and official Turbo LoRA to FL2VA or REF2VA mode.
+4. Set task type, seed, steps, sampler, scheduler, video/audio shifts, megapixels, aspect ratio, FPS, duration, prompt groups, segments, and output directly on Director. Do not add another XFuser sampler/guider/scheduler stack.
+5. Verify the single model path: `RayInitializer → RayLoraLoader → RayUNETLoader → Ray MODEL Adapter (MMH3Director) → MiniMaxH3Director`. An ordinary MODEL connection does not activate the dual-GPU proxy.
+6. The first run is cold. An unchanged checkpoint reuses both workers and FSDP shards; changing seed or Director controls does not require a ComfyUI restart. Switching FL2VA/REF2VA checkpoints recycles both workers as a pair.
+7. When the session is finished, use `RayKill` connected to the same `RAY_ACTORS` chain for final reclamation. A generic ComfyUI VRAM-cleanup node cannot guarantee termination of Ray workers, raylet, and GCS.
+8. During sampling, both V100s should show high utilization and each Director pass should have one operation with no second local sampler. The complete procedure is in the [O8 validation summary](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.md).
+
+Same-checkpoint repeated generation, same-model Refine, and multi-segment generation pass. Segments reuse workers, but main-process CLIP/VAE weights and intermediate results can still increase physical RAM and commit. For strict isolation between two large workflows, run `RayKill`, wait for workers/GPU contexts to disappear, then start the next workflow.
+
 ## Reproducible benchmark inputs
 
 The repository includes 5-second API prompt payloads under `benchmark_payloads/` for:
@@ -517,6 +557,7 @@ These results prove sharding, dual-GPU computation, and correct output. LTX perf
 | Current compute policy | Default uses FP8 storage with FP32 compute; `fp16_h3_safe` uses FP32 numerical islands with FP16 attention/MLP |
 | O6 | Function and quality pass; I2V/REF2VA reach 3.299x/3.416x and optional REF2VA reaches 3.714x; the 4x gate remains open |
 | O7 | preliminary model-specific safe-FP16 research for LTX/LTXAV after O6 performance closure |
+| O8 Director MODEL proxy | t2v/i2v/fl2v/r2v/v2v/rv2v, Refine, multi-segment, media, reuse, reclamation, and legacy performance gates pass |
 
 The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to end and 160.72 s/it; REF2VA Turbo4 takes 932.03 s and 185.20 s/it. The initial 4x limits are 40.1799 and 46.3008 s/it, and current results remain above them. The 11x value is a later research target, not a current capability. Older O5 geometry is not an O6 denominator.
 
@@ -525,6 +566,8 @@ The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to e
 - [Turbo workflow usage](docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md)
 - O6 implementation and baseline plan: [English](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md) / [中文](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.zh-CN.md)
 - [O7 preliminary LTX research plan](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
+- O8 Director adapter validation: [English](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.md) / [中文](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.zh-CN.md)
+- O8 implementation plan: [English](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.md) / [中文](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.zh-CN.md)
 
 ## Important fixes retained in this branch
 
@@ -543,6 +586,9 @@ A playable file, non-black pixels, and absence of NaN/Inf are only basic gates. 
 - GGUF does not use this FSDP implementation.
 - Do not force the LTX 2.3 model globally to FP16: the validated experiment produced black video and audio NaN/Inf. Keep the default BF16/FP32 inference policy and the branch's V100 fallbacks.
 - Ray on Windows is Beta and has more startup/host-memory overhead than Linux + NCCL.
+- The Director adapter guarantees the standard MiniMaxH3Director 1.0.0 seam at commit `d655912`; an incompatible version fails explicitly.
+- Multi-segment reuse reduces model reloads but cannot eliminate main-process CLIP/VAE, intermediate-latent, RAM, or commit/pagefile pressure.
+- Remote Director sampling has no separate per-frame preview stream; Director/ComfyUI still owns preview and decode.
 - Models, GPU families, drivers, quantization layouts, and longer workflows outside the validation matrix need independent correctness, memory, and visual acceptance.
 
 ## Troubleshooting
@@ -559,13 +605,15 @@ A playable file, non-black pixels, and absence of NaN/Inf are only basic gates. 
 ```text
 raylight/
 ├─ src/raylight/                         Raylight plus Windows P2P/FSDP layer
+│  └─ integrations/mmh3director/         Director MODEL proxy, bridge, and contracts
 ├─ scripts/                              launcher and hardware preflight
 ├─ tests/                                unit tests, hardware probes, benchmark tool
-├─ example_workflows/                    LTX and MiniMax H3 workflows and upstream inputs
+├─ example_workflows/                    LTX, MiniMax H3, and Director workflows and upstream inputs
 ├─ benchmark_payloads/                   checked-in 5-second API prompts
 ├─ docs/                                 technical plans, diagnostics, and results
 │  ├─ testing/minimax-h3/                MiniMax staged validation and usage
-│  └─ superpowers/plans/                 O1-O7 plans and acceptance gates
+│  ├─ releases/                          bilingual release and upgrade notes
+│  └─ superpowers/plans/                 O1-O8 plans and acceptance gates
 ├─ environment-windows-v100.json         machine-readable validation matrix
 ├─ requirements-windows-v100.txt         pinned Windows V100 dependencies
 ├─ WINDOWS_P2P_CHANGES.md                previous-stage changes

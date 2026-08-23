@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.10.0 新增显式可选的 `Ray MODEL Adapter (MMH3Director)`：保留 Director 单节点参数面板，同时把 Director 的扩散采样转交双 V100 FSDP/P2P Worker。t2v、i2v、fl2v、r2v、v2v、rv2v、同模型 Refine 和真实多段 R2V 均已实机通过。详见 [O8 中文发布说明](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.zh-CN.md)。
+
 MiniMax H3 O6 现已加入显式 `fp16_h3_safe` 模式：FP32 数值岛保护残差与敏感输出，主 Attention/MLP 分支使用 FP16。正式 I2V/REF2VA 采样分别达到 3.299×/3.416×，REF2VA 的当前最佳实验配置达到 3.714×；质量验收通过，但 4× 初始门槛尚未通过。完整的实装、资源数据和失败实验见[中文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md)与[英文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md)。
 
 2026-08-19 启动体验更新：通用启动脚本现在默认选择每张 GPU `256 MiB` P2P buffer，明确提供 `128/256/512 MiB` 三档，并默认关闭 Rank/P2P 详细诊断日志。参见[中文更新说明](docs/releases/2026-08-19-launcher-controls.zh-CN.md)或[English release note](docs/releases/2026-08-19-launcher-controls.en.md)。
@@ -29,6 +31,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
+- 当前分支版本：1.10.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -36,6 +39,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - P2P/Ulysses 历史测试：[docs/TESTING.md](docs/TESTING.md)
 - MiniMax H3 O6 安全 FP16 升级记录：[中文](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) / [English](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md)
 - 启动脚本三档容量与日志开关更新：[中文](docs/releases/2026-08-19-launcher-controls.zh-CN.md) / [English](docs/releases/2026-08-19-launcher-controls.en.md)
+- MiniMaxH3Director MODEL 适配器 1.10.0：[中文](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md) / [English](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -73,6 +77,29 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 不会自动分片整个 ComfyUI 工作流；当前 FSDP 范围是通过 `RayUNETLoader`
   加载的 Diffusion Model。
 - 当前不支持 GGUF + FSDP、多于两个 rank、多机和训练反向传播。
+
+## MiniMaxH3Director 适配器
+
+### 两条工作流路径
+
+| 路径 | 采样控制面 | 适合场景 | 兼容状态 |
+|---|---|---|---|
+| 原显式 Ray sampler | `RayUNETLoader` + XFuser sampler/guider/scheduler 节点 | LTX、现有 MiniMax H3 I2V/REF2VA 工作流、精细拆分参数 | 完整保留；旧 JSON 无需迁移 |
+| Director MODEL 代理 | `RayUNETLoader` → `Ray MODEL Adapter (MMH3Director)` → `MiniMaxH3Director` | 用一个 Director 节点管理 seed、steps、sampler、scheduler、shift、时长、FPS、分辨率、分镜和输出 | 1.10.0 新增；显式选择才启用 |
+
+代理本身不保存模型权重。它只标记“这个 MODEL 的采样请求交给哪些 Ray Worker”，并只拦截自己的精确类型。Director 准备完 conditioning、latent、noise 和 sigmas 后照常调用 `comfy.sample.sample()`；桥把这一次调用交给两个 Worker，等待返回 latent，再由 Director 继续 VAE、音频、拼接和保存。因此不存在 Director 本地采样一次、Raylight 再采样一次的重复计算。
+
+普通 ComfyUI `MODEL` 完全透传。代理请求失败时明确报错，不会静默退回 GPU0。MiniMaxH3Director 源码未修改，兼容目标为 1.0.0、提交 `d655912`。
+
+### 能力边界
+
+- 已验证 t2v、i2v、fl2v、r2v、v2v、rv2v、同 checkpoint Refine 和多段 R2V。
+- 每个 Director pass 对应一个远程 operation；多段按段调用但复用相同 Worker、Gloo 组和 FSDP shard。
+- Director 仍负责并保留所有生成参数；Raylight 只负责 GPU 数量、并行度、FSDP、CPU offload、attention 和 Worker 生命周期。
+- 只有 Diffusion Model 被 FSDP 分片。CLIP/Text Encoder、Video VAE、Audio VAE、预处理、拼接和保存仍在 ComfyUI 主进程。
+- 主进程预处理模型会在远程采样前卸载出 GPU，避免与 rank 0 抢显存；可重载权重仍可能占用物理内存/commit，多段与长视频必须同时监控 RAM 和 pagefile。
+- 已验证同模型 Refine；需要另一 checkpoint、不同权重或不经过标准 `comfy.sample.sample()` 的自定义 refine 不作保证。
+- 远程 Worker 不提供独立逐帧预览；Director 在拿到返回 latent 后继续其原有预览/解码流程。
 
 ## 当前 FSDP 实现与能力边界
 
@@ -625,6 +652,19 @@ video/raylight_o6/manual_ref2va_o6_baseline_fp32
 FP16 dtype allowlist、FlashAttention、`--highvram` 或 `--disable-smart-memory`。这些配置
 不是 O6 已验收结果的一部分。
 
+### 9. 使用 MiniMaxH3Director 双卡工作流
+
+1. 使用本仓库根目录的 `start_raylight_p2p.ps1` 启动 ComfyUI。当前已验收默认档为 `256 MiB`，正常使用保持详细诊断关闭。
+2. 加载 `example_workflows/MMH3Director_Windows_V100_FSDP.json`。本机部署副本通常为 `<ComfyUI>\user\default\workflows\MMH3Director.json`。
+3. 在 Ray 初始化节点保持 `GPU=2`、`ulysses_degree=2`、`ring_degree=1`、`FSDP=true`、`FSDP_CPU_OFFLOAD=true`。V100 使用 `fp16_h3_safe`；checkpoint 与 Turbo LoRA 必须匹配 FL2VA 或 REF2VA 模式。
+4. Director 节点直接设置任务类型、seed、steps、sampler、scheduler、video/audio shift、Megapixels、宽高比、FPS、时长、Prompt group、分镜和输出。不要再连接一套 XFuser sampler/guider/scheduler。
+5. 检查唯一模型路径：`RayInitializer → RayLoraLoader → RayUNETLoader → Ray MODEL Adapter (MMH3Director) → MiniMaxH3Director`。普通 MODEL 接到 Director 不会启用双卡代理。
+6. 首次运行是冷启动；相同 checkpoint 再运行会复用两个 Worker 和 FSDP shard。改变 seed 或 Director 参数不需要重启 ComfyUI。切换 FL2VA/REF2VA checkpoint 时分支会成对回收旧 Worker 后重建。
+7. 一个会话结束且不再生成时，使用连接到同一 `RAY_ACTORS` 链的 `RayKill` 做最终回收。普通 ComfyUI 显存清理节点不能保证销毁 Ray Worker、raylet 和 GCS。
+8. 双卡生效时，采样阶段两张 V100 都应出现高利用率；日志每个 Director pass 只有一个 operation，不能出现本地 sampler 第二次执行。完整实测方法见 [O8 测试汇总](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.zh-CN.md)。
+
+同 checkpoint 连续生成、同模型 Refine 与多段生成均已通过。多段不会为每一段重建 Worker，但 CLIP/VAE 的主进程权重和中间结果仍可能推高物理内存与 commit；更长视频不能只按显存判断容量。若需要强制隔离两个大型工作流，可在前一个工作流末尾 `RayKill`，等待 GPU/Worker 清空后再启动下一个。
+
 ## 启动脚本设置了什么
 
 | 设置 | 默认值 | 作用 |
@@ -769,6 +809,7 @@ FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性�
 | 当前计算策略 | 默认模式为 FP8 存储、FP32 计算；`fp16_h3_safe` 使用 FP32 数值岛和 FP16 Attention/MLP |
 | O6 | 功能与质量通过；I2V/REF2VA 为 3.299×/3.416×，REF2VA 可选实验最佳 3.714×；4× 门槛未通过 |
 | O7 | LTX/LTXAV 模型专用安全 FP16 预研，等待 O6 性能收尾后校正 |
+| O8 Director MODEL 代理 | t2v/i2v/fl2v/r2v/v2v/rv2v、Refine、多段、媒体、复用与回收均通过；旧路径性能门槛通过 |
 
 O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒、采样 160.72 s/it；REF2VA Turbo4 端到端 932.03 秒、采样 185.20 s/it。初始 4× 门槛分别为不高于 40.1799 和 46.3008 s/it；当前结果尚未达到。11× 仅保留为后续研究目标，不是当前版本能力。O5 的旧规格记录不作为 O6 分母。
 
@@ -777,6 +818,8 @@ O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒
 - Turbo 使用说明：[docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md](docs/testing/minimax-h3/TURBO_WORKFLOW_USAGE.md)
 - O6 计划：[中文](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.zh-CN.md) / [English](docs/superpowers/plans/2026-08-18-minimax-h3-safe-fp16-fsdp.md)
 - O7 预研：[docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
+- O8 Director 适配器测试：[中文](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.zh-CN.md) / [English](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.md)
+- O8 实施计划：[中文](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.zh-CN.md) / [English](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.md)
 
 ## 已知限制
 
@@ -787,6 +830,9 @@ O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒
 - LTX/LTXAV 应保持 ComfyUI 默认 BF16/FP32 推理范围；实测强制全局 FP16 会产生全黑视频和音频 NaN/Inf。
 - Text Encoder、Video/Audio VAE 和 Spatial/Temporal Upscaler 当前不做 FSDP 权重分片。
 - VAE 编解码与文本编码当前不会自动使用两张 GPU。
+- Director 适配器只保证 MiniMaxH3Director 1.0.0（提交 `d655912`）的标准采样接缝；不兼容版本会明确失败。
+- Director 多段复用减少模型重载，但不能消除主进程 CLIP/VAE、中间 latent、RAM 与 commit/pagefile 压力。
+- 远程 Director 采样没有独立逐帧预览流；预览与解码仍由 Director/ComfyUI 主进程处理。
 - FSDP 仍需要当前完整层、激活、P2P buffer、LoRA 和 CUDA 工作区的临时显存。
 - Ray Windows 支持仍为 Beta，进程启动和内存开销高于 Linux。
 - 其他 GPU、驱动、量化格式和模型必须自行通过完整自检与视觉验收。
@@ -834,11 +880,12 @@ LTX 已验收工作流使用 FSDP_CPU_OFFLOAD=false，MiniMax H3 完整工作流
 ```text
 raylight/
 ├─ src/raylight/                         Raylight、Windows P2P 与 FSDP 适配
+│  └─ integrations/mmh3director/         Director MODEL 代理、桥与契约
 ├─ scripts/
 │  ├─ start-comfyui-windows-p2p.ps1     通用启动脚本
 │  └─ verify-windows-v100.ps1           环境和真实 P2P 自检
 ├─ tests/                                单元测试与独立探针
-├─ example_workflows/                    LTX 2.3 与 MiniMax H3 示例/验收工作流
+├─ example_workflows/                    LTX、MiniMax H3 与 Director 示例/验收工作流
 ├─ benchmark_payloads/                   可直接用于 API 基准的 5 秒 payload
 ├─ docs/
 │  ├─ WINDOWS_V100_FSDP_TESTING.md       FSDP 测试、失败历史与验收
@@ -846,7 +893,8 @@ raylight/
 │  ├─ ltx23-model-manifest.md            模型与节点清单
 │  ├─ TESTING.md                         P2P/Ulysses 历史测试
 │  ├─ testing/minimax-h3/                MiniMax H3 分阶段验证与使用说明
-│  ├─ superpowers/plans/                 O1-O7 计划与验收门槛
+│  ├─ releases/                          中英文版本升级说明
+│  ├─ superpowers/plans/                 O1-O8 计划与验收门槛
 │  └─ windows-v100-fsdp-test-results-2026-08.csv  FSDP 精简数据
 ├─ environment-windows-v100.json         机器可读验证矩阵
 ├─ requirements-windows-v100.txt         锁定依赖
