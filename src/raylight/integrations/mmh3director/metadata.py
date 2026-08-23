@@ -54,19 +54,14 @@ def validate_rank_metadata(rows: list[dict]) -> MMH3DirectorModelMetadata:
     ordered_ranks = sorted(rows_by_rank)
     expected_ranks = list(range(len(rows_by_rank)))
     if ordered_ranks != expected_ranks:
-        raise ValueError(
-            f"MMH3Director metadata ranks must be contiguous {expected_ranks}; found {ordered_ranks}"
-        )
+        raise ValueError(f"MMH3Director metadata ranks must be contiguous {expected_ranks}; found {ordered_ranks}")
 
     reference = rows_by_rank[0]
     for rank in ordered_ranks[1:]:
         row = rows_by_rank[rank]
         for field in _METADATA_FIELDS:
             if row[field] != reference[field]:
-                raise ValueError(
-                    f"rank {rank} metadata field {field} differs from rank 0: "
-                    f"{row[field]!r} != {reference[field]!r}"
-                )
+                raise ValueError(f"rank {rank} metadata field {field} differs from rank 0: {row[field]!r} != {reference[field]!r}")
 
     return MMH3DirectorModelMetadata(
         model_family=str(reference["model_family"]),

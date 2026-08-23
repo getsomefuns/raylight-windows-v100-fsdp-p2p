@@ -3,9 +3,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW_PATH = (
-    REPO_ROOT / "example_workflows" / "MMH3Director_Windows_V100_FSDP.json"
-)
+WORKFLOW_PATH = REPO_ROOT / "example_workflows" / "MMH3Director_Windows_V100_FSDP.json"
 
 
 def _load_workflow():

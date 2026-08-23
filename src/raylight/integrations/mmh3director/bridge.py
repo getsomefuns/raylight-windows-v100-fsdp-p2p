@@ -163,19 +163,14 @@ def dispatch_mmh3director_sample(
     if not isinstance(model, RayMMH3DirectorModelProxy):
         raise TypeError("dispatch_mmh3director_sample requires RayMMH3DirectorModelProxy")
     if model.metadata.model_family != "minimax_h3":
-        raise RuntimeError(
-            "MMH3Director proxy sampling requires model_family=minimax_h3; "
-            f"found {model.metadata.model_family}"
-        )
+        raise RuntimeError(f"MMH3Director proxy sampling requires model_family=minimax_h3; found {model.metadata.model_family}")
 
     workers = list(model.ray_actors.get("workers", ()))
     if not workers:
         raise RuntimeError("MMH3Director proxy sampling requires live Ray workers")
     configured_world_size = model.ray_actors.get("world_size")
     if configured_world_size is not None and int(configured_world_size) != len(workers):
-        raise RuntimeError(
-            f"MMH3Director proxy world_size={configured_world_size} but has {len(workers)} live Ray workers"
-        )
+        raise RuntimeError(f"MMH3Director proxy world_size={configured_world_size} but has {len(workers)} live Ray workers")
 
     ensure_mmh3director_compatibility()
     _release_main_process_models_before_remote_sampling()
@@ -214,29 +209,21 @@ def dispatch_mmh3director_sample(
             futures = [worker.sample_mmh3director_request.remote(request) for worker in workers]
             results = ray.get(futures)
         except Exception as error:
-            raise RuntimeError(
-                f"MMH3Director remote sampling operation {operation_id} failed before rank validation"
-            ) from error
+            raise RuntimeError(f"MMH3Director remote sampling operation {operation_id} failed before rank validation") from error
 
         if not isinstance(results, (list, tuple)) or len(results) != len(workers):
             received = len(results) if isinstance(results, (list, tuple)) else 0
-            raise RuntimeError(
-                f"MMH3Director operation {operation_id} returned {received}/{len(workers)} rank results"
-            )
+            raise RuntimeError(f"MMH3Director operation {operation_id} returned {received}/{len(workers)} rank results")
 
         reference_samples = None
         for expected_rank, result in enumerate(results):
             if result is None:
                 raise RuntimeError(f"MMH3Director operation {operation_id} missing result for rank {expected_rank}")
             if not isinstance(result, dict):
-                raise TypeError(
-                    f"MMH3Director operation {operation_id} rank {expected_rank} returned {type(result).__name__}"
-                )
+                raise TypeError(f"MMH3Director operation {operation_id} rank {expected_rank} returned {type(result).__name__}")
             actual_rank = result.get("rank")
             if actual_rank != expected_rank:
-                raise ValueError(
-                    f"MMH3Director operation {operation_id} expected rank {expected_rank}, got rank {actual_rank}"
-                )
+                raise ValueError(f"MMH3Director operation {operation_id} expected rank {expected_rank}, got rank {actual_rank}")
             if result.get("operation_id") != operation_id:
                 raise ValueError(f"rank {expected_rank} returned a mismatched MMH3Director operation_id")
             if "samples" not in result:
@@ -262,8 +249,7 @@ def dispatch_mmh3director_sample(
     except BaseException as error:
         sampling_error = error
         print(
-            f"[Raylight] MMH3Director remote sampling failed operation={operation_id} "
-            f"error={type(error).__name__}",
+            f"[Raylight] MMH3Director remote sampling failed operation={operation_id} error={type(error).__name__}",
             flush=True,
         )
         raise

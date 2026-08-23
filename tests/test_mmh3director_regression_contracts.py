@@ -12,18 +12,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_ROOT = REPO_ROOT / "example_workflows"
 
 ACCEPTED_WORKFLOWS = {
-    "LTX2_3_i2v_Raylight_Windows_FSDP_5s.json": (
-        "2b0b6e3bab1a7adb7f5e3a8b627b0bfe5535b3d8b3e949ecb7644225f71eef84"
-    ),
-    "Minimax_H3_I2V_Windows_V100_FSDP_Turbo8.json": (
-        "2f261d43e0477e21165793edfade592e4d4eef948b0434c81db8180a8fc926a5"
-    ),
-    "Minimax_H3_I2V_Windows_V100_FSDP_Turbo8_FP16_Experimental.json": (
-        "faa485b80b87126bb45223f06c935f8372611f0d98efcd4106ee7111d3e41b02"
-    ),
-    "Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json": (
-        "af038101e582efd163d93f1fd22be7abe5d0c3a93b00b90c332f52d9ff2377ee"
-    ),
+    "LTX2_3_i2v_Raylight_Windows_FSDP_5s.json": ("2b0b6e3bab1a7adb7f5e3a8b627b0bfe5535b3d8b3e949ecb7644225f71eef84"),
+    "Minimax_H3_I2V_Windows_V100_FSDP_Turbo8.json": ("2f261d43e0477e21165793edfade592e4d4eef948b0434c81db8180a8fc926a5"),
+    "Minimax_H3_I2V_Windows_V100_FSDP_Turbo8_FP16_Experimental.json": ("faa485b80b87126bb45223f06c935f8372611f0d98efcd4106ee7111d3e41b02"),
+    "Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json": ("af038101e582efd163d93f1fd22be7abe5d0c3a93b00b90c332f52d9ff2377ee"),
     "Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json": (
         "fccd1b7ed6519cc81fa66f26a956061587f8cebce567f3ddef07ba0752a32f35"
     ),
@@ -215,9 +207,7 @@ def test_accepted_workflow_links_and_raylight_nodes_still_resolve(filename):
         "XFuserSamplerCustomAdvanced",
     }
     mappings = _all_node_mappings()
-    referenced_raylight_nodes = {
-        node["type"] for node in workflow["nodes"] if node["type"] in raylight_node_ids
-    }
+    referenced_raylight_nodes = {node["type"] for node in workflow["nodes"] if node["type"] in raylight_node_ids}
     assert referenced_raylight_nodes
     assert referenced_raylight_nodes <= mappings.keys()
 

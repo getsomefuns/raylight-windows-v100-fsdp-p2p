@@ -181,9 +181,7 @@ def test_supported_director_signature_is_fixed_to_the_accepted_commit():
 
 
 def test_missing_director_parameter_reports_version_commit_and_field():
-    def missing_scheduler(
-        *, model, positive, negative, latent, seed, cfg, steps, sampler_name, **kwargs
-    ):
+    def missing_scheduler(*, model, positive, negative, latent, seed, cfg, steps, sampler_name, **kwargs):
         del model, positive, negative, latent, seed, cfg, steps, sampler_name, kwargs
 
     with pytest.raises(RuntimeError, match=r"scheduler.*1\.0\.0.*d655912"):
@@ -191,9 +189,7 @@ def test_missing_director_parameter_reports_version_commit_and_field():
 
 
 def test_renamed_director_parameter_reports_actionable_error():
-    def renamed_scheduler(
-        *, model, positive, negative, latent, seed, cfg, steps, sampler_name, schedule, **kwargs
-    ):
+    def renamed_scheduler(*, model, positive, negative, latent, seed, cfg, steps, sampler_name, schedule, **kwargs):
         del model, positive, negative, latent, seed, cfg, steps, sampler_name, schedule, kwargs
 
     with pytest.raises(RuntimeError, match=r"scheduler.*update.*adapter"):
@@ -277,9 +273,7 @@ def test_proxy_dispatch_fails_closed_for_wrong_family_or_dead_actors(model_famil
     )
 
     with pytest.raises(RuntimeError, match=message):
-        bridge.dispatch_mmh3director_sample(
-            proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1)
-        )
+        bridge.dispatch_mmh3director_sample(proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1))
 
 
 def test_actor_submission_failure_is_reported_without_local_fallback():
@@ -299,9 +293,7 @@ def test_actor_submission_failure_is_reported_without_local_fallback():
         mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
         pytest.raises(RuntimeError, match="failed before rank validation") as error,
     ):
-        bridge.dispatch_mmh3director_sample(
-            proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1)
-        )
+        bridge.dispatch_mmh3director_sample(proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1))
 
     assert isinstance(error.value.__cause__, RuntimeError)
     assert "actor is dead" in str(error.value.__cause__)
@@ -315,9 +307,7 @@ def test_rank_tensor_mismatch_is_rejected():
         mock.patch.object(bridge.ray, "get", side_effect=lambda futures: futures),
         pytest.raises(ValueError, match="rank 1 samples differ from rank 0"),
     ):
-        bridge.dispatch_mmh3director_sample(
-            proxy, torch.zeros(2), 1, 1.0, "euler", "simple", [], [], torch.zeros(2)
-        )
+        bridge.dispatch_mmh3director_sample(proxy, torch.zeros(2), 1, 1.0, "euler", "simple", [], [], torch.zeros(2))
 
 
 def test_non_finite_rank_tensor_is_rejected():
@@ -328,9 +318,7 @@ def test_non_finite_rank_tensor_is_rejected():
         mock.patch.object(bridge.ray, "get", side_effect=lambda futures: futures),
         pytest.raises(ValueError, match="rank 0 returned NaN/Inf"),
     ):
-        bridge.dispatch_mmh3director_sample(
-            proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1)
-        )
+        bridge.dispatch_mmh3director_sample(proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1))
 
 
 def test_missing_or_misranked_worker_result_is_rejected():
@@ -341,9 +329,7 @@ def test_missing_or_misranked_worker_result_is_rejected():
         mock.patch.object(bridge.ray, "get", side_effect=lambda futures: [futures[0], None]),
         pytest.raises(RuntimeError, match="missing result for rank 1"),
     ):
-        bridge.dispatch_mmh3director_sample(
-            proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1)
-        )
+        bridge.dispatch_mmh3director_sample(proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1))
 
     with (
         mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
@@ -354,6 +340,4 @@ def test_missing_or_misranked_worker_result_is_rejected():
         ),
         pytest.raises(ValueError, match="expected rank 1.*rank 9"),
     ):
-        bridge.dispatch_mmh3director_sample(
-            proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1)
-        )
+        bridge.dispatch_mmh3director_sample(proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1))

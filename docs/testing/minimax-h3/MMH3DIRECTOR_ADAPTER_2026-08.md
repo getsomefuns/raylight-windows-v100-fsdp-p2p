@@ -124,3 +124,20 @@ An initial REF2VA sequence contained roughly 99-second E2E outliers, while remot
 ## 10. Final conclusion
 
 Task 8 is complete. O8 validates t2v, i2v, fl2v, r2v, v2v, rv2v, same-model Refine, and real multi-segment generation. Each pass executes exactly one FSDP + CUDA P2P diffusion operation on the two Ray workers with no duplicate local sample. Media, reuse, checkpoint switching, final reclamation, and all five legacy performance gates pass. This does not claim that CLIP, Video/Audio VAE, or mux/save are FSDP-sharded; those remain in the Director/ComfyUI main process.
+
+## 11. Task 10 final release QA
+
+| Check | Result |
+|---|---|
+| Full pytest | `418 passed, 1 warning, 30 subtests passed` in 85.21 seconds |
+| Focused tests after O8 formatting | `41 passed` in 14.24 seconds |
+| Ruff | All O8 Python files since the rollback tag pass lint; six new O8 files pass the formatter after scoped formatting |
+| Director-installed startup | Port 8188 starts; both adapter and Director nodes are discoverable with the correct display name |
+| Director-blocked startup | With only Raylight whitelisted, port 8188 starts; the adapter exists, Director does not, and Raylight has no import dependency |
+| One ComfyUI session | Legacy I2V Turbo8 smoke succeeds in 260.51 s, followed without restart/manual cache clearing by Director T2V smoke in 310.52 s |
+| Same-session remote sample | Director has one operation; eight remote steps run at 8.87 s/it; no second local diffusion |
+| Checkpoint isolation | Legacy FP32-compute workers and Director safe-FP16 workers switch as a pair without stale model state |
+| Final reclamation | RayKill removes workers/CUDA contexts; after stopping test services, GPU, Ray, and ComfyUI processes are all absent |
+| Git/repository | `git diff --check` passes; only final format/docs remain before commit; Git pack is about 8.06 MiB and no runtime video/log enters Git |
+
+A full-repository Ruff scan still reports 32 unused-import/variable findings that predate O8 in upstream or historical files. O8 deliberately avoids unrelated mass cleanup. The pre-commit Python runner is not installed, but its two configured hooks were run directly: O8 lint passes and new O8 files pass the formatter. Git `fsck` reports only ordinary dangling objects from historical commits/staging and no corruption.

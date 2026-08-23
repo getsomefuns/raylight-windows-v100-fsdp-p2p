@@ -124,3 +124,20 @@ REF2VA 首轮热运行出现过约 99 秒的端到端离群值，但远程提交
 ## 10. 最终结论
 
 Task 8 完成。O8 已验证 t2v、i2v、fl2v、r2v、v2v、rv2v、同模型 Refine 和真实多段工作流；每个 pass 只在两个 Ray Worker 上执行一次 FSDP + CUDA P2P 扩散，本地无重复采样。媒体、复用、checkpoint 切换、完整回收和五条旧工作流性能门槛均通过。该结论不表示 CLIP、Video/Audio VAE 或封装保存被 FSDP 分片；这些仍由 Director/ComfyUI 主进程执行。
+
+## 11. Task 10 最终发布质检
+
+| 检查 | 结果 |
+|---|---|
+| 完整 pytest | `418 passed, 1 warning, 30 subtests passed`，85.21 秒 |
+| O8 格式化后聚焦测试 | `41 passed`，14.24 秒 |
+| Ruff | 从回退标签以来的 O8 Python 文件 lint 全部通过；6 个 O8 新文件经 formatter 整理后通过 |
+| Director 已安装启动 | 8188 正常启动；适配节点与 Director 节点均可发现，显示名正确 |
+| Director 被屏蔽启动 | 仅白名单加载 Raylight 时 8188 正常启动；适配节点存在，Director 节点不存在，Raylight 无导入依赖 |
+| 同一 ComfyUI 会话 | 先旧 I2V Turbo8 smoke 260.51 秒成功，再 Director T2V smoke 310.52 秒成功；未重启或手工清缓存 |
+| 同会话远程采样 | Director 只有一个 operation；8 步远程采样 8.87 s/it；无第二次本地扩散 |
+| checkpoint 隔离 | 旧路径 FP32 计算 Worker 与 Director safe-FP16 Worker 成对切换，无旧模型状态污染 |
+| 最终回收 | RayKill 后 Worker/CUDA context 清空；关闭测试服务后 GPU、Ray 与 ComfyUI 进程均为零 |
+| Git 与仓库 | `git diff --check` 通过；工作树只包含待提交的最终格式/文档；Git pack 约 8.06 MiB，无运行视频或日志进入仓库 |
+
+Ruff 全仓扫描仍报告 32 个 O8 之前就存在的上游/历史未使用导入或变量问题；本阶段没有借机大范围格式化或修改这些无关文件。仓库的 pre-commit Python runner 未安装，但其两个 hook 已直接执行：O8 lint 通过，O8 新文件 formatter 通过。Git `fsck` 只发现正常的 dangling 对象（历史提交/暂存产生），没有对象损坏。

@@ -26,9 +26,7 @@ class RayMMH3DirectorModelAdapter:
 
         configured_world_size = ray_actors.get("world_size")
         if configured_world_size is not None and int(configured_world_size) != len(workers):
-            raise ValueError(
-                f"RAY_ACTORS world_size={configured_world_size} disagrees with {len(workers)} workers"
-            )
+            raise ValueError(f"RAY_ACTORS world_size={configured_world_size} disagrees with {len(workers)} workers")
 
         futures = [worker.get_mmh3director_proxy_metadata.remote() for worker in workers]
         rows = ray.get(futures)
@@ -38,9 +36,7 @@ class RayMMH3DirectorModelAdapter:
 
         metadata = validate_rank_metadata(rows)
         if metadata.model_family != "minimax_h3":
-            raise ValueError(
-                f"MMH3Director adapter requires MiniMax H3 workers; found {metadata.model_family}"
-            )
+            raise ValueError(f"MMH3Director adapter requires MiniMax H3 workers; found {metadata.model_family}")
 
         return (
             RayMMH3DirectorModelProxy(
