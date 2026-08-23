@@ -23,7 +23,8 @@ param(
     [Parameter(Position = 8)]
     [int]$CudaMaxSplitSizeMiB = 128,
     [Parameter(Position = 9)]
-    [double]$ReserveVramGiB = 2,
+    [ValidateRange(0, 8)]
+    [double]$ReserveVramGiB = 3,
     [switch]$EnableDiagnostics,
     [switch]$ValidateOnly
 )

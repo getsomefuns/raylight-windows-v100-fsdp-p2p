@@ -303,10 +303,14 @@ Capacity and diagnostic settings are read when Ray workers start. Stop ComfyUI a
 Open <http://127.0.0.1:8188>. The essential ComfyUI command is:
 
 ```text
-main.py --listen 127.0.0.1 --port 8188 --disable-cuda-malloc
+main.py --listen 127.0.0.1 --port 8188 --disable-cuda-malloc --reserve-vram 3
 ```
 
 `--disable-cuda-malloc` is required by the validated V100 VAE path to avoid `cudaErrorNotSupported / operation not supported`.
+The launcher now defaults to `-ReserveVramGiB 3`. This leaves enough main-process workspace for the
+validated 0.9 MP two-reference MMH3Director Qwen3-VL/NVFP4 encode. Use `2` only for historical O6
+reproduction or lighter single-reference jobs; `4` offers more headroom for larger reference sets at
+the cost of additional text-encoder CPU offload and potentially slower preprocessing.
 
 If Gloo selects a VPN, Hyper-V, WSL, or TUN adapter, specify the physical adapter IPv4:
 
@@ -470,7 +474,7 @@ FlashAttention, `--highvram`, or `--disable-smart-memory` when reproducing the a
 
 ### 8. Run the MiniMaxH3Director dual-GPU workflow
 
-1. Start ComfyUI with `start_raylight_p2p.ps1` from the environment root. The accepted default is a 256 MiB buffer with detailed diagnostics off.
+1. Start ComfyUI with `start_raylight_p2p.ps1` from the environment root. The accepted defaults are a 256 MiB P2P buffer, 3 GiB main-process VRAM reserve, and detailed diagnostics off.
 2. Load `example_workflows/MMH3Director_Windows_V100_FSDP.json`. A local deployed copy normally lives at `<ComfyUI>\user\default\workflows\MMH3Director.json`.
 3. Keep `GPU=2`, `ulysses_degree=2`, `ring_degree=1`, `FSDP=true`, and `FSDP_CPU_OFFLOAD=true` in Ray initialization. Use `fp16_h3_safe` on V100; match the checkpoint and official Turbo LoRA to FL2VA or REF2VA mode.
 4. Set task type, seed, steps, sampler, scheduler, video/audio shifts, megapixels, aspect ratio, FPS, duration, prompt groups, segments, and output directly on Director. Do not add another XFuser sampler/guider/scheduler stack.
@@ -506,7 +510,7 @@ ComfyUI -> Raylight workers -> FSDP all-gather / Ulysses all-to-all
 TCPStore + Gloo -------------> rendezvous, groups, control, unmatched operations
 ```
 
-The launcher sets UTF-8 logging, `USE_LIBUV=0`, localhost rendezvous, Ray memory-monitor overrides, two visible GPUs, a 256 MiB per-rank P2P buffer by default, a 50 GiB/s minimum P2P gate, and diagnostics off. It exposes 128/256/512 MiB choices plus `-EnableDiagnostics`. See the Chinese README for the complete environment-variable table and memory trade-offs.
+The launcher sets UTF-8 logging, `USE_LIBUV=0`, localhost rendezvous, Ray memory-monitor overrides, two visible GPUs, a 256 MiB per-rank P2P buffer by default, a 3 GiB main-process VRAM reserve, a 50 GiB/s minimum P2P gate, and diagnostics off. It exposes 128/256/512 MiB P2P choices, `-ReserveVramGiB`, and `-EnableDiagnostics`. See the Chinese README for the complete environment-variable table and memory trade-offs.
 
 P2P capacity is a persistent CUDA staging-buffer limit per GPU, not a direct conversion from video duration or resolution. Increasing it does not reserve additional host RAM/pagefile and does not inherently improve speed; it consumes the selected amount of VRAM per GPU. Raise it only when a measured collective payload exceeds the current choice. Insufficient capacity fails explicitly rather than silently spilling through host memory.
 

@@ -141,3 +141,39 @@ Task 8 is complete. O8 validates t2v, i2v, fl2v, r2v, v2v, rv2v, same-model Refi
 | Git/repository | `git diff --check` passes; only final format/docs remain before commit; Git pack is about 8.06 MiB and no runtime video/log enters Git |
 
 A full-repository Ruff scan still reports 32 unused-import/variable findings that predate O8 in upstream or historical files. O8 deliberately avoids unrelated mass cleanup. The pre-commit Python runner is not installed, but its two configured hooks were run directly: O8 lint passes and new O8 files pass the formatter. Git `fsck` reports only ordinary dangling objects from historical commits/staging and no corruption.
+
+## 12. Two-reference 0.9 MP VRAM regression and fix (2026-08-24)
+
+The reproducer is segment 5 of the local `MMH3Director.json`: R2V, 1280x736, 72 output frames at
+24 FPS, two reference images, Turbo4, and a same-model two-step Refine. The full five-segment run
+failed as segment 5 began. To exclude cross-segment accumulation, segment 5 was then run alone in a
+fresh ComfyUI/Ray process.
+
+| Condition | Result | Evidence |
+|---|---|---|
+| Cold process, segment 5 only, `--reserve-vram 2` | Fail | After 123.39 s, Qwen3-VL MLP NVFP4 dequantization could not allocate 500 MiB with about 463 MiB free on GPU0; Ray sampling and Refine had not started |
+| Cold process, segment 5 only, `--reserve-vram 3` | Pass | 435.27 s end to end; dual-GPU sampling about 13.26/13.00 GiB at 100%/100%; ComfyUI status success |
+| Reused workers in the same session, full five segments, `--reserve-vram 3` | Pass | 1475.655 s end to end; 5×73=365 frames at 1280x736 and 24 FPS; segment 5 crossed two-reference Qwen encoding and completed both main sampling and Refine |
+
+The failing stack is in the main ComfyUI process at `clip.encode_from_tokens_scheduled()`, not rank
+skew and not overlap with prior decode, mux, Refine, or the next segment. The second reference adds
+Qwen multimodal tokens and activation peak. The old 2 GiB reserve kept too much Text Encoder weight
+on GPU0 and left no contiguous workspace for temporary quantized-weight dequantization. The fix only
+raises the public launcher default to 3 GiB while retaining an override; it does not remove a
+reference, lower reference resolution, change seed/steps, or alter the numerical generation path.
+
+The accepted output is H.264/AAC, 1280x736, 72 frames, 24 FPS, and 3.042 seconds. Manual first/middle/
+last-frame inspection shows coherent retro-title motion and a correct final `LATE CHECKOUT` card with
+no black, colored-noise, or frozen output. This focused rerun did not collect physical RAM, commit, or
+pagefile peaks, so no values are inferred for those metrics.
+
+The user-edited complete five-segment workflow was then submitted without restarting ComfyUI or
+recreating the workers. Each segment advanced serially through main sampling, Refine, GPU0 video/audio
+decode and cache, then the next segment; no prior-decode/next-sample overlap was observed. During the
+two-reference Qwen preprocessing for segment 5, GPU0 reached about 15.50 GiB with about 739 MiB free.
+Remote sampling then used about 13.26/13.00 GiB at 100%/100%. After task completion, the GPUs returned
+to about 1.27/1.01 GiB. At completion, available physical RAM was about 45.2 GiB and committed memory
+about 100.6 GiB. Pagefile usage rose from an observed 2.03% during the segments to about 2.84% during
+final merging, but it did not grow monotonically per segment or cause OOM. The Director history contains
+the merged 365-frame image output and audio. The minimal API validation graph did not connect a final
+video-save node, so this run is not recorded as a complete MP4 artifact.

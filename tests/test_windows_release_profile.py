@@ -73,7 +73,7 @@ class WindowsReleaseProfileTests(unittest.TestCase):
             result.stdout,
         )
         self.assertIn("Rank/P2P diagnostics: disabled", result.stdout)
-        self.assertIn("Reserved VRAM: 2 GiB", result.stdout)
+        self.assertIn("Reserved VRAM: 3 GiB", result.stdout)
 
     def test_validate_only_accepts_each_documented_mib_choice(self):
         for capacity_mib, capacity_bytes in (

@@ -405,11 +405,14 @@ http://127.0.0.1:8188
 脚本相当于使用以下关键 ComfyUI 参数：
 
 ```text
-main.py --listen 127.0.0.1 --port 8188 --disable-cuda-malloc
+main.py --listen 127.0.0.1 --port 8188 --disable-cuda-malloc --reserve-vram 3
 ```
 
 `--disable-cuda-malloc` 对已验证的 V100 VAE 路径是必要条件，用于避免
-`cudaErrorNotSupported / operation not supported`。当前默认脚本没有添加
+`cudaErrorNotSupported / operation not supported`。默认 `-ReserveVramGiB 3` 为主进程
+CLIP/VAE 临时计算留出空间；它已修复 0.9MP MMH3Director 双参考图在 Qwen3-VL NVFP4
+解量化阶段的冷启动 OOM。单参考图或历史 O6 精确复现可显式使用 `2`，更多/更大的参考图
+可尝试 `4`，代价是更多 Text Encoder 权重转到 CPU、预处理可能变慢。当前默认脚本没有添加
 `--highvram` 或 `--disable-smart-memory`。
 
 ### 5. 网卡选择
@@ -654,7 +657,7 @@ FP16 dtype allowlist、FlashAttention、`--highvram` 或 `--disable-smart-memory
 
 ### 9. 使用 MiniMaxH3Director 双卡工作流
 
-1. 使用本仓库根目录的 `start_raylight_p2p.ps1` 启动 ComfyUI。当前已验收默认档为 `256 MiB`，正常使用保持详细诊断关闭。
+1. 使用本仓库根目录的 `start_raylight_p2p.ps1` 启动 ComfyUI。当前已验收默认档为 `256 MiB` P2P buffer、`3 GiB` 主进程显存预留，正常使用保持详细诊断关闭。
 2. 加载 `example_workflows/MMH3Director_Windows_V100_FSDP.json`。本机部署副本通常为 `<ComfyUI>\user\default\workflows\MMH3Director.json`。
 3. 在 Ray 初始化节点保持 `GPU=2`、`ulysses_degree=2`、`ring_degree=1`、`FSDP=true`、`FSDP_CPU_OFFLOAD=true`。V100 使用 `fp16_h3_safe`；checkpoint 与 Turbo LoRA 必须匹配 FL2VA 或 REF2VA 模式。
 4. Director 节点直接设置任务类型、seed、steps、sampler、scheduler、video/audio shift、Megapixels、宽高比、FPS、时长、Prompt group、分镜和输出。不要再连接一套 XFuser sampler/guider/scheduler。
@@ -681,6 +684,7 @@ FP16 dtype allowlist、FlashAttention、`--highvram` 或 `--disable-smart-memory
 | `RAYLIGHT_WINDOWS_P2P_MIN_GIB_S` | `50` | 启动带宽硬门槛 |
 | `RAYLIGHT_RANK_DIAG` | `0` | 默认关闭 Rank/P2P 详细诊断；`-EnableDiagnostics` 设为 `1` |
 | `CUDA_VISIBLE_DEVICES` | `0,1` | 固定两张目标 GPU 的可见顺序 |
+| `--reserve-vram` / `-ReserveVramGiB` | `3 GiB` | 给主进程 CLIP/VAE 与量化权重临时解量化保留工作空间 |
 
 内存监控覆盖可能让系统在压力过高时进入换页；它是为了避免 Ray 过早终止大型工作流，
 不是免费的性能优化。请监控系统内存和 swap/pagefile。

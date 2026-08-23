@@ -28,6 +28,8 @@ The implementation is an experimental, inference-only compatibility layer for na
 - Applies chunked RMSNorm into a separate output tensor so residual inputs are not overwritten.
 - Applies shape-preserving activations in place, while shape-changing activations such as SwiGLU receive correctly shaped chunked output storage.
 - Retains the required `--disable-cuda-malloc` Windows V100 launch mode.
+- Defaults the public launcher to a 3 GiB main-process VRAM reserve. The previous 2 GiB default could
+  OOM while Qwen3-VL encoded two 0.9 MP MMH3Director references, before Ray sampling or Refine began.
 
 ## Diagnostics and release gates
 
@@ -36,6 +38,7 @@ The implementation is an experimental, inference-only compatibility layer for na
 - Adds checked-in 5-second ComfyUI workflow and API payloads for single, Ray single, Ulysses, and FSDP comparisons.
 - Separates the historical P2P/Ulysses results from the current FSDP acceptance record.
 - The public launcher defaults to a 256 MiB per-GPU P2P staging buffer, displays and validates the 128/256/512 MiB choices, and keeps Rank/P2P diagnostics disabled unless `-EnableDiagnostics` is supplied.
+- `-ReserveVramGiB` remains configurable from 0 to 8 GiB; 3 GiB is the validated two-reference Director default.
 - The low-level worker fallback remains 128 MiB when Raylight is launched without the repository script. The legacy `-P2PCapacityBytes` launcher parameter remains available for automation compatibility.
 
 ## Validated scope
