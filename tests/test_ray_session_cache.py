@@ -4,7 +4,7 @@ import sys
 import unittest
 from unittest import mock
 
-from tests.path_helpers import comfy_root
+from .path_helpers import comfy_root
 
 
 COMFY_ROOT = comfy_root()

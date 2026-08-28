@@ -253,7 +253,7 @@ P2P profile 也证明双卡确实在交换数据：初始安全 FP16 I2V 共 528
 
 ## 证据索引
 
-原始日志、遥测 CSV、API prompt 和 benchmark JSON 保留在本机 `<环境根目录>\logs\minimax-h3\o2`。以下索引包含成功、失败、未完成和被探针扰动的 O6 尝试：
+原始日志、遥测 CSV、API prompt 和 benchmark JSON 保留在本机 `<仓库根目录>/.local/artifacts/logs/minimax-h3/o2`。以下索引包含成功、失败、未完成和被探针扰动的 O6 尝试：
 
 | 类别 | 证据目录 |
 |---|---|

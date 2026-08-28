@@ -16,11 +16,14 @@ function Get-NormalizedFullPath {
 }
 
 function Get-TrackedFiles {
-    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Commit
+    )
 
-    $output = @(& git -c "safe.directory=$RepositoryRoot" -C $RepositoryRoot ls-files)
+    $output = @(& git -c "safe.directory=$RepositoryRoot" -C $RepositoryRoot ls-tree -r --name-only $Commit)
     if ($LASTEXITCODE -ne 0) {
-        throw "Unable to read the Git tracked-file manifest from: $RepositoryRoot"
+        throw "Unable to read the immutable Git HEAD manifest from: $RepositoryRoot"
     }
 
     $files = @($output | Where-Object { $_ -and -not $_.StartsWith(".git/") } | Sort-Object -Unique)
@@ -53,6 +56,9 @@ function Test-IsRuntimeCachePath {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
 
     $normalized = $RelativePath.Replace("\", "/")
+    if ($normalized.Equals(".raylight-deployed-commit", [StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
     $segments = @($normalized.Split("/"))
     if (
         $segments -contains "__pycache__" -or
@@ -66,11 +72,29 @@ function Test-IsRuntimeCachePath {
         $normalized.EndsWith(".pyo", [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-ExpectedHashes {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string[]]$TrackedFiles
+    )
+
+    $hashes = @{}
+    foreach ($relative in $TrackedFiles) {
+        $file = Join-Path $Root ($relative.Replace("/", "\"))
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+            throw "Immutable archive is missing a tracked file: $relative"
+        }
+        $hashes[$relative.Replace("\", "/")] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+    }
+    return $hashes
+}
+
 function Test-DeploymentTree {
     param(
-        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$DeploymentRoot,
-        [Parameter(Mandatory = $true)][string[]]$TrackedFiles
+        [Parameter(Mandatory = $true)][string[]]$TrackedFiles,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ExpectedHashes,
+        [Parameter(Mandatory = $true)][string]$SourceCommit
     )
 
     $issues = [Collections.Generic.List[string]]::new()
@@ -81,17 +105,24 @@ function Test-DeploymentTree {
         return $issues.ToArray()
     }
 
+    $metadataPath = Join-Path $DeploymentRoot ".raylight-deployed-commit"
+    if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+        $issues.Add("MISSING_DEPLOYMENT_METADATA: .raylight-deployed-commit")
+    }
+    elseif ((Get-Content -LiteralPath $metadataPath -Raw).Trim() -ne $SourceCommit) {
+        $issues.Add("CHANGED_DEPLOYMENT_METADATA: .raylight-deployed-commit")
+    }
+
     foreach ($relative in $TrackedFiles) {
-        $null = $expected.Add($relative.Replace("\", "/"))
-        $sourceFile = Join-Path $RepositoryRoot ($relative.Replace("/", "\"))
+        $normalized = $relative.Replace("\", "/")
+        $null = $expected.Add($normalized)
         $deployedFile = Join-Path $DeploymentRoot ($relative.Replace("/", "\"))
         if (-not (Test-Path -LiteralPath $deployedFile -PathType Leaf)) {
             $issues.Add("MISSING: $relative")
             continue
         }
-        $sourceHash = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
         $deployedHash = (Get-FileHash -LiteralPath $deployedFile -Algorithm SHA256).Hash
-        if ($sourceHash -ne $deployedHash) {
+        if ($ExpectedHashes[$normalized] -ne $deployedHash) {
             $issues.Add("CHANGED: $relative")
         }
     }
@@ -139,43 +170,63 @@ if (-not (Test-Path -LiteralPath $customNodes -PathType Container)) {
     throw "ComfyUI custom_nodes directory does not exist: $customNodes"
 }
 
-$tracked = @(Get-TrackedFiles -RepositoryRoot $source)
-
-if ($VerifyOnly) {
-    $issues = @(Test-DeploymentTree -RepositoryRoot $source -DeploymentRoot $target -TrackedFiles $tracked)
-    if ($issues.Count -gt 0) {
-        $issues | ForEach-Object { Write-Output $_ }
-        throw "Deployment drift detected ($($issues.Count) issue(s))."
-    }
-    Write-Output "DEPLOYMENT_VERIFIED files=$($tracked.Count) target=$target"
-    return
+$sourceCommit = @(& git -c "safe.directory=$source" -C $source rev-parse HEAD)[0]
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') {
+    throw "Unable to resolve the source repository commit: $source"
 }
+$sourceChanges = @(& git -c "safe.directory=$source" -C $source status --porcelain --untracked-files=no)
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to inspect tracked source changes: $source"
+}
+if ($sourceChanges.Count -gt 0) {
+    throw "Source repository has tracked modifications; commit them before deployment."
+}
+$tracked = @(Get-TrackedFiles -RepositoryRoot $source -Commit $sourceCommit)
 
 $token = [Guid]::NewGuid().ToString("N")
 $stage = Join-Path $customNodes ".raylight.deploy.$token"
 $backup = Join-Path $customNodes ".raylight.backup.$token"
+$archive = Join-Path $customNodes ".raylight.archive.$token.tar"
 Assert-SafeTemporaryPath -Candidate $stage -ExpectedParent $customNodes -ExpectedPrefix ".raylight.deploy."
 Assert-SafeTemporaryPath -Candidate $backup -ExpectedParent $customNodes -ExpectedPrefix ".raylight.backup."
+Assert-SafeTemporaryPath -Candidate $archive -ExpectedParent $customNodes -ExpectedPrefix ".raylight.archive."
 
 $oldTreeMoved = $false
+$targetInstalled = $false
+$deploymentCommitted = $false
 try {
     New-Item -ItemType Directory -Path $stage | Out-Null
-    foreach ($relative in $tracked) {
-        $sourceFile = Join-Path $source ($relative.Replace("/", "\"))
-        if (-not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
-            throw "Tracked source file is missing: $relative"
-        }
-        $stageFile = Join-Path $stage ($relative.Replace("/", "\"))
-        $stageParent = Split-Path -Parent $stageFile
-        if (-not (Test-Path -LiteralPath $stageParent -PathType Container)) {
-            New-Item -ItemType Directory -Force -Path $stageParent | Out-Null
-        }
-        Copy-Item -LiteralPath $sourceFile -Destination $stageFile
+
+    # Materialize one immutable Git object tree: git archive HEAD, never mutable worktree files.
+    & git -c "safe.directory=$source" -C $source archive --format=tar "--output=$archive" $sourceCommit
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+        throw "Unable to create immutable source archive for commit $sourceCommit"
+    }
+    & tar.exe -xf $archive -C $stage
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to extract immutable source archive for commit $sourceCommit"
     }
 
-    $stageIssues = @(Test-DeploymentTree -RepositoryRoot $source -DeploymentRoot $stage -TrackedFiles $tracked)
+    [IO.File]::WriteAllText(
+        (Join-Path $stage ".raylight-deployed-commit"),
+        "$sourceCommit$([Environment]::NewLine)",
+        [Text.UTF8Encoding]::new($false)
+    )
+
+    $expectedHashes = Get-ExpectedHashes -Root $stage -TrackedFiles $tracked
+    $stageIssues = @(Test-DeploymentTree -DeploymentRoot $stage -TrackedFiles $tracked -ExpectedHashes $expectedHashes -SourceCommit $sourceCommit)
     if ($stageIssues.Count -gt 0) {
         throw "Staged deployment verification failed: $($stageIssues -join '; ')"
+    }
+
+    if ($VerifyOnly) {
+        $issues = @(Test-DeploymentTree -DeploymentRoot $target -TrackedFiles $tracked -ExpectedHashes $expectedHashes -SourceCommit $sourceCommit)
+        if ($issues.Count -gt 0) {
+            $issues | ForEach-Object { Write-Output $_ }
+            throw "Deployment drift detected ($($issues.Count) issue(s))."
+        }
+        Write-Output "DEPLOYMENT_VERIFIED files=$($tracked.Count) target=$target"
+        return
     }
 
     if (Test-Path -LiteralPath $target) {
@@ -183,29 +234,54 @@ try {
         $oldTreeMoved = $true
     }
     [IO.Directory]::Move($stage, $target)
+    $targetInstalled = $true
 
-    $deployedIssues = @(Test-DeploymentTree -RepositoryRoot $source -DeploymentRoot $target -TrackedFiles $tracked)
+    $deployedIssues = @(Test-DeploymentTree -DeploymentRoot $target -TrackedFiles $tracked -ExpectedHashes $expectedHashes -SourceCommit $sourceCommit)
     if ($deployedIssues.Count -gt 0) {
         throw "Final deployment verification failed: $($deployedIssues -join '; ')"
     }
+    $deploymentCommitted = $true
 
     if ($oldTreeMoved -and (Test-Path -LiteralPath $backup)) {
-        Remove-Item -LiteralPath $backup -Recurse -Force
+        try {
+            Remove-Item -LiteralPath $backup -Recurse -Force
+        }
+        catch {
+            Write-Warning "Deployment succeeded but backup cleanup failed: $backup ($($_.Exception.Message))"
+        }
         $oldTreeMoved = $false
     }
     Write-Output "DEPLOYMENT_OK files=$($tracked.Count) target=$target"
 }
 catch {
     $failure = $_
-    if ($oldTreeMoved -and (Test-Path -LiteralPath $backup)) {
-        if (Test-Path -LiteralPath $target) {
+    if (-not $deploymentCommitted) {
+        if ($targetInstalled -and (Test-Path -LiteralPath $target)) {
             Remove-Item -LiteralPath $target -Recurse -Force
+            $targetInstalled = $false
         }
-        [IO.Directory]::Move($backup, $target)
-        $oldTreeMoved = $false
-    }
-    if (Test-Path -LiteralPath $stage) {
-        Remove-Item -LiteralPath $stage -Recurse -Force
+        if ($oldTreeMoved -and (Test-Path -LiteralPath $backup)) {
+            [IO.Directory]::Move($backup, $target)
+            $oldTreeMoved = $false
+        }
     }
     throw $failure
+}
+finally {
+    if (Test-Path -LiteralPath $stage) {
+        try {
+            Remove-Item -LiteralPath $stage -Recurse -Force
+        }
+        catch {
+            Write-Warning "Temporary stage cleanup failed: $stage ($($_.Exception.Message))"
+        }
+    }
+    if (Test-Path -LiteralPath $archive) {
+        try {
+            Remove-Item -LiteralPath $archive -Force
+        }
+        catch {
+            Write-Warning "Temporary archive cleanup failed: $archive ($($_.Exception.Message))"
+        }
+    }
 }

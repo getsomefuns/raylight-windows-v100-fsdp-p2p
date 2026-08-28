@@ -79,8 +79,8 @@ Adopt FL2V Turbo 8-step and REF2V Turbo 4-step as speed presets. Retain the 20-s
 
 Raw logs, telemetry and generated media remain outside Git:
 
-- I2V base: `E:\ComfyUI-py310\logs\minimax-h3\o3\20260817-061936-i2v-smoke-base20\benchmark.json`
-- I2V Turbo: `E:\ComfyUI-py310\logs\minimax-h3\o3\20260817-071315-i2v-smoke-fl2v-turbo-8step\benchmark.json`
-- REF2VA base: `E:\ComfyUI-py310\logs\minimax-h3\o3\20260817-072433-ref2va-smoke-base20\benchmark.json`
-- REF2VA Turbo: `E:\ComfyUI-py310\logs\minimax-h3\o3\20260817-073801-ref2va-smoke-ref2v-turbo-4step\benchmark.json`
+- I2V base: `<repo-root>/.local/artifacts/logs/minimax-h3/o3/20260817-061936-i2v-smoke-base20/benchmark.json`
+- I2V Turbo: `<repo-root>/.local/artifacts/logs/minimax-h3/o3/20260817-071315-i2v-smoke-fl2v-turbo-8step/benchmark.json`
+- REF2VA base: `<repo-root>/.local/artifacts/logs/minimax-h3/o3/20260817-072433-ref2va-smoke-base20/benchmark.json`
+- REF2VA Turbo: `<repo-root>/.local/artifacts/logs/minimax-h3/o3/20260817-073801-ref2va-smoke-ref2v-turbo-4step/benchmark.json`
 - Media: `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o3`

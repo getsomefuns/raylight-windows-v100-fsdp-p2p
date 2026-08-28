@@ -99,8 +99,8 @@ def _resolve_repo_root():
     raise RuntimeError("Unable to locate ComfyUI repository root")
 
 
-def _ensure_runtime_workdir(module_dir: Path) -> Path:
-    runtime_dir = module_dir.parent / "_ray_runtime_env"
+def _ensure_runtime_workdir(_module_dir: Path) -> Path:
+    runtime_dir = _raylight_ray_tmpdir() / "runtime-env"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     return runtime_dir
 

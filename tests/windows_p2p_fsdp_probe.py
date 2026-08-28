@@ -15,6 +15,11 @@ os.environ["USE_LIBUV"] = "0"
 
 import ray
 
+try:
+    from .path_helpers import comfy_root as resolve_comfy_root
+except ImportError:
+    from path_helpers import comfy_root as resolve_comfy_root
+
 
 REPO_ROOT = Path(__file__).parents[1]
 P2P_MODULE_PATH = REPO_ROOT / "src/raylight/distributed_worker/windows_p2p.py"
@@ -247,8 +252,8 @@ class FSDPProbeActor:
         import torch.nn as nn
 
         source_root = str(REPO_ROOT / "src")
-        comfy_root = str(REPO_ROOT.parent / "ComfyUI")
-        for candidate in (source_root, comfy_root):
+        comfy_root_path = str(resolve_comfy_root())
+        for candidate in (source_root, comfy_root_path):
             if candidate not in sys.path:
                 sys.path.insert(0, candidate)
 

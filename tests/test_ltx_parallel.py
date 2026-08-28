@@ -1,7 +1,5 @@
 import ast
-from pathlib import Path
-
-from tests.path_helpers import repo_root
+from .path_helpers import repo_root
 
 
 RAYLIGHT = repo_root() / "src/raylight/diffusion_models/lightricks/xdit_context_parallel.py"

@@ -12,7 +12,7 @@
 - 16:9，864×480（约 0.4MP），24 FPS，5 秒输入对应 124 帧，seed 固定为 42。
 - FL2VA：FP8 scaled 模型 + Turbo8 LoRA，8 步。
 - REF2VA：FP8 scaled 模型 + Turbo4 LoRA，4 步，官方绿色机甲参考图。
-- 原始日志、遥测、视频和五帧接触表仅保存在本机 `E:\ComfyUI-py310\logs\minimax-h3\director-baseline` 与 ComfyUI output；正文只保留精简数据。
+- 原始日志、遥测、视频和五帧接触表仅保存在本机 `<仓库根目录>/.local/artifacts/logs/minimax-h3/director-baseline` 与 ComfyUI output；正文只保留精简数据。
 
 ## 已完成结果
 

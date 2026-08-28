@@ -3,8 +3,9 @@ from pathlib import Path
 import sys
 import unittest
 from unittest import mock
+import tempfile
 
-from tests.path_helpers import comfy_root
+from .path_helpers import comfy_root
 
 
 COMFY_ROOT = comfy_root()
@@ -12,6 +13,22 @@ RAYLIGHT_SRC = Path(__file__).parents[1] / "src"
 
 
 class RuntimeEnvironmentTests(unittest.TestCase):
+    def test_runtime_workdir_lives_outside_the_custom_node_source_tree(self):
+        sys.path[:0] = [str(COMFY_ROOT), str(RAYLIGHT_SRC)]
+        try:
+            from raylight import nodes
+        finally:
+            del sys.path[:2]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            ray_tmpdir = Path(temporary) / "raylight-ray"
+            module_dir = Path(temporary) / "ComfyUI" / "custom_nodes" / "raylight" / "src" / "raylight"
+            module_dir.mkdir(parents=True)
+            with mock.patch.dict(os.environ, {"RAYLIGHT_RAY_TMPDIR": str(ray_tmpdir)}, clear=False):
+                runtime_workdir = nodes._ensure_runtime_workdir(module_dir)
+
+        self.assertEqual(runtime_workdir, ray_tmpdir.resolve() / "runtime-env")
+
     def test_local_runtime_env_forwards_windows_collective_settings(self):
         sys.path[:0] = [str(COMFY_ROOT), str(RAYLIGHT_SRC)]
         try:

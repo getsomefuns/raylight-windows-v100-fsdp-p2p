@@ -67,7 +67,7 @@ O4 technical acceptance is complete. Both official Turbo presets run at the orig
 
 ## Local evidence
 
-- I2V report: `E:\ComfyUI-py310\logs\minimax-h3\o4\20260817-075033-i2v-full-fl2v-turbo-8step\benchmark.json`
-- REF2VA report: `E:\ComfyUI-py310\logs\minimax-h3\o4\20260817-075829-ref2va-full-ref2v-turbo-4step\benchmark.json`
+- I2V report: `<repo-root>/.local/artifacts/logs/minimax-h3/o4/20260817-075033-i2v-full-fl2v-turbo-8step/benchmark.json`
+- REF2VA report: `<repo-root>/.local/artifacts/logs/minimax-h3/o4/20260817-075829-ref2va-full-ref2v-turbo-4step/benchmark.json`
 - I2V media: `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o3\minimax_h3_i2v_fl2v-turbo-8step_run0_00002_.mp4`
 - REF2VA media: `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o3\minimax_h3_ref2va_ref2v-turbo-4step_run0_00002_.mp4`

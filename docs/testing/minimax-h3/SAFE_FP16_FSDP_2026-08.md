@@ -253,7 +253,7 @@ P2P profiles also prove real dual-GPU exchange: initial safe-FP16 I2V made 5,282
 
 ## Evidence references
 
-Raw logs, telemetry CSVs, API prompts and benchmark JSON remain under local directory `<environment-root>\logs\minimax-h3\o2`. This index includes successful, failed, incomplete and profiler-distorted O6 attempts:
+Raw logs, telemetry CSVs, API prompts and benchmark JSON remain under local directory `<repo-root>/.local/artifacts/logs/minimax-h3/o2`. This index includes successful, failed, incomplete and profiler-distorted O6 attempts:
 
 | Category | Evidence directory |
 |---|---|

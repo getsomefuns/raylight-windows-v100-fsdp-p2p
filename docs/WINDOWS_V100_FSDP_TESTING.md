@@ -113,12 +113,12 @@ F2 的完整合成模型数据见 [windows-v100-fsdp-phase-f2-results.md](window
 
 开发机原始附件不进入仓库正文；复查时按环境根目录定位：
 
-- `{ENV_ROOT}/logs/f4/f4-fsdp-no-lora-benchmark.json`
-- `{ENV_ROOT}/logs/f4/f4-fsdp-no-lora-rmssafe-benchmark.json`
-- `{ENV_ROOT}/logs/f4/f4-fsdp-rmssafe-benchmark.json`
-- `{ENV_ROOT}/logs/f4/visual-review/f4_fsdp-no-lora_run0_00001_.jpg`（失败样本）
-- `{ENV_ROOT}/logs/f4/visual-review/f4_fsdp-no-lora-rmssafe_run0_00001_.jpg`（无 LoRA 通过）
-- `{ENV_ROOT}/logs/f4/visual-review/f4_fsdp-rmssafe_run0_00001_.jpg`（带 LoRA 通过）
+- `<repo-root>/.local/artifacts/logs/f4/f4-fsdp-no-lora-benchmark.json`
+- `<repo-root>/.local/artifacts/logs/f4/f4-fsdp-no-lora-rmssafe-benchmark.json`
+- `<repo-root>/.local/artifacts/logs/f4/f4-fsdp-rmssafe-benchmark.json`
+- `<repo-root>/.local/artifacts/logs/f4/visual-review/f4_fsdp-no-lora_run0_00001_.jpg`（失败样本）
+- `<repo-root>/.local/artifacts/logs/f4/visual-review/f4_fsdp-no-lora-rmssafe_run0_00001_.jpg`（无 LoRA 通过）
+- `<repo-root>/.local/artifacts/logs/f4/visual-review/f4_fsdp-rmssafe_run0_00001_.jpg`（带 LoRA 通过）
 
 ## 维护规则
 

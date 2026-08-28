@@ -83,7 +83,7 @@
 - 接触表检查显示连续运动、无黑屏、彩色噪声、乱码或冻结段；提示词要求三名机器人，但画面主要维持两名，属于与原版单卡基线相同类别的主体数量服从度偏差，不是分布式数值损坏。
 - 相同 seed 的冷/热 MP4 容器 SHA256 不同，但视频码流 MD5 `3c38daa0228f118cb5dbd951114d7e27`、音频码流 MD5 `b4cb8900c83a5d70b69c07fcb004d02b` 和最后一帧解码 MD5 `84d8b99e1cf05a6b9abfdfda93f55f34` 完全一致。
 - 同一会话改 seed 热运行复用 worker PID 20012 / 22160，只产生一个新的远程 operation，没有第二次 Gloo 初始化或 FSDP 注册。
-- 原始 prompt、history、遥测 CSV、日志和接触表保留在本机 `<环境根目录>/o8_artifacts/mmh3director_adapter`；视频保留在 `ComfyUI/output/video/O8_MMH3Director`，不提交 Git。
+- 原始 prompt、history、遥测 CSV、日志和接触表保留在本机 `<仓库根目录>/.local/artifacts/o8/mmh3director_adapter`；视频保留在 `ComfyUI/output/video/O8_MMH3Director`，不提交 Git。
 
 ## 7. Director 模式、Refine 与多段验收
 

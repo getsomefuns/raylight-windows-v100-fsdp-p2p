@@ -72,6 +72,7 @@ coverage.xml
 .pytest_cache/
 .ruff_cache/
 _ray_runtime_env/
+.local/
 
 # Translations
 *.mo

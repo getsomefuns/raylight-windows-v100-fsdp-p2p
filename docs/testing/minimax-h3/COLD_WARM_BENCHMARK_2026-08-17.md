@@ -65,6 +65,6 @@ The next phase is O3: compare the current FP8-storage/FP32-compute baseline with
 
 Raw logs, per-sample telemetry and generated media are intentionally kept outside Git:
 
-- I2V report: `E:\ComfyUI-py310\logs\minimax-h3\o2\20260817-051049-i2v-smoke\benchmark.json`
-- REF2VA report: `E:\ComfyUI-py310\logs\minimax-h3\o2\20260817-052247-ref2va-smoke\benchmark.json`
+- I2V report: `<repo-root>/.local/artifacts/logs/minimax-h3/o2/20260817-051049-i2v-smoke/benchmark.json`
+- REF2VA report: `<repo-root>/.local/artifacts/logs/minimax-h3/o2/20260817-052247-ref2va-smoke/benchmark.json`
 - Media: `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o2`

@@ -26,9 +26,10 @@ def test_quantized_probe_can_exercise_runtime_cpu_offload():
     assert "local_qdata_device" in source
 
 
-def test_probe_cli_exposes_cpu_offload_and_uses_the_sibling_comfyui():
+def test_probe_cli_exposes_cpu_offload_and_uses_layout_aware_comfyui_discovery():
     source = PROBE_PATH.read_text(encoding="utf-8")
 
     assert 'parser.add_argument("--cpu-offload", action="store_true")' in source
     assert "actor.run_quantized_forward.remote(args.cpu_offload)" in source
-    assert 'REPO_ROOT.parent / "ComfyUI"' in source
+    assert "resolve_comfy_root()" in source
+    assert 'REPO_ROOT.parent / "ComfyUI"' not in source

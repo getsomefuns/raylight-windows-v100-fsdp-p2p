@@ -771,7 +771,7 @@ def terminate_process_tree(process: subprocess.Popen, job: WindowsKillOnCloseJob
 
 def _git_output(repository: Path, *arguments: str) -> str:
     completed = subprocess.run(
-        ["git", "-C", str(repository), *arguments],
+        ["git", "-c", f"safe.directory={repository}", "-C", str(repository), *arguments],
         capture_output=True,
         text=True,
         timeout=15,
@@ -781,9 +781,97 @@ def _git_output(repository: Path, *arguments: str) -> str:
     return completed.stdout.strip()
 
 
+def collect_installed_identity(installed: Path, source: Path = REPO_ROOT) -> dict:
+    probe = subprocess.run(
+        [
+            "git",
+            "-c",
+            f"safe.directory={installed}",
+            "-C",
+            str(installed),
+            "rev-parse",
+            "--show-toplevel",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if probe.returncode == 0 and Path(probe.stdout.strip()).resolve() == installed.resolve():
+        status = _git_output(installed, "status", "--short")
+        return {
+            "kind": "git-checkout",
+            "head": _git_output(installed, "rev-parse", "HEAD"),
+            "status": status,
+            "dirty": bool(status),
+        }
+
+    root_marker = installed / ".raylight-deployed-commit"
+    if not root_marker.is_file():
+        raise RuntimeError(
+            "installed Raylight is neither a deployment copy with "
+            ".raylight-deployed-commit nor a standalone Git checkout"
+        )
+
+    tracked = _git_output(
+        source,
+        "ls-tree",
+        "-r",
+        "--name-only",
+        "HEAD",
+        "--",
+        "__init__.py",
+        "src/raylight",
+    ).splitlines()
+    expected = {relative.replace("\\", "/") for relative in tracked if relative}
+    issues: list[str] = []
+    for relative in sorted(expected):
+        source_file = source / Path(relative)
+        installed_file = installed / Path(relative)
+        if not installed_file.is_file():
+            issues.append(f"MISSING: {relative}")
+        elif sha256_file(source_file) != sha256_file(installed_file):
+            issues.append(f"CHANGED: {relative}")
+
+    installed_files: set[str] = set()
+    entrypoint = installed / "__init__.py"
+    if entrypoint.is_file():
+        installed_files.add("__init__.py")
+    runtime_root = installed / "src" / "raylight"
+    if runtime_root.is_dir():
+        for path in runtime_root.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(installed).as_posix()
+            if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
+                continue
+            installed_files.add(relative)
+    for relative in sorted(installed_files - expected):
+        issues.append(f"EXTRA: {relative}")
+
+    status = "\n".join(issues)
+    return {
+        "kind": "plain-copy",
+        "head": read_deployed_source_commit(root_marker),
+        "status": status,
+        "dirty": bool(issues),
+    }
+
+
 def _runtime_source_dirty(repository: Path) -> bool:
     completed = subprocess.run(
-        ["git", "-C", str(repository), "diff", "--quiet", "HEAD", "--", "src/raylight"],
+        [
+            "git",
+            "-c",
+            f"safe.directory={repository}",
+            "-C",
+            str(repository),
+            "diff",
+            "--quiet",
+            "HEAD",
+            "--",
+            "__init__.py",
+            "src/raylight",
+        ],
         capture_output=True,
         text=True,
         timeout=15,
@@ -889,23 +977,15 @@ def lora_asset_identity(lora_name: str | None) -> dict | None:
 def collect_runtime_identity() -> dict:
     installed = COMFY_ROOT / "custom_nodes" / "raylight"
     source_status = _git_output(REPO_ROOT, "status", "--short")
-    installed_status = _git_output(installed, "status", "--short")
-    marker_path = Path(_git_output(installed, "rev-parse", "--git-path", "raylight-deployed-commit"))
-    if not marker_path.is_absolute():
-        marker_path = installed / marker_path
-    deployed_source_commit = read_deployed_source_commit(marker_path)
+    installed_identity = collect_installed_identity(installed, REPO_ROOT)
     return {
         "source": {
             "head": _git_output(REPO_ROOT, "rev-parse", "HEAD"),
             "status": source_status,
             "runtime_dirty": _runtime_source_dirty(REPO_ROOT),
         },
-        "installed": {
-            "head": _git_output(installed, "rev-parse", "HEAD"),
-            "status": installed_status,
-            "dirty": bool(installed_status),
-        },
-        "deployed_source_commit": deployed_source_commit,
+        "installed": installed_identity,
+        "deployed_source_commit": installed_identity["head"],
     }
 
 

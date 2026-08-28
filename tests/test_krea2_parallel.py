@@ -2,11 +2,9 @@ import ast
 import importlib.util
 import sys
 import types
-from pathlib import Path
-
 import torch
 
-from tests.path_helpers import comfy_root, repo_root
+from .path_helpers import comfy_root, repo_root
 
 
 ROOT = comfy_root()

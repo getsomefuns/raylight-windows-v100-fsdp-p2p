@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import unittest
 
+from .path_helpers import comfy_root, python_executable
+
 
 REPO_ROOT = Path(__file__).parents[1]
 START_SCRIPT = REPO_ROOT / "scripts" / "start-comfyui-windows-p2p.ps1"
@@ -39,8 +41,8 @@ class WindowsReleaseProfileTests(unittest.TestCase):
         self.assertEqual(DEFAULT_WINDOWS_P2P_CAPACITY_BYTES, 134217728)
 
     def run_launcher(self, *arguments):
-        python_path = REPO_ROOT.parent / "Python310" / "python.exe"
-        comfy_root = REPO_ROOT.parent / "ComfyUI"
+        python_path = python_executable()
+        comfy = comfy_root()
         return subprocess.run(
             [
                 "powershell.exe",
@@ -52,7 +54,7 @@ class WindowsReleaseProfileTests(unittest.TestCase):
                 "-PythonPath",
                 str(python_path),
                 "-ComfyRoot",
-                str(comfy_root),
+                str(comfy),
                 *arguments,
                 "-ValidateOnly",
             ],
@@ -115,8 +117,8 @@ class WindowsReleaseProfileTests(unittest.TestCase):
         )
 
     def test_legacy_positional_arguments_remain_compatible(self):
-        python_path = REPO_ROOT.parent / "Python310" / "python.exe"
-        comfy_root = REPO_ROOT.parent / "ComfyUI"
+        python_path = python_executable()
+        comfy = comfy_root()
         result = subprocess.run(
             [
                 "powershell.exe",
@@ -126,7 +128,7 @@ class WindowsReleaseProfileTests(unittest.TestCase):
                 "-File",
                 str(START_SCRIPT),
                 str(python_path),
-                str(comfy_root),
+                str(comfy),
                 "127.0.0.1",
                 "0,1",
                 "8188",

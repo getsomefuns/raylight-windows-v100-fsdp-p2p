@@ -83,7 +83,7 @@ Commit `40a71db` calls ComfyUI's standard `unload_all_models()` and `soft_empty_
 - Contact sheets show continuous motion with no black frames, colored noise, corruption, or frozen interval. The prompt asks for three robots while the result mainly retains two, matching the upstream baseline's subject-count adherence limitation rather than distributed numerical damage.
 - Same-seed cold/warm MP4 container SHA256 values differ, but video bitstream MD5 `3c38daa0228f118cb5dbd951114d7e27`, audio bitstream MD5 `b4cb8900c83a5d70b69c07fcb004d02b`, and final decoded-frame MD5 `84d8b99e1cf05a6b9abfdfda93f55f34` are identical.
 - A changed-seed warm run reused worker PIDs 20012 / 22160, issued exactly one new remote operation, and did not repeat Gloo initialization or FSDP registration.
-- Raw prompts, history, telemetry CSVs, logs, and contact sheets stay under local `<environment-root>/o8_artifacts/mmh3director_adapter`; videos stay under `ComfyUI/output/video/O8_MMH3Director` and are not committed.
+- Raw prompts, history, telemetry CSVs, logs, and contact sheets stay under local `<repo-root>/.local/artifacts/o8/mmh3director_adapter`; videos stay under `ComfyUI/output/video/O8_MMH3Director` and are not committed.
 
 ## 7. Director mode, Refine, and multi-segment acceptance
 

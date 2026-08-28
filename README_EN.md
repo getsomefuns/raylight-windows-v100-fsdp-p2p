@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.10.2 hardens the single-source layout. The only editable Git worktree is now strictly separated from the plain ComfyUI deployment copy, which records a verifiable source commit. Tests, FSDP probes, and benchmark identity checks support the canonical worktree, a plain `custom_nodes` deployment, and a clean Git clone. Ray's local working directory no longer lives inside the node source tree. See the [1.10.2 English release note](docs/releases/2026-08-28-single-source-hardening.en.md).
+
 Version 1.10.1 fixes a Director multi-segment continuity failure where worker-side reference images replaced motion-context keyframe conditioning. It also restores the intended timeline positions for continuity keyframes and audio. A two-segment main-sample plus Refine run passed on the dual-V100 machine. See the [1.10.1 English release note](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md).
 
 Version 1.10.0 adds the explicit opt-in `Ray MODEL Adapter (MMH3Director)`. Director remains the compact generation-control panel while its diffusion sample executes on the dual-V100 FSDP/P2P workers. Real-machine acceptance covers t2v, i2v, fl2v, r2v, v2v, rv2v, same-model Refine, and multi-segment R2V. See the [O8 English release note](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md) and [validation summary](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.md).
@@ -23,7 +25,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.10.1; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.10.2; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -33,6 +35,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - Launcher capacity and diagnostic controls: [English](docs/releases/2026-08-19-launcher-controls.en.md) / [中文](docs/releases/2026-08-19-launcher-controls.zh-CN.md)
 - MiniMaxH3Director MODEL adapter 1.10.0: [English](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md) / [中文](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md)
 - MiniMaxH3Director continuity fix 1.10.1: [English](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md) / [中文](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md)
+- Single-source deployment and test-layout hardening 1.10.2: [English](docs/releases/2026-08-28-single-source-hardening.en.md) / [中文](docs/releases/2026-08-28-single-source-hardening.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -248,7 +251,7 @@ cd E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
 .\scripts\deploy-to-comfyui.ps1 -ComfyUIRoot E:\ComfyUI-py310\ComfyUI
 ```
 
-The tool copies only Git-tracked files, verifies SHA-256 hashes in a staging directory, and then replaces the live tree with rollback on failure. Check for drift without changing the deployment:
+The tool materializes the immutable Git `HEAD` archive (never uncommitted worktree content), records the source commit in `.raylight-deployed-commit`, verifies hashes and source identity in a staging directory, and then replaces the live tree. A failed first deployment removes the invalid target; a failed replacement restores the prior deployment. Check for drift without changing the deployment:
 
 ```powershell
 .\scripts\deploy-to-comfyui.ps1 `
@@ -256,7 +259,9 @@ The tool copies only Git-tracked files, verifies SHA-256 hashes in a staging dir
   -VerifyOnly
 ```
 
-`DEPLOYMENT_VERIFIED` means every managed file matches and no unmanaged files exist apart from explicit runtime caches such as `__pycache__`, pytest/Ruff state, and `_ray_runtime_env`. Regular users may still clone directly into `custom_nodes\raylight` as described below; the single-source layout is the development and local deployment policy for this project machine.
+`DEPLOYMENT_VERIFIED` means every managed file and the recorded source commit match. No unmanaged files exist apart from explicit runtime caches such as `__pycache__`, pytest/Ruff state, and deployment identity metadata. Ray's working directory lives under the system temporary directory rather than the node source tree. Regular users may still clone directly into `custom_nodes\raylight` as described below; the single-source layout is the development and local deployment policy for this project machine.
+
+Raw local logs, telemetry, contact sheets, and other evidence excluded from Git are consolidated under `.local/artifacts` in the canonical worktree; `.local` is Git-ignored. Maintainable conclusions, plans, and compact test summaries remain under `docs`.
 
 ### 1. Prepare the GPUs
 

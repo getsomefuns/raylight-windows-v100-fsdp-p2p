@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 
@@ -29,6 +31,19 @@ def make_source_repository(path: Path) -> None:
     (path / "README.md").write_text("tracked deployment fixture\n", encoding="utf-8")
     assert run(["git", "init"], path).returncode == 0
     assert run(["git", "add", "__init__.py", "src/raylight/example.py", "README.md"], path).returncode == 0
+    assert run(
+        [
+            "git",
+            "-c",
+            "user.name=Raylight Test",
+            "-c",
+            "user.email=raylight@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+        path,
+    ).returncode == 0
 
 
 def invoke_deploy(source: Path, comfy_root: Path, *extra: str) -> subprocess.CompletedProcess[str]:
@@ -71,6 +86,9 @@ def test_deploy_replaces_stale_tree_with_exact_tracked_copy(tmp_path: Path) -> N
     assert not (target / ".git").exists()
     for relative in ("__init__.py", "src/raylight/example.py", "README.md"):
         assert (target / relative).read_bytes() == (source / relative).read_bytes()
+    assert (target / ".raylight-deployed-commit").read_text(encoding="utf-8").strip() == run(
+        ["git", "rev-parse", "HEAD"], source
+    ).stdout.strip()
 
 
 def test_verify_only_detects_and_reports_deployment_drift(tmp_path: Path) -> None:
@@ -122,6 +140,20 @@ def test_deploy_refuses_to_replace_the_source_repository(tmp_path: Path) -> None
     assert (source / ".git").is_dir()
 
 
+def test_deploy_refuses_tracked_source_changes_that_would_invalidate_marker(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    comfy_root = tmp_path / "ComfyUI"
+    (comfy_root / "custom_nodes").mkdir(parents=True)
+    make_source_repository(source)
+    (source / "src" / "raylight" / "example.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    result = invoke_deploy(source, comfy_root)
+
+    assert result.returncode != 0
+    assert "tracked modifications" in (result.stdout + result.stderr)
+    assert not (comfy_root / "custom_nodes" / "raylight").exists()
+
+
 def test_deploy_uses_directory_level_rename_for_tree_swaps() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
@@ -133,5 +165,78 @@ def test_deploy_uses_directory_level_rename_for_tree_swaps() -> None:
 def test_deploy_scopes_safe_directory_to_manifest_command() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
-    assert 'git -c "safe.directory=$RepositoryRoot" -C $RepositoryRoot ls-files' in script
+    assert (
+        'git -c "safe.directory=$RepositoryRoot" -C $RepositoryRoot '
+        "ls-tree -r --name-only $Commit"
+    ) in script
     assert "git config --global" not in script
+
+
+def test_deploy_materializes_the_immutable_head_tree() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "git archive" in script
+    assert "HEAD" in script
+    assert "Copy-Item -LiteralPath $sourceFile" not in script
+
+
+def test_initial_deployment_failure_removes_the_new_target() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "$targetInstalled = $false" in script
+    assert "$targetInstalled = $true" in script
+    assert "if ($targetInstalled -and (Test-Path -LiteralPath $target))" in script
+
+
+def test_verified_target_survives_locked_backup_cleanup_failure(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    comfy_root = tmp_path / "ComfyUI"
+    target = comfy_root / "custom_nodes" / "raylight"
+    target.mkdir(parents=True)
+    locked = target / "locked-runtime.log"
+    locked.write_text("old deployment\n", encoding="utf-8")
+    make_source_repository(source)
+    payload = source / "payload.bin"
+    payload.write_bytes(b"x" * (64 * 1024 * 1024))
+    assert run(["git", "add", "payload.bin"], source).returncode == 0
+    assert run(
+        [
+            "git",
+            "-c",
+            "user.name=Raylight Test",
+            "-c",
+            "user.email=raylight@example.invalid",
+            "commit",
+            "-m",
+            "large fixture",
+        ],
+        source,
+    ).returncode == 0
+
+    lock_acquired = threading.Event()
+    release_lock = threading.Event()
+
+    def lock_moved_backup() -> None:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            backups = list(target.parent.glob(".raylight.backup.*"))
+            if backups:
+                with (backups[0] / "locked-runtime.log").open("rb"):
+                    lock_acquired.set()
+                    release_lock.wait(timeout=30)
+                return
+            time.sleep(0.001)
+
+    locker = threading.Thread(target=lock_moved_backup, daemon=True)
+    locker.start()
+    try:
+        result = invoke_deploy(source, comfy_root)
+    finally:
+        release_lock.set()
+        locker.join(timeout=5)
+
+    assert lock_acquired.is_set(), "test did not inject a lock into the moved backup"
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (target / "src" / "raylight" / "example.py").is_file()
+    assert not (target / "locked-runtime.log").exists()
+    assert "backup cleanup failed" in (result.stdout + result.stderr).lower()

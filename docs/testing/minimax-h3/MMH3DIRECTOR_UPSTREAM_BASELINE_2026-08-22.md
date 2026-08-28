@@ -12,7 +12,7 @@ Establish the unmodified MiniMax H3 Director performance, memory, and media-qual
 - 16:9, 864×480 (~0.4MP), 24 FPS, 124 frames for the 5-second setting, seed fixed at 42.
 - FL2VA: FP8-scaled model + Turbo8 LoRA, 8 steps.
 - REF2VA: FP8-scaled model + Turbo4 LoRA, 4 steps, upstream green-robot reference image.
-- Raw logs, telemetry, media, and contact sheets remain local under `E:\ComfyUI-py310\logs\minimax-h3\director-baseline` and ComfyUI output.
+- Raw logs, telemetry, media, and contact sheets remain local under `<repo-root>/.local/artifacts/logs/minimax-h3/director-baseline` and ComfyUI output.
 
 ## Completed results
 

@@ -1,7 +1,5 @@
 import ast
-from pathlib import Path
-
-from tests.path_helpers import comfy_root, repo_root
+from .path_helpers import comfy_root, repo_root
 
 
 ROOT = comfy_root()

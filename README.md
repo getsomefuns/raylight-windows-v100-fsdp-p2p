@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.10.2 完成单一源码治理加固：唯一可编辑 Git 工作树与 ComfyUI 纯部署副本严格分离，部署副本写入可核验的来源提交号；测试、FSDP 探针和基准工具同时支持正式工作树、`custom_nodes` 纯副本及干净 Git 克隆布局。Ray 的本地工作目录已移出节点源码树。详见 [1.10.2 中文发布说明](docs/releases/2026-08-28-single-source-hardening.zh-CN.md)。
+
 1.10.1 修复 MiniMaxH3Director 多段续接同时带参考图时，Ray worker 内关键帧条件被参考图覆盖而产生的维度错位，并恢复续接关键帧和音频在目标时间轴中的位置。两段主采样与 Refine 已通过双 V100 实机验证。详见 [1.10.1 中文发布说明](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md)。
 
 1.10.0 新增显式可选的 `Ray MODEL Adapter (MMH3Director)`：保留 Director 单节点参数面板，同时把 Director 的扩散采样转交双 V100 FSDP/P2P Worker。t2v、i2v、fl2v、r2v、v2v、rv2v、同模型 Refine 和真实多段 R2V 均已实机通过。详见 [O8 中文发布说明](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.zh-CN.md)。
@@ -33,7 +35,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.10.1；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.10.2；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -43,6 +45,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 启动脚本三档容量与日志开关更新：[中文](docs/releases/2026-08-19-launcher-controls.zh-CN.md) / [English](docs/releases/2026-08-19-launcher-controls.en.md)
 - MiniMaxH3Director MODEL 适配器 1.10.0：[中文](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md) / [English](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md)
 - MiniMaxH3Director 连续分段修复 1.10.1：[中文](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md) / [English](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md)
+- 单一源码、部署与测试布局加固 1.10.2：[中文](docs/releases/2026-08-28-single-source-hardening.zh-CN.md) / [English](docs/releases/2026-08-28-single-source-hardening.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -312,7 +315,7 @@ cd E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
 .\scripts\deploy-to-comfyui.ps1 -ComfyUIRoot E:\ComfyUI-py310\ComfyUI
 ```
 
-部署工具只复制 Git 跟踪文件，先在临时目录完成 SHA-256 校验，再替换运行目录；失败时恢复原部署。只检查是否发生部署漂移而不修改文件：
+部署工具从不可变的 Git `HEAD` 归档生成副本（不会复制尚未提交的工作树内容），写入 `.raylight-deployed-commit` 来源标记，先在临时目录完成 SHA-256 与来源提交校验，再替换运行目录；首次部署失败会删除无效目标，覆盖部署失败会恢复原部署。只检查是否发生部署漂移而不修改文件：
 
 ```powershell
 .\scripts\deploy-to-comfyui.ps1 `
@@ -320,7 +323,9 @@ cd E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
   -VerifyOnly
 ```
 
-`DEPLOYMENT_VERIFIED` 表示所有受管理文件一致，且除了 `__pycache__`、pytest/Ruff 缓存和 `_ray_runtime_env` 等明确的运行时缓存外，没有未管理文件。普通用户仍可按下一节直接克隆到 `custom_nodes\raylight`；上述单一源码结构用于本项目的开发和实机部署。
+`DEPLOYMENT_VERIFIED` 表示所有受管理文件和来源提交一致，且除了 `__pycache__`、pytest/Ruff 缓存等明确运行时缓存及部署来源标记外，没有未管理文件。Ray 工作目录位于系统临时目录，不再写入节点源码树。普通用户仍可按下一节直接克隆到 `custom_nodes\raylight`；上述单一源码结构用于本项目的开发和实机部署。
+
+本机原始日志、遥测、接触表和其他不进入 Git 的证据统一保存在正式工作树的 `.local/artifacts` 下；`.local` 已被 Git 忽略。可维护的结论、计划和精简测试汇总仍保存在 `docs`。
 
 ### 1. 准备硬件和驱动
 

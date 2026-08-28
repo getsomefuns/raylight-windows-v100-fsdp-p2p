@@ -31,7 +31,7 @@ The canonical development directory is a linked Git worktree whose Git metadata 
 - The live node directory contains no `.git` entry.
 - Every `git ls-files` entry in the canonical repository exists in the live directory with the same SHA-256 hash.
 - The live directory has no unmanaged files immediately after deployment.
-- Raylight imports as version `1.10.1`, registers its node mappings, and exposes `Ray MODEL Adapter (MMH3Director)`.
+- Raylight imports as version `1.10.2`, registers its node mappings, and exposes `Ray MODEL Adapter (MMH3Director)`.
 - Deployment script functional tests and relevant MMH3Director regression tests pass.
 
 ## Operating rule
