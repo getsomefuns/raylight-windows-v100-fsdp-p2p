@@ -1,0 +1,3 @@
+# Keep byte-level accepted workflow contracts reproducible on Windows and Unix.
+example_workflows/LTX2_3_i2v_Raylight_Windows_FSDP_5s.json text eol=crlf
+example_workflows/Minimax_H3_*.json text eol=lf

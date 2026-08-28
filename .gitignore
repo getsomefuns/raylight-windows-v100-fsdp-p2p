@@ -71,6 +71,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 .ruff_cache/
+_ray_runtime_env/
 
 # Translations
 *.mo

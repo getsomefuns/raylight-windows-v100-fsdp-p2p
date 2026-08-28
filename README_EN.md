@@ -233,6 +233,31 @@ See [environment-windows-v100.json](environment-windows-v100.json) and [requirem
 
 ## Installation and use
 
+### Single source and deployment rule on the project development machine
+
+The project development machine has one editable, committable, and pushable Git repository:
+
+```text
+E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
+```
+
+`E:\ComfyUI-py310\ComfyUI\custom_nodes\raylight` is a generated deployment copy loaded by ComfyUI. It is not a Git worktree and must not be edited directly. After changing the canonical repository, stop ComfyUI and its Ray workers, then run:
+
+```powershell
+cd E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
+.\scripts\deploy-to-comfyui.ps1 -ComfyUIRoot E:\ComfyUI-py310\ComfyUI
+```
+
+The tool copies only Git-tracked files, verifies SHA-256 hashes in a staging directory, and then replaces the live tree with rollback on failure. Check for drift without changing the deployment:
+
+```powershell
+.\scripts\deploy-to-comfyui.ps1 `
+  -ComfyUIRoot E:\ComfyUI-py310\ComfyUI `
+  -VerifyOnly
+```
+
+`DEPLOYMENT_VERIFIED` means every managed file matches and no unmanaged files exist apart from explicit runtime caches such as `__pycache__`, pytest/Ruff state, and `_ray_runtime_env`. Regular users may still clone directly into `custom_nodes\raylight` as described below; the single-source layout is the development and local deployment policy for this project machine.
+
 ### 1. Prepare the GPUs
 
 Confirm that both V100 GPUs use TCC, active NVLink links are visible, NVIDIA's `p2pBandwidthLatencyTest` passes peer access and correctness, and no stale ComfyUI/Ray process owns the GPUs.

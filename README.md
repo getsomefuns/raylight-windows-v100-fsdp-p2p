@@ -297,6 +297,31 @@ CPU offload 数据可能进入页面文件。页面文件可以推迟 OOM，但�
 
 ## 用户指南
 
+### 本项目开发机的单一源码与部署规则
+
+本项目开发机只保留一个可修改、提交和推送的 Git 仓库：
+
+```text
+E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
+```
+
+ComfyUI 实际加载的 `E:\ComfyUI-py310\ComfyUI\custom_nodes\raylight` 是由正式仓库生成的部署副本，不是 Git 工作树，不应直接修改。修改正式仓库后，先停止 ComfyUI 和 Ray worker，再执行：
+
+```powershell
+cd E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
+.\scripts\deploy-to-comfyui.ps1 -ComfyUIRoot E:\ComfyUI-py310\ComfyUI
+```
+
+部署工具只复制 Git 跟踪文件，先在临时目录完成 SHA-256 校验，再替换运行目录；失败时恢复原部署。只检查是否发生部署漂移而不修改文件：
+
+```powershell
+.\scripts\deploy-to-comfyui.ps1 `
+  -ComfyUIRoot E:\ComfyUI-py310\ComfyUI `
+  -VerifyOnly
+```
+
+`DEPLOYMENT_VERIFIED` 表示所有受管理文件一致，且除了 `__pycache__`、pytest/Ruff 缓存和 `_ray_runtime_env` 等明确的运行时缓存外，没有未管理文件。普通用户仍可按下一节直接克隆到 `custom_nodes\raylight`；上述单一源码结构用于本项目的开发和实机部署。
+
 ### 1. 准备硬件和驱动
 
 在继续前确认：
