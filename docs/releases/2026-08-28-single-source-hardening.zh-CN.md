@@ -21,3 +21,15 @@
 ## 验证口径
 
 新增回归覆盖正式工作树、部署目录、纯副本来源标记、干净 Git 克隆、启动脚本路径和外置 Ray 工作目录。最终发布还要求完整测试、部署后直接 pytest、P2P/FSDP 探针、节点导入和实际小工作流验证。
+
+## 最终验收结果
+
+- 唯一工作树完整测试：`444 passed, 1 warning, 30 subtests passed`；部署副本直接测试：`444 passed, 3 warnings, 30 subtests passed`。
+- 394 个部署文件与提交 `c0b3f1b51942690638a62c1627761ae260561028` 一致；运行副本无 `.git`，`custom_nodes` 中没有第二份 Raylight 备份目录。
+- 双 Tesla V100-SXM2-16GB 处于 TCC 模式；64/128/256/384 MiB CUDA P2P all-gather 全部通过，单向实测约 59.3-61.6 GiB/s。
+- 实际 MiniMax H3 REF2VA 验收采用 576x352、24 fps、2 秒请求、Turbo 4 步、FSDP + CPU offload。两个 worker rank 均参与；采样 39.38 秒，整条 prompt 200.25 秒。阶段数据为：预采样 120.19 秒、模型转 GPU 0.93 秒、采样器节点 71.21 秒、VAE 解码 6.47 秒、视频保存 2.38 秒。
+- GPU0/GPU1 峰值显存分别为 15949/4603 MiB，峰值利用率 100%/96%；物理内存峰值 95847 MiB，提交内存峰值 134431 MiB，未使用分页文件。
+- 输出为 H.264/AAC、576x352、24 fps、56 帧、2.33 秒；视频和音频完整解码通过，56 帧哈希全部唯一，首/中/末帧为有效画面，不是黑屏或噪声。
+- 基准结束后 ComfyUI 与两个 Ray worker 均被停止，未残留 Python 计算进程或 GPU 计算显存占用。
+
+PyTorch 2.7 的 Windows legacy TCPStore 仍会打印一次 `WorkStudio:29500` IPv6 候选连接警告；既有隔离测试已确认它会继续使用 IPv4 loopback 完成建组，本次两个 rank 的实际采样和成片也再次证明它不是 P2P 数据面的回退或执行失败。

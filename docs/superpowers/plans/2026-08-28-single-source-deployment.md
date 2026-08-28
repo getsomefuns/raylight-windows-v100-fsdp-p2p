@@ -91,4 +91,14 @@
 - [x] Accept clean Git deployments in benchmark identity checks.
 - [x] Move Ray runtime working files out of the custom-node source tree.
 - [x] Move maintained historical plans under `docs` and raw local evidence under ignored `.local/artifacts`.
-- [ ] Complete final full-suite, deployed-copy, GPU probe, node-import, and reduced-workflow release verification for 1.10.2.
+- [x] Complete final full-suite, deployed-copy, GPU probe, node-import, and reduced-workflow release verification for 1.10.2.
+
+#### Final release evidence (2026-08-28)
+
+- Canonical worktree: `444 passed, 1 warning, 30 subtests passed`.
+- Deployed copy: `444 passed, 3 warnings, 30 subtests passed`.
+- Deployment verification: 394 tracked files matched commit `c0b3f1b51942690638a62c1627761ae260561028`; the live copy contained no `.git` and no sibling Raylight backup under `custom_nodes`.
+- Hardware probe: two Tesla V100-SXM2-16GB GPUs in TCC mode; CUDA P2P all-gather passed at 64, 128, 256, and 384 MiB with approximately 59.3-61.6 GiB/s per direction.
+- Real workflow: MiniMax H3 REF2VA, 576x352, 24 fps, 2-second request, Turbo 4-step, FSDP and CPU offload enabled. Two worker ranks completed sampling in 39.38 seconds; the prompt completed in 200.25 seconds.
+- Media verification: H.264/AAC output was 576x352 at 24 fps, 56 frames and 2.33 seconds. Full decode succeeded; all 56 frame hashes were unique, and the first/middle/last contact sheet contained valid non-black, non-noise imagery.
+- Cleanup verification: the benchmark job stopped ComfyUI and both Ray workers; no Python compute process or GPU compute allocation remained.

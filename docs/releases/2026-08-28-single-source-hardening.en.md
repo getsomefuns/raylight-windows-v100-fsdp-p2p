@@ -21,3 +21,15 @@ This patch separates the editable repository, ComfyUI runtime copy, local test e
 ## Validation contract
 
 Regression coverage now includes canonical and deployed layouts, plain-copy identity, clean Git checkout identity, launcher resolution, and the external Ray working directory. Release verification also requires the complete test suite, direct pytest from the deployment, P2P/FSDP probes, node import, and a real reduced workflow.
+
+## Final acceptance results
+
+- Canonical worktree: `444 passed, 1 warning, 30 subtests passed`; deployed copy: `444 passed, 3 warnings, 30 subtests passed`.
+- All 394 deployed files matched commit `c0b3f1b51942690638a62c1627761ae260561028`. The runtime copy contained no `.git`, and no second Raylight backup remained under `custom_nodes`.
+- Both Tesla V100-SXM2-16GB GPUs were in TCC mode. CUDA P2P all-gather passed at 64, 128, 256, and 384 MiB with approximately 59.3-61.6 GiB/s per direction.
+- The real MiniMax H3 REF2VA acceptance run used 576x352, 24 fps, a 2-second request, Turbo 4-step, FSDP, and CPU offload. Both worker ranks participated. Sampling took 39.38 seconds and the complete prompt took 200.25 seconds. Recorded phases were 120.19 seconds before the sampler, 0.93 seconds for model-to-GPU, 71.21 seconds in the sampler node, 6.47 seconds for VAE decode, and 2.38 seconds for video save.
+- GPU0/GPU1 peak VRAM was 15949/4603 MiB and peak utilization was 100%/96%. Peak physical memory was 95847 MiB, peak committed memory was 134431 MiB, and pagefile usage remained zero.
+- The H.264/AAC output was 576x352 at 24 fps, 56 frames, and 2.33 seconds. Full video and audio decode passed; all 56 frame hashes were unique, and the first/middle/last frames contained valid non-black, non-noise imagery.
+- The benchmark stopped ComfyUI and both Ray workers. No Python compute process or GPU compute allocation remained afterward.
+
+PyTorch 2.7's legacy Windows TCPStore still emits one `WorkStudio:29500` IPv6-candidate connection warning. Existing isolation tests show that it continues through IPv4 loopback and completes group creation; this two-rank workflow and valid output again confirm that the warning is neither a P2P data-path fallback nor an execution failure.
