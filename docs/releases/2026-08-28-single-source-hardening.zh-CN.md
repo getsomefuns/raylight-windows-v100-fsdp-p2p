@@ -13,6 +13,7 @@
 - 测试模块改用包内相对导入，避免与 ComfyUI 自带的 `tests` 包冲突。
 - FSDP 探针不再写死 `REPO_ROOT.parent/ComfyUI`。
 - MiniMax H3 基准工具接受带来源标记的纯部署副本，也接受干净 Git 克隆；纯副本的来源标记不再被当成“文件一定未改”的证明，实际运行文件仍会逐项校验。Git 克隆始终采用自身真实 `HEAD`，忽略可能过期的私有部署标记。
+- 纯部署副本的逐文件身份使用 Git blob 比较，而不是把部署字节与 Windows 工作树原始字节直接做 SHA-256；这样仍能发现真实修改，同时不会把 Git 换行过滤或混合 CRLF/LF 误报为部署漂移。
 - 旧 `scripts/minimax-h3/deploy-to-comfyui.ps1` 保留为兼容入口，但只转发给统一部署器，不再要求或修改运行目录中的 Git 仓库。
 - Ray 本地 runtime working directory 移到系统临时目录，不再在节点源码树创建 `_ray_runtime_env`。
 - 历史计划迁入 `docs/superpowers/plans/legacy`；原始本机证据迁入 Git 忽略的 `.local/artifacts`。

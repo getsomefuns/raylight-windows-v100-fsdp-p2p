@@ -44,6 +44,16 @@ def make_runtime_repository(root: Path, content: str = "RUNTIME = True\n") -> st
     return benchmark._git_output(root, "rev-parse", "HEAD")
 
 
+def committed_bytes(root: Path, relative: str) -> bytes:
+    completed = benchmark.subprocess.run(
+        ["git", "show", f"HEAD:{relative}"],
+        cwd=root,
+        capture_output=True,
+    )
+    assert completed.returncode == 0
+    return completed.stdout
+
+
 def test_attach_job_closes_candidate_when_assignment_fails():
     candidate = mock.Mock()
     candidate.assign.side_effect = OSError("cannot assign")
@@ -74,9 +84,9 @@ def test_plain_deployment_identity_uses_root_marker(tmp_path):
     deployed = tmp_path / "raylight"
     head = make_runtime_repository(source)
     (deployed / "src" / "raylight").mkdir(parents=True)
-    (deployed / "__init__.py").write_bytes((source / "__init__.py").read_bytes())
+    (deployed / "__init__.py").write_bytes(committed_bytes(source, "__init__.py"))
     (deployed / "src" / "raylight" / "runtime.py").write_bytes(
-        (source / "src" / "raylight" / "runtime.py").read_bytes()
+        committed_bytes(source, "src/raylight/runtime.py")
     )
     marker = deployed / ".raylight-deployed-commit"
     marker.write_text(head + "\n", encoding="utf-8")
@@ -96,7 +106,7 @@ def test_plain_deployment_identity_detects_modified_runtime_file(tmp_path):
     deployed = tmp_path / "raylight"
     head = make_runtime_repository(source)
     (deployed / "src" / "raylight").mkdir(parents=True)
-    (deployed / "__init__.py").write_bytes((source / "__init__.py").read_bytes())
+    (deployed / "__init__.py").write_bytes(committed_bytes(source, "__init__.py"))
     (deployed / "src" / "raylight" / "runtime.py").write_text(
         "RUNTIME = False\n", encoding="utf-8"
     )
@@ -107,6 +117,25 @@ def test_plain_deployment_identity_detects_modified_runtime_file(tmp_path):
     assert identity["kind"] == "plain-copy"
     assert identity["dirty"] is True
     assert "CHANGED: src/raylight/runtime.py" in identity["status"]
+
+
+def test_plain_deployment_compares_git_blob_not_worktree_line_endings(tmp_path):
+    source = tmp_path / "source"
+    deployed = tmp_path / "raylight"
+    head = make_runtime_repository(source, content="LINE_ONE = 1\nLINE_TWO = 2\n")
+    (deployed / "src" / "raylight").mkdir(parents=True)
+    (deployed / "__init__.py").write_bytes(committed_bytes(source, "__init__.py"))
+    committed_runtime = committed_bytes(source, "src/raylight/runtime.py")
+    (deployed / "src" / "raylight" / "runtime.py").write_bytes(committed_runtime)
+    (deployed / ".raylight-deployed-commit").write_text(head + "\n", encoding="utf-8")
+    (source / "src" / "raylight" / "runtime.py").write_bytes(
+        committed_runtime.replace(b"\n", b"\r\n")
+    )
+
+    identity = benchmark.collect_installed_identity(deployed, source)
+
+    assert identity["dirty"] is False
+    assert identity["status"] == ""
 
 
 def test_clean_git_clone_identity_does_not_require_private_marker(tmp_path):

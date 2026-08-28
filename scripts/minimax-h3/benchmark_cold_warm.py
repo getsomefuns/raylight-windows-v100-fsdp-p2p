@@ -825,12 +825,19 @@ def collect_installed_identity(installed: Path, source: Path = REPO_ROOT) -> dic
     expected = {relative.replace("\\", "/") for relative in tracked if relative}
     issues: list[str] = []
     for relative in sorted(expected):
-        source_file = source / Path(relative)
         installed_file = installed / Path(relative)
         if not installed_file.is_file():
             issues.append(f"MISSING: {relative}")
-        elif sha256_file(source_file) != sha256_file(installed_file):
-            issues.append(f"CHANGED: {relative}")
+        else:
+            expected_blob = _git_output(source, "rev-parse", f"HEAD:{relative}")
+            installed_blob = _git_output(
+                source,
+                "hash-object",
+                "--no-filters",
+                str(installed_file),
+            )
+            if expected_blob != installed_blob:
+                issues.append(f"CHANGED: {relative}")
 
     installed_files: set[str] = set()
     entrypoint = installed / "__init__.py"
