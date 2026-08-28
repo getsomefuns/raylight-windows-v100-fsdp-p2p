@@ -833,7 +833,7 @@ def collect_installed_identity(installed: Path, source: Path = REPO_ROOT) -> dic
             installed_blob = _git_output(
                 source,
                 "hash-object",
-                "--no-filters",
+                f"--path={relative}",
                 str(installed_file),
             )
             if expected_blob != installed_blob:

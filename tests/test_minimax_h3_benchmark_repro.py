@@ -119,18 +119,38 @@ def test_plain_deployment_identity_detects_modified_runtime_file(tmp_path):
     assert "CHANGED: src/raylight/runtime.py" in identity["status"]
 
 
-def test_plain_deployment_compares_git_blob_not_worktree_line_endings(tmp_path):
+def test_plain_deployment_applies_git_path_filters_to_line_endings(tmp_path):
     source = tmp_path / "source"
     deployed = tmp_path / "raylight"
-    head = make_runtime_repository(source, content="LINE_ONE = 1\nLINE_TWO = 2\n")
+    make_runtime_repository(source, content="LINE_ONE = 1\nLINE_TWO = 2\n")
+    (source / ".gitattributes").write_text("*.py text\n", encoding="utf-8")
+    assert benchmark.subprocess.run(["git", "add", ".gitattributes"], cwd=source).returncode == 0
+    assert (
+        benchmark.subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Raylight Test",
+                "-c",
+                "user.email=raylight@example.invalid",
+                "commit",
+                "-m",
+                "line ending attributes",
+            ],
+            cwd=source,
+        ).returncode
+        == 0
+    )
+    head = benchmark._git_output(source, "rev-parse", "HEAD")
     (deployed / "src" / "raylight").mkdir(parents=True)
-    (deployed / "__init__.py").write_bytes(committed_bytes(source, "__init__.py"))
+    (deployed / "__init__.py").write_bytes(
+        committed_bytes(source, "__init__.py").replace(b"\n", b"\r\n")
+    )
     committed_runtime = committed_bytes(source, "src/raylight/runtime.py")
-    (deployed / "src" / "raylight" / "runtime.py").write_bytes(committed_runtime)
-    (deployed / ".raylight-deployed-commit").write_text(head + "\n", encoding="utf-8")
-    (source / "src" / "raylight" / "runtime.py").write_bytes(
+    (deployed / "src" / "raylight" / "runtime.py").write_bytes(
         committed_runtime.replace(b"\n", b"\r\n")
     )
+    (deployed / ".raylight-deployed-commit").write_text(head + "\n", encoding="utf-8")
 
     identity = benchmark.collect_installed_identity(deployed, source)
 
