@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.10.1 修复 MiniMaxH3Director 多段续接同时带参考图时，Ray worker 内关键帧条件被参考图覆盖而产生的维度错位，并恢复续接关键帧和音频在目标时间轴中的位置。两段主采样与 Refine 已通过双 V100 实机验证。详见 [1.10.1 中文发布说明](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md)。
+
 1.10.0 新增显式可选的 `Ray MODEL Adapter (MMH3Director)`：保留 Director 单节点参数面板，同时把 Director 的扩散采样转交双 V100 FSDP/P2P Worker。t2v、i2v、fl2v、r2v、v2v、rv2v、同模型 Refine 和真实多段 R2V 均已实机通过。详见 [O8 中文发布说明](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.zh-CN.md)。
 
 MiniMax H3 O6 现已加入显式 `fp16_h3_safe` 模式：FP32 数值岛保护残差与敏感输出，主 Attention/MLP 分支使用 FP16。正式 I2V/REF2VA 采样分别达到 3.299×/3.416×，REF2VA 的当前最佳实验配置达到 3.714×；质量验收通过，但 4× 初始门槛尚未通过。完整的实装、资源数据和失败实验见[中文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md)与[英文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md)。
@@ -31,7 +33,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.10.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.10.1；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -40,6 +42,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - MiniMax H3 O6 安全 FP16 升级记录：[中文](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) / [English](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md)
 - 启动脚本三档容量与日志开关更新：[中文](docs/releases/2026-08-19-launcher-controls.zh-CN.md) / [English](docs/releases/2026-08-19-launcher-controls.en.md)
 - MiniMaxH3Director MODEL 适配器 1.10.0：[中文](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md) / [English](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md)
+- MiniMaxH3Director 连续分段修复 1.10.1：[中文](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md) / [English](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。

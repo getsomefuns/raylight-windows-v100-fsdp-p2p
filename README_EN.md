@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.10.1 fixes a Director multi-segment continuity failure where worker-side reference images replaced motion-context keyframe conditioning. It also restores the intended timeline positions for continuity keyframes and audio. A two-segment main-sample plus Refine run passed on the dual-V100 machine. See the [1.10.1 English release note](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md).
+
 Version 1.10.0 adds the explicit opt-in `Ray MODEL Adapter (MMH3Director)`. Director remains the compact generation-control panel while its diffusion sample executes on the dual-V100 FSDP/P2P workers. Real-machine acceptance covers t2v, i2v, fl2v, r2v, v2v, rv2v, same-model Refine, and multi-segment R2V. See the [O8 English release note](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md) and [validation summary](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.md).
 
 MiniMax H3 O6 now includes the explicit `fp16_h3_safe` mode: FP32 numerical islands protect residuals and sensitive outputs while dominant attention/MLP branches use FP16. Full I2V/REF2VA sampling reaches 3.299x/3.416x, and the best current REF2VA experimental configuration reaches 3.714x. Quality gates pass, but the initial 4x gate does not. See the complete [English upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) or [Chinese upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) for shipped changes, resource data, and rejected experiments.
@@ -21,7 +23,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.10.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.10.1; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -30,6 +32,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - MiniMax H3 O6 safe-FP16 upgrade record: [English](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) / [中文](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md)
 - Launcher capacity and diagnostic controls: [English](docs/releases/2026-08-19-launcher-controls.en.md) / [中文](docs/releases/2026-08-19-launcher-controls.zh-CN.md)
 - MiniMaxH3Director MODEL adapter 1.10.0: [English](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md) / [中文](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md)
+- MiniMaxH3Director continuity fix 1.10.1: [English](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md) / [中文](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 

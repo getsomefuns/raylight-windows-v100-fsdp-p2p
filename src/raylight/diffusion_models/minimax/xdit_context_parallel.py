@@ -1,11 +1,12 @@
 import torch
 
 import comfy
-from comfy.ldm.minimax.model import pack_audio, patchify_video, rope_rotation_table, time_shift_sigma, unpack_audio, unpatchify_video, PackedLayout, VISUAL_COND_TIMESTEP, AUDIO_COND_TIMESTEP
+from comfy.ldm.minimax.model import pack_audio, patchify_video, rope_rotation_table, time_shift_sigma, unpack_audio, unpatchify_video, PackedLayout, VISUAL_COND_TIMESTEP, AUDIO_COND_TIMESTEP, FRAME_RESCALE
 from xfuser.core.distributed import get_sequence_parallel_rank, get_sequence_parallel_world_size, get_sp_group
 
 import raylight.distributed_modules.attention as xfuser_attn
 from raylight.comfy_dist.minimax_h3_fp16 import safe_attention_output_projection
+from .director_continuity import prepare_director_continuity
 from ..utils import pad_to_world_size
 
 
@@ -64,6 +65,7 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
                               keyframes=payload.get("keyframes"),
                               refs=payload.get("refs"),
                               frame_count=payload.get("frame_count"))
+    payload = prepare_director_continuity(payload, layout, frame_rescale=FRAME_RESCALE)
 
     # model_base passes model_sampling.timestep(sigma) = sigma * 1000
     shift_v = float(transformer_options.get("minimax_h3_sigma_shift_video", self.sigma_shift_video))
