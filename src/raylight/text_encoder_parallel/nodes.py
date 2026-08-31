@@ -7,6 +7,7 @@ from pathlib import Path
 import uuid
 
 import comfy.sd
+import comfy.model_management
 from comfy.text_encoders.minimax import MiniMaxH3Tokenizer
 import folder_paths
 
@@ -86,6 +87,11 @@ class RayMiniMaxH3DualGPUCLIPLoader:
         @contextmanager
         def execution_context():
             operation_id = f"minimax-h3-tp2-{uuid.uuid4().hex}"
+            # MiniMax reference preparation may have left the ~5 GiB Video VAE
+            # resident on GPU0.  TP2 needs both V100s exclusively while its
+            # visual tower and language shards are resident.
+            comfy.model_management.unload_all_models()
+            comfy.model_management.soft_empty_cache()
             with external_text_encoder_gpu_lease(
                 ray_actors, operation_id, "MiniMaxH3TP2"
             ):

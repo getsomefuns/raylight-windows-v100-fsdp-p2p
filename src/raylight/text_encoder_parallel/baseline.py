@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from contextlib import contextmanager
 from functools import wraps
 import json
 import math
@@ -144,6 +145,35 @@ def append_event(path: Path, event: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(dict(event), ensure_ascii=False, sort_keys=True) + "\n")
+
+
+@contextmanager
+def timed_stage(stage: str):
+    """Record one opt-in TP2 stage without changing normal execution behavior."""
+
+    event_path = os.environ.get(BASELINE_EVENT_PATH_ENV, "").strip()
+    enabled = stage_timing_enabled() and bool(event_path)
+    started = time.perf_counter()
+    begin_ns = time.time_ns()
+    failed = False
+    try:
+        yield
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        if enabled:
+            append_event(
+                Path(event_path),
+                {
+                    "event": "text_encoder_stage",
+                    "stage": stage,
+                    "elapsed_s": time.perf_counter() - started,
+                    "begin_time_ns": begin_ns,
+                    "time_ns": time.time_ns(),
+                    "failed": failed,
+                },
+            )
 
 
 def _synchronize_clip_device(clip: Any) -> None:

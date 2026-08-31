@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 
 import pytest
 import torch
@@ -236,6 +237,30 @@ def test_proxy_wraps_preprocessor_and_backbone_in_execution_context() -> None:
     assert events == ["lease-enter", "lease-exit"]
     assert state.preprocess_closed == 1
     assert state.backbone_closed == 1
+
+
+def test_proxy_records_detailed_benchmark_stages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from raylight.text_encoder_parallel import baseline
+
+    event_path = tmp_path / "events.jsonl"
+    monkeypatch.setenv(baseline.BASELINE_ENV, "1")
+    monkeypatch.setenv(baseline.BASELINE_EVENT_PATH_ENV, str(event_path))
+    state = _ResourceState()
+
+    _proxy(state).encode_from_tokens(_proxy(state).tokenize("prompt"), return_dict=True)
+
+    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+    assert [event["stage"] for event in events] == [
+        "preprocessor_load",
+        "preprocess_and_vision",
+        "preprocessor_cleanup",
+        "backbone_load",
+        "language_backbone",
+        "backbone_cleanup",
+        "conditioning_finalize",
+    ]
 
 
 class _TPBlock:

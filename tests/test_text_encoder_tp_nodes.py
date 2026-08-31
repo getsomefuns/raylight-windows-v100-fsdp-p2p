@@ -83,15 +83,21 @@ def test_tp2_proxy_lease_context_uses_same_workers_and_unique_operation_ids() ->
         clip, _ = tp_nodes.RayMiniMaxH3DualGPUCLIPLoader().load_clip(
             "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "tp2", payload
         )
-        with clip._execution_context_factory():
-            pass
-        with clip._execution_context_factory():
-            pass
+        with (
+            mock.patch.object(tp_nodes.comfy.model_management, "unload_all_models") as unload,
+            mock.patch.object(tp_nodes.comfy.model_management, "soft_empty_cache") as empty,
+        ):
+            with clip._execution_context_factory():
+                pass
+            with clip._execution_context_factory():
+                pass
 
     assert [row[0] for row in observed] == [ray_actors, ray_actors]
     assert [row[2] for row in observed] == ["MiniMaxH3TP2", "MiniMaxH3TP2"]
     assert observed[0][1] != observed[1][1]
     assert all(value.startswith("minimax-h3-tp2-") for _, value, _ in observed)
+    assert unload.call_count == 2
+    assert empty.call_count == 2
 
 
 @pytest.mark.parametrize("worker_count", [0, 1, 3])

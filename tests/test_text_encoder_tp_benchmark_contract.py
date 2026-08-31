@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 
@@ -166,3 +167,21 @@ def test_count_tokens_counts_minimax_vision_entry_as_one_token() -> None:
     }
 
     assert count_tokens(tokens) == 4
+
+
+def test_timed_stage_is_opt_in_and_records_elapsed_time(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from raylight.text_encoder_parallel import baseline
+
+    event_path = tmp_path / "events.jsonl"
+    monkeypatch.setenv(baseline.BASELINE_ENV, "1")
+    monkeypatch.setenv(baseline.BASELINE_EVENT_PATH_ENV, str(event_path))
+
+    with baseline.timed_stage("language_backbone"):
+        time.sleep(0.001)
+
+    event = json.loads(event_path.read_text(encoding="utf-8").strip())
+    assert event["event"] == "text_encoder_stage"
+    assert event["stage"] == "language_backbone"
+    assert event["elapsed_s"] > 0

@@ -22,6 +22,7 @@ from typing import Any, Callable, Sequence
 import torch
 
 from .collectives import CudaPeerGroup2
+from .baseline import timed_stage
 from .linear import ColumnParallelLinear, RowParallelLinear, TorchDualCudaLinearExecutor
 from .nvfp4_sharding import shard_nvfp4_linear
 from .qwen3vl_tp import MINIMAX_H3_QWEN3VL_CONFIG, TP2Qwen3VLBlock
@@ -687,21 +688,28 @@ class MiniMaxH3TP2ClipProxy:
             raise ValueError("weighted MiniMax prompts are not supported by the TP2 proxy")
 
         with self._execution_context_factory():
-            preprocessor = self._preprocessor_factory()
+            with timed_stage("preprocessor_load"):
+                preprocessor = self._preprocessor_factory()
             try:
-                prepared = preprocessor.prepare(sections)
+                with timed_stage("preprocess_and_vision"):
+                    prepared = preprocessor.prepare(sections)
             finally:
-                preprocessor.close()
+                with timed_stage("preprocessor_cleanup"):
+                    preprocessor.close()
 
-            backbone = self._backbone_factory()
+            with timed_stage("backbone_load"):
+                backbone = self._backbone_factory()
             try:
-                encoded = backbone.encode(prepared)
+                with timed_stage("language_backbone"):
+                    encoded = backbone.encode(prepared)
             finally:
-                backbone.close()
-        if encoded.ndim != 3 or encoded.shape[:2] != prepared.embeddings.shape[:2]:
-            raise RuntimeError("TP2 backbone returned an invalid conditioning shape")
-        if not torch.isfinite(encoded).all().item():
-            raise RuntimeError("TP2 backbone returned NaN or Inf conditioning")
+                with timed_stage("backbone_cleanup"):
+                    backbone.close()
+        with timed_stage("conditioning_finalize"):
+            if encoded.ndim != 3 or encoded.shape[:2] != prepared.embeddings.shape[:2]:
+                raise RuntimeError("TP2 backbone returned an invalid conditioning shape")
+            if not torch.isfinite(encoded).all().item():
+                raise RuntimeError("TP2 backbone returned NaN or Inf conditioning")
         return encoded, None, {"minimax_token_tags": prepared.token_tags}
 
     def encode_token_weights(self, tokens: dict):
