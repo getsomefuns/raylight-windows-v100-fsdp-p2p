@@ -72,6 +72,7 @@ from raylight.comfy_dist.minimax_h3_fp16 import (
     prepare_minimax_h3_safe_fp16_worker,
 )
 from raylight.distributed_worker.sampling_profiler import run_with_optional_profile
+from raylight.text_encoder_parallel.lifecycle import WorkerGpuLifecycle
 from ray.exceptions import RayActorError
 
 
@@ -131,6 +132,23 @@ def _scoped_fsdp_host_registration(method):
             _release_fsdp_host_registration_after_sampling(worker)
 
     return wrapped
+
+
+def worker_gpu_activity(state):
+    """Reject worker GPU work while the main-process Text Encoder owns both GPUs."""
+
+    def decorate(method):
+        @functools.wraps(method)
+        def wrapped(worker, *args, **kwargs):
+            lifecycle = getattr(worker, "_gpu_lifecycle", None)
+            if lifecycle is None:
+                return method(worker, *args, **kwargs)
+            with lifecycle.activity(state):
+                return method(worker, *args, **kwargs)
+
+        return wrapped
+
+    return decorate
 
 def windows_p2p_health_iterations(
     size_bytes,
@@ -662,6 +680,7 @@ class RayWorker:
         self.active_request_key = None
 
         self.local_rank = local_rank
+        self._gpu_lifecycle = WorkerGpuLifecycle(rank=int(local_rank))
         self.global_world_size = self.parallel_dict["global_world_size"]
         self.shard_size = self.parallel_dict["shard_size"]
         self.group_id = self.parallel_dict.get("group_id", 0)
@@ -929,6 +948,7 @@ class RayWorker:
         else:
             raise ValueError("Model recieved is not meta, can cause OOM in large model")
 
+    @worker_gpu_activity("loading_diffusion")
     def set_meta_model(self, model):
         base_model = getattr(model, "model", model)
         first_param_device = next(base_model.parameters()).device
@@ -1037,6 +1057,23 @@ class RayWorker:
         comfy_model_management.soft_empty_cache()
         return True
 
+    def enter_external_gpu_lease(self, operation_id, owner):
+        """Release worker CUDA residency and lease this rank to main-process TP2."""
+
+        lease = self._gpu_lifecycle.acquire_external_lease(
+            operation_id,
+            owner,
+            cleanup=self.clear_sampling_vram,
+            free_bytes=lambda: int(torch.cuda.mem_get_info(self.device)[0]),
+        )
+        return lease.to_mapping()
+
+    def exit_external_gpu_lease(self, operation_id, owner):
+        return self._gpu_lifecycle.release_external_lease(operation_id, owner)
+
+    def get_external_gpu_lease(self):
+        return self._gpu_lifecycle.snapshot()
+
     def check_model_loaded(self, unet_path, model_options):
         """Check if the currently loaded model matches the given parameters.
 
@@ -1060,6 +1097,7 @@ class RayWorker:
             self.is_model_loaded = False
             raise
 
+    @worker_gpu_activity("loading_diffusion")
     def fsdp_preflight(self):
         if not self.parallel_dict.get("is_fsdp", False):
             raise ValueError("FSDP preflight requires RayInitializer FSDP=true")
@@ -1165,6 +1203,7 @@ class RayWorker:
         self.active_request_key = active_key
         self.is_model_loaded = True
 
+    @worker_gpu_activity("loading_diffusion")
     def set_state_dict(self):
         if self.state_dict is None:
             if self.parallel_dict.get("is_fsdp") is True and self.parallel_dict.get("is_quant") is False:
@@ -1368,6 +1407,7 @@ class RayWorker:
             pipefusion_diffusion_model_wrapper,
         )
 
+    @worker_gpu_activity("loading_diffusion")
     def load_unet(self, unet_path, model_options):
         safe_fp16_active = prepare_minimax_h3_safe_fp16_worker(
             model_options,
@@ -1523,6 +1563,7 @@ class RayWorker:
             self._activate_cached_base_model(active_key)
             return
 
+    @worker_gpu_activity("loading_diffusion")
     def load_gguf_unet(self, unet_path, dequant_dtype, patch_dtype, use_mmap=None):
         self._reset_active_model()
         self._invalidate_non_fsdp_cache()
@@ -1561,6 +1602,7 @@ class RayWorker:
     ):
         return self.lora_list
 
+    @worker_gpu_activity("loading_lora")
     def load_lora(
         self,
     ):
@@ -1615,6 +1657,7 @@ class RayWorker:
         dist.destroy_process_group()
         ray.actor.exit_actor()
 
+    @worker_gpu_activity("loading_diffusion")
     def ray_vae_loader(self, vae_path):
         if self.vae_model is not None and getattr(self, "_cached_vae_path", None) == vae_path:
             return
@@ -1633,17 +1676,21 @@ class RayWorker:
         self.vae_model = vae_model
         self._cached_vae_path = vae_path
 
+    @worker_gpu_activity("sampling")
     @patch_ray_tqdm
     def ray_vae_decode_partial(self, samples, tile_size, overlap=64, temporal_size=64, temporal_overlap=8, job_rank=0, job_world_size=1):
         return ray_vae_decode_partial_impl(self, samples, tile_size, overlap, temporal_size, temporal_overlap, job_rank, job_world_size)
 
+    @worker_gpu_activity("sampling")
     def ray_vae_decode_finalize(self, decoded):
         return ray_vae_decode_finalize_impl(self, decoded)
 
+    @worker_gpu_activity("sampling")
     @patch_ray_tqdm
     def ray_seedvr2_vae_decode_partial(self, samples, tile_size, overlap=64, job_rank=0, job_world_size=1):
         return ray_seedvr2_vae_decode_partial_impl(self, samples, tile_size, overlap, job_rank, job_world_size)
 
+    @worker_gpu_activity("sampling")
     @_scoped_fsdp_host_registration
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
@@ -1768,6 +1815,7 @@ class RayWorker:
             return self._grouped_sampling_result(result)
         return result
 
+    @worker_gpu_activity("sampling")
     @_scoped_fsdp_host_registration
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
@@ -1852,6 +1900,7 @@ class RayWorker:
             return self._grouped_sampling_result(out)
         return out
 
+    @worker_gpu_activity("loading_diffusion")
     def load_controlnet(self, controlnet_path):
         """Load a ControlNet model from disk into the worker.
 
@@ -1908,6 +1957,7 @@ class RayWorker:
             if self.local_rank == 0:
                 print(f"[Rank {self.local_rank}] VAE cache freed")
 
+    @worker_gpu_activity("sampling")
     @_scoped_fsdp_host_registration
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
@@ -2053,6 +2103,7 @@ class RayWorker:
             comfy_model_management.soft_empty_cache()
             gc.collect()
 
+    @worker_gpu_activity("sampling")
     @_scoped_fsdp_host_registration
     @patch_temp_fix_ck_ops
     @patch_ray_tqdm
