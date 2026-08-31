@@ -20,7 +20,22 @@ import psutil
 
 
 REPO_ROOT = Path(__file__).parents[1]
-COMFY_ROOT = Path(os.environ.get("RAYLIGHT_COMFY_ROOT", REPO_ROOT.parents[1]))
+
+
+def default_comfy_root(repo_root: Path) -> Path:
+    """Resolve ComfyUI for both the canonical worktree and deployed-node layouts."""
+    candidates = [repo_root.parent / "ComfyUI"]
+    if repo_root.parent.name.casefold() == "custom_nodes":
+        candidates.append(repo_root.parent.parent)
+    for candidate in candidates:
+        if (candidate / "main.py").is_file():
+            return candidate
+    return candidates[0]
+
+
+COMFY_ROOT = Path(
+    os.environ.get("RAYLIGHT_COMFY_ROOT", default_comfy_root(REPO_ROOT))
+)
 ENV_ROOT = COMFY_ROOT.parent
 PYTHON = Path(os.environ.get("RAYLIGHT_PYTHON", ENV_ROOT / "Python310/python.exe"))
 RESULT_ROOT = Path(
@@ -269,6 +284,7 @@ def server_environment(mode: str) -> dict:
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
             "PYTHONUNBUFFERED": "1",
+            "RAY_DEDUP_LOGS": "0",
             "USE_LIBUV": "0",
             "MASTER_ADDR": "127.0.0.1",
             "MASTER_PORT": "29500",

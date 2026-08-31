@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.11.0 (O9) turns the Windows CUDA P2P buffer from a logical-payload limit into a fixed VRAM budget. The default is now 128 MiB per rank; larger Ulysses/FSDP collectives are automatically split into CUDA P2P chunks without CPU/Gloo payload fallback. The historical 239,826,944-byte remote payload, MiniMax H3 I2V/REF2VA, five-segment Director + Refine, and LTX five-second cold/warm runs all pass. See the [O9 English release note](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md) and [acceptance record](docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md).
+
 Version 1.10.2 hardens the single-source layout. The only editable Git worktree is now strictly separated from the plain ComfyUI deployment copy, which records a verifiable source commit. Tests, FSDP probes, and benchmark identity checks support the canonical worktree, a plain `custom_nodes` deployment, and a clean Git clone. Ray's local working directory no longer lives inside the node source tree. See the [1.10.2 English release note](docs/releases/2026-08-28-single-source-hardening.en.md).
 
 Version 1.10.1 fixes a Director multi-segment continuity failure where worker-side reference images replaced motion-context keyframe conditioning. It also restores the intended timeline positions for continuity keyframes and audio. A two-segment main-sample plus Refine run passed on the dual-V100 machine. See the [1.10.1 English release note](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md).
@@ -15,7 +17,7 @@ Version 1.10.0 adds the explicit opt-in `Ray MODEL Adapter (MMH3Director)`. Dire
 
 MiniMax H3 O6 now includes the explicit `fp16_h3_safe` mode: FP32 numerical islands protect residuals and sensitive outputs while dominant attention/MLP branches use FP16. Full I2V/REF2VA sampling reaches 3.299x/3.416x, and the best current REF2VA experimental configuration reaches 3.714x. Quality gates pass, but the initial 4x gate does not. See the complete [English upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md) or [Chinese upgrade record](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md) for shipped changes, resource data, and rejected experiments.
 
-Launcher update (2026-08-19): the generic launcher now defaults to a 256 MiB P2P buffer per GPU, exposes explicit 128/256/512 MiB choices, and keeps Rank/P2P diagnostics off unless requested. See the [English release note](docs/releases/2026-08-19-launcher-controls.en.md) or [Chinese release note](docs/releases/2026-08-19-launcher-controls.zh-CN.md).
+The 2026-08-19 manual capacity choices remain historical documentation. Version 1.11.0 supersedes that default with 128 MiB auto-chunking; 256/512 MiB are advanced performance-comparison choices, not requirements for larger workflows. Rank/P2P diagnostics remain off by default.
 
 This is not Windows NCCL and not a general PyTorch `ProcessGroup`. It is a targeted compatibility layer for a single machine, exactly two ranks, Windows V100 inference.
 
@@ -25,7 +27,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.10.2; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.11.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -36,6 +38,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - MiniMaxH3Director MODEL adapter 1.10.0: [English](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md) / [中文](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md)
 - MiniMaxH3Director continuity fix 1.10.1: [English](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md) / [中文](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md)
 - Single-source deployment and test-layout hardening 1.10.2: [English](docs/releases/2026-08-28-single-source-hardening.en.md) / [中文](docs/releases/2026-08-28-single-source-hardening.zh-CN.md)
+- O9 adaptive CUDA P2P chunking 1.11.0: [English](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md) / [中文](docs/releases/2026-08-o9-adaptive-p2p-chunking.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -123,7 +126,7 @@ This is not pipeline parallelism with half the layers on each GPU. For each FSDP
 4. the full weight is released and each rank returns to its persistent shard;
 5. the process repeats for the next layer.
 
-The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each rank retained about 11,203 MiB of Diffusion Model payload. The validated MiniMax H3 path registered 684 FSDP wrappers per rank. Each GPU still needs temporary room for the active full layer, activations, LoRA, the selected P2P buffer (256 MiB in the current launcher), and CUDA workspaces, so peak VRAM can still approach 16 GB.
+The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each rank retained about 11,203 MiB of Diffusion Model payload. The validated MiniMax H3 path registered 684 FSDP wrappers per rank. Each GPU still needs temporary room for the active full layer, activations, LoRA, the fixed 128 MiB auto-chunking P2P staging buffer, and CUDA workspaces, so peak VRAM can still approach 16 GB without permanently sizing the buffer to one large payload.
 
 ### What is and is not sharded
 
@@ -309,16 +312,16 @@ Start normally:
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY
 ```
 
-The launcher prints the available `128/256/512 MiB` choices and defaults to `256 MiB`. Select a size explicitly when comparing configurations:
+The launcher prints the 128 MiB staging budget, auto-chunking state, and advanced `128/256/512 MiB` overrides. The recommended default is 128 MiB and does not need to be sized from resolution, frame count, or model:
 
 ```powershell
-# Lower VRAM use, but too small for the accepted 1120x768 MiniMax H3 O6 workflow
+# Default: larger collectives are auto-chunked
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 128
 
-# Default; covers the currently measured LTX and MiniMax H3 O6 payloads
+# Advanced performance comparison; adds 128 MiB persistent VRAM per rank
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 256
 
-# More headroom; consumes 256 MiB more VRAM per GPU than the 256 MiB choice
+# Advanced performance comparison; adds 384 MiB per rank over the default
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 512
 ```
 
@@ -327,7 +330,6 @@ Detailed Rank/P2P diagnostics are off for normal use. Enable them only while inv
 ```powershell
 .\scripts\start-comfyui-windows-p2p.ps1 `
   -PythonPath $PY `
-  -P2PCapacityMiB 256 `
   -EnableDiagnostics
 ```
 
@@ -420,8 +422,7 @@ $Ray = Join-Path $EnvRoot "Python310\Scripts\ray.exe"
 nvidia-smi --query-gpu=index,name,driver_model.current,memory.used,utilization.gpu --format=csv,noheader
 ```
 
-Wait until both V100s are in TCC, idle, and released from the previous run. For the main safe-FP16
-result, disable optional host registration and start with the required 256 MiB per-rank P2P buffer:
+Wait until both V100s are in TCC, idle, and released from the previous run. Version 1.11.0 completes the measured 239,826,944-byte remote Ulysses payload with the default 128 MiB staging budget, so the safe-FP16 workflow no longer needs a larger manual setting:
 
 ```powershell
 Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER -ErrorAction SilentlyContinue
@@ -431,11 +432,10 @@ Set-Location $RepoRoot
 .\scripts\start-comfyui-windows-p2p.ps1 `
   -PythonPath $PY `
   -ComfyRoot $ComfyRoot `
-  -P2PCapacityMiB 256 `
   -ReserveVramGiB 2
 ```
 
-The worker's 128 MiB fallback is insufficient for the measured 239,826,944-byte Ulysses remote payload at the formal geometry; the launcher now selects 256 MiB by default. Open <http://127.0.0.1:8188> and load:
+Open <http://127.0.0.1:8188> and load:
 
 [example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json](example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json)
 
@@ -474,14 +474,13 @@ $env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER = "1"
 $env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER_MIB = "5120"
 ```
 
-Start with the same launcher and `-P2PCapacityMiB 256`, then use the identical workflow, geometry, input, prompt, four steps, and
+Start with the same default launcher, then use the identical workflow, geometry, input, prompt, four steps, and
 fixed seed. Use SaveVideo prefix `video/raylight_o6/manual_ref2va_o6_safe_fp16_hostreg5g`. The log
 must show `FSDP_HOST_REGISTER` and approximately 5120 MiB. Historical results were 49.8680 s/it,
 249.977 s for the Sampler node, and 424.241 s E2E. Instant tqdm values and total Sampler-node time are
 not the formal s/it definition; the formal value is the slowest rank's complete sampling interval / 4.
 
-For the FP32 control, restart again with both host-registration variables removed, keep the 256 MiB
-P2P buffer, and load:
+For the FP32 control, restart again with both host-registration variables removed, keep the default 128 MiB auto-chunking budget, and load:
 
 [example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json](example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4.json)
 
@@ -507,7 +506,7 @@ FlashAttention, `--highvram`, or `--disable-smart-memory` when reproducing the a
 
 ### 8. Run the MiniMaxH3Director dual-GPU workflow
 
-1. Start ComfyUI with `start_raylight_p2p.ps1` from the environment root. The accepted defaults are a 256 MiB P2P buffer, 3 GiB main-process VRAM reserve, and detailed diagnostics off.
+1. Start ComfyUI with `start_raylight_p2p.ps1` from the environment root. The accepted defaults are a 128 MiB auto-chunking staging budget, 3 GiB main-process VRAM reserve, and detailed diagnostics off.
 2. Load `example_workflows/MMH3Director_Windows_V100_FSDP.json`. A local deployed copy normally lives at `<ComfyUI>\user\default\workflows\MMH3Director.json`.
 3. Keep `GPU=2`, `ulysses_degree=2`, `ring_degree=1`, `FSDP=true`, and `FSDP_CPU_OFFLOAD=true` in Ray initialization. Use `fp16_h3_safe` on V100; match the checkpoint and official Turbo LoRA to FL2VA or REF2VA mode.
 4. Set task type, seed, steps, sampler, scheduler, video/audio shifts, megapixels, aspect ratio, FPS, duration, prompt groups, segments, and output directly on Director. Do not add another XFuser sampler/guider/scheduler stack.
@@ -543,9 +542,9 @@ ComfyUI -> Raylight workers -> FSDP all-gather / Ulysses all-to-all
 TCPStore + Gloo -------------> rendezvous, groups, control, unmatched operations
 ```
 
-The launcher sets UTF-8 logging, `USE_LIBUV=0`, localhost rendezvous, Ray memory-monitor overrides, two visible GPUs, a 256 MiB per-rank P2P buffer by default, a 3 GiB main-process VRAM reserve, a 50 GiB/s minimum P2P gate, and diagnostics off. It exposes 128/256/512 MiB P2P choices, `-ReserveVramGiB`, and `-EnableDiagnostics`. See the Chinese README for the complete environment-variable table and memory trade-offs.
+The launcher sets UTF-8 logging, `USE_LIBUV=0`, localhost rendezvous, Ray memory-monitor overrides, two visible GPUs, a 128 MiB per-rank P2P staging budget by default, a 3 GiB main-process VRAM reserve, a 50 GiB/s minimum P2P gate, and diagnostics off. It exposes 128/256/512 MiB advanced P2P choices, `-ReserveVramGiB`, and `-EnableDiagnostics`. See the Chinese README for the complete environment-variable table and memory trade-offs.
 
-P2P capacity is a persistent CUDA staging-buffer limit per GPU, not a direct conversion from video duration or resolution. Increasing it does not reserve additional host RAM/pagefile and does not inherently improve speed; it consumes the selected amount of VRAM per GPU. Raise it only when a measured collective payload exceeds the current choice. Insufficient capacity fails explicitly rather than silently spilling through host memory.
+P2P capacity is a persistent CUDA staging-VRAM budget per GPU, not a direct conversion from video duration or resolution and no longer a logical payload ceiling. Larger valid collectives use multiple CUDA P2P/NVLink chunks inside one logical call. Increasing the budget does not reserve host RAM/pagefile, but it consumes the selected difference in persistent VRAM. The O9 median retained 98.91%/98.50% of matched-large-buffer bandwidth for 256/512 MiB payloads while using the 128 MiB default.
 
 The memory-monitor override prevents Ray from terminating a large workflow early. It can allow Windows to enter paging under pressure; monitor physical and committed memory rather than treating it as a free optimization.
 
@@ -556,6 +555,8 @@ The memory-monitor override prevents Ray from terminating a large workflow early
 - Existing all-to-all: about 59.3 GiB/s per rank.
 - FSDP all-gather: about 60.0-61.6 GiB/s per rank for 64-384 MiB synthetic shards.
 - A 256 MiB shard over the 128 MiB staging buffer passed correct two-chunk transfer.
+- O9 all-to-all completed a 239,826,944-byte remote payload in two chunks with a fixed 128 MiB endpoint.
+- Five interleaved sessions retained 98.91%/98.50% of matched-large-buffer median bandwidth for 256/512 MiB payloads.
 - FP32, FP16, BF16-as-bytes, and uint8 transport passed, including tail chunks.
 - A 512 MiB synthetic FSDP2 parameter retained 256 MiB per rank and resharded after forward.
 - LTX registered 2,999 FSDP wrappers and retained about 11,203 MiB model payload per rank.
@@ -580,6 +581,8 @@ Current visually accepted FSDP baseline:
 |---|---:|---:|---:|---:|---|
 | FSDP without LoRA | 479.83 s | about 11.0 s/it | about 41.7 s/it | 16,218/16,208 MiB | coherent, PASS |
 | FSDP + original BF16 LoRA | 551.82 s | about 15.0 s/it | about 45.6 s/it | 16,224/16,156 MiB | coherent, PASS |
+| O9 default 128 MiB, cold | 517.13 s | 14.9 s/it | 45.9 s/it | 16,224/16,152 MiB | 121/121 unique frames, PASS |
+| O9 default 128 MiB, same-process warm | 386.36 s | 14.9 s/it | 47.8 s/it | 16,234/16,156 MiB | 121/121 unique frames, PASS |
 
 These results prove sharding, dual-GPU computation, and correct output. LTX performance optimization remains a separate task.
 
@@ -595,6 +598,8 @@ These results prove sharding, dual-GPU computation, and correct output. LTX perf
 | O6 | Function and quality pass; I2V/REF2VA reach 3.299x/3.416x and optional REF2VA reaches 3.714x; the 4x gate remains open |
 | O7 | preliminary model-specific safe-FP16 research for LTX/LTXAV after O6 performance closure |
 | O8 Director MODEL proxy | t2v/i2v/fl2v/r2v/v2v/rv2v, Refine, multi-segment, media, reuse, reclamation, and legacy performance gates pass |
+| O9 adaptive P2P chunking | 128 MiB default; historical large payload, I2V, REF2VA, Director multi-segment/Refine, and LTX cold/warm pass |
+| O10 Text Encoder TP2 | Unblocked only after O9 Gates A-F; separate staged development, not a shipped 1.11.0 capability |
 
 The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to end and 160.72 s/it; REF2VA Turbo4 takes 932.03 s and 185.20 s/it. The initial 4x limits are 40.1799 and 46.3008 s/it, and current results remain above them. The 11x value is a later research target, not a current capability. Older O5 geometry is not an O6 denominator.
 
@@ -605,6 +610,8 @@ The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to e
 - [O7 preliminary LTX research plan](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
 - O8 Director adapter validation: [English](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.md) / [中文](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.zh-CN.md)
 - O8 implementation plan: [English](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.md) / [中文](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.zh-CN.md)
+- [O9 adaptive P2P acceptance](docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md)
+- [O10 Text Encoder TP2 plan](docs/superpowers/plans/2026-08-29-o10-minimax-h3-dual-v100-text-encoder-tp2.zh-CN.md)
 
 ## Important fixes retained in this branch
 

@@ -129,9 +129,15 @@ LTX/LTXAV 在当前 ComfyUI 配置中继续只声明 BF16/FP32。V100 擅长 FP1
 - 原生 Windows 无 NCCL，但 Gloo 控制面配合定向 CUDA IPC/P2P 数据面，可以让已匹配的双 rank Ulysses all-to-all 实际使用 NVLink。
 - 当前实现已通过硬件 P2P、独立传输、双 Ray actor、xFuser subgroup 和 LTX 端到端验证。
 - 10 秒不稳定的根因不是“超时太短”，而是量化模型未 mmap、metadata 丢失以及两 rank 模型加载预算不同步；修复后仍保持严格 10 秒标准。
-- 128 MiB/rank 是已验证 10 秒工作流的发布默认值；更长序列必须重新验证最大 collective，而不是盲目增大缓冲区。
+- 128 MiB/rank 是 O9 发布默认 staging budget；更长序列仍需重新验证显存、性能和质量，但合法的大 collective 会自动分块，不应再靠增大缓冲区修复容量。
 - 全局 FP16 对 LTXAV 数值不安全。速度提高伴随黑屏和音频 NaN/Inf，因此不属于可用优化。
 - 当前公平热对热加速为 10.28%，低于 20% 目标。后续优化应聚焦通信复制、控制面和非并行阶段，而不是牺牲输出质量。
+
+## O9 补充：自适应 CUDA P2P 分块
+
+O9 不改写上面的历史 P2P/Ulysses数据；它修复了旧 `all_to_all_single` 把逻辑远端 payload 错当成固定 staging 上限的问题。默认 128 MiB endpoint 已完成 239,826,944 字节远端 payload（2 chunks），64 MiB endpoint 已完成到 768 MiB/rank 的多 dtype 搬运和 100 次压力循环。五次交错 session 中，128 MiB 自动分块对 256/512 MiB payload 保留匹配大 buffer 中位带宽的 98.91%/98.50%。
+
+真实回归覆盖 MiniMax H3 I2V/REF2VA、五段 MMH3Director + Refine 与 LTX 5 秒冷/热。LTX O9 冷/热端到端为 517.13/386.36 秒；两段采样为 14.9/45.9 与 14.9/47.8 s/it。输出均为 1280×704、121 帧、25 FPS，全部帧唯一、0 黑屏区间、音频 NaN/Inf=0；退出后两卡回到 10 MiB。完整数据见 [O9 验收记录](testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md)。
 
 ## 证据与复现入口
 

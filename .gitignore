@@ -73,6 +73,7 @@ coverage.xml
 .ruff_cache/
 _ray_runtime_env/
 .local/
+artifacts/
 
 # Translations
 *.mo

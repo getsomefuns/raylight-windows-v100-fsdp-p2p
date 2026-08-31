@@ -107,7 +107,7 @@ The script automatically derives the ComfyUI root from
 
 - `USE_LIBUV=0` and a local TCPStore rendezvous.
 - Ray memory-monitor overrides used by the validated large workflow.
-- Windows CUDA P2P mode with one persistent 128 MiB send buffer per rank.
+- Windows CUDA P2P mode with one persistent 128 MiB staging buffer per rank; larger valid collectives are automatically chunked.
 - A strict 50 GiB/s startup health threshold.
 - A strict 10-second P2P coordination timeout; diagnostic overrides are forwarded
   into Ray workers and force a new worker session.
@@ -180,8 +180,7 @@ important optimization areas.
   topology. Lowering the threshold changes the guardrail, not the hardware.
 - Wrong Gloo adapter or timeout: pass the physical IPv4 with `-GlooHost`.
 - FSDP requested: unsupported on this Windows P2P path; disable it.
-- Payload exceeds capacity: increase `-P2PCapacityBytes` only after checking
-  available VRAM. The validated 10-second workflow reached a maximum collective input of 230,686,720 bytes and requires the 128 MiB-per-rank default.
+- A valid payload larger than the staging budget is automatically chunked and remains on the CUDA P2P/NVLink data plane. Do not raise `-P2PCapacityMiB` merely to fit a larger video. Use 256/512 MiB only as an advanced performance comparison when VRAM is available. A remaining size error indicates an unsupported tensor contract, rank geometry mismatch, or poisoned endpoint rather than a request to enlarge the buffer.
 - Black video or audio NaN/Inf after forcing FP16: restore the LTX/LTXAV default BF16/FP32 inference range. Global FP16 was numerically invalid in the validated V100 workflow.
 
 Ray on Windows remains a beta platform. Treat this branch as an experimental,

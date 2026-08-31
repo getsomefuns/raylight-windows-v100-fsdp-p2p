@@ -1,4 +1,5 @@
 import copy
+import tempfile
 import unittest
 
 import psutil
@@ -47,6 +48,31 @@ def minimal_prompt(mode):
 
 
 class WindowsLTXModeBenchmarkTests(unittest.TestCase):
+    def test_unique_worktree_default_resolves_the_sibling_comfyui(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment_root = Path(directory)
+            repo_root = environment_root / "raylight-windows-v100-fsdp-p2p"
+            comfy_root = environment_root / "ComfyUI"
+            repo_root.mkdir()
+            comfy_root.mkdir()
+            (comfy_root / "main.py").touch()
+
+            self.assertEqual(benchmark.default_comfy_root(repo_root), comfy_root)
+
+    def test_deployed_node_default_resolves_its_comfyui_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            comfy_root = Path(directory) / "ComfyUI"
+            repo_root = comfy_root / "custom_nodes" / "raylight"
+            repo_root.mkdir(parents=True)
+            (comfy_root / "main.py").touch()
+
+            self.assertEqual(benchmark.default_comfy_root(repo_root), comfy_root)
+
+    def test_distributed_diagnostics_are_not_ray_deduplicated(self):
+        environment = benchmark.server_environment("fsdp")
+
+        self.assertEqual(environment["RAY_DEDUP_LOGS"], "0")
+
     def test_prepare_prompt_uses_matching_per_run_seeds_without_mutating_template(self):
         template = minimal_prompt("single")
         original = copy.deepcopy(template)

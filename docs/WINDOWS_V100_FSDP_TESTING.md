@@ -98,6 +98,17 @@ F2 的完整合成模型数据见 [windows-v100-fsdp-phase-f2-results.md](window
 
 当前 FSDP 解决的是“每卡 16GB 无法完整容纳 22B 模型”的显存问题。带 LoRA 冷端到端仍慢于正确的 Ray/Ulysses 速度路径，尚未达到“快于公平单卡 20%”的最终性能目标，不得把本次正确性通过描述为性能验收通过。
 
+## O9 回归：128 MiB 自适应 staging budget
+
+O9 同时覆盖 FSDP `all_gather_into_tensor` 与 Ulysses `all_to_all_single` 的固定 staging/自动分块语义。LTX 5 秒 FSDP 使用默认 128 MiB 完成冷/热双跑：
+
+| 温度 | 端到端 | Sampler 1 | Sampler 2 | GPU0/1 峰值 MiB | 物理内存峰值 MiB | commit 峰值 MiB | pagefile 峰值 MiB |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 冷 | 517.13 s | 14.9 s/it | 45.9 s/it | 16224 / 16152 | 69678 | 113116 | 851 |
+| 热 | 386.36 s | 14.9 s/it | 47.8 s/it | 16234 / 16156 | 54942 | 70055 | 765 |
+
+最大完整 FSDP all-gather payload 为 302,063,616 字节，profile 明确记录 `chunks > calls`。媒体为 1280×704、121 帧、25 FPS；每个输出 121/121 唯一帧、0 黑屏区间、音频 NaN/Inf=0。两张卡采样利用率均达到 100%，退出后均回到 10 MiB且 worker 不存在。该结果证明更大的 FSDP shard 不再要求扩大持久 buffer，也没有通过 CPU/Gloo 或 pagefile 中转正式 CUDA payload。完整跨工作流数据见 [O9 自适应分块验收](testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md)。
+
 ## 证据与测试入口
 
 仓库内可复现入口：

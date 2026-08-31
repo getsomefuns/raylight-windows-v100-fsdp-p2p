@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.11.0（O9）把 Windows CUDA P2P 的 `all_to_all_single` 容量从“单次逻辑 payload 上限”改成固定显存预算：默认每 rank 只保留 `128 MiB` staging buffer，更大的 Ulysses/FSDP collective 会自动拆成多个 CUDA P2P 子块，不经过 CPU/Gloo，也不再要求用户按视频规格手工切换 256/512 MiB。历史 239,826,944 字节远端 payload、MiniMax H3 I2V/REF2VA、五段 Director + Refine 和 LTX 5 秒冷/热均已通过。详见 [O9 中文发布说明](docs/releases/2026-08-o9-adaptive-p2p-chunking.zh-CN.md)和[验收记录](docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md)。
+
 1.10.2 完成单一源码治理加固：唯一可编辑 Git 工作树与 ComfyUI 纯部署副本严格分离，部署副本写入可核验的来源提交号；测试、FSDP 探针和基准工具同时支持正式工作树、`custom_nodes` 纯副本及干净 Git 克隆布局。Ray 的本地工作目录已移出节点源码树。详见 [1.10.2 中文发布说明](docs/releases/2026-08-28-single-source-hardening.zh-CN.md)。
 
 1.10.1 修复 MiniMaxH3Director 多段续接同时带参考图时，Ray worker 内关键帧条件被参考图覆盖而产生的维度错位，并恢复续接关键帧和音频在目标时间轴中的位置。两段主采样与 Refine 已通过双 V100 实机验证。详见 [1.10.1 中文发布说明](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md)。
@@ -21,7 +23,7 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 MiniMax H3 O6 现已加入显式 `fp16_h3_safe` 模式：FP32 数值岛保护残差与敏感输出，主 Attention/MLP 分支使用 FP16。正式 I2V/REF2VA 采样分别达到 3.299×/3.416×，REF2VA 的当前最佳实验配置达到 3.714×；质量验收通过，但 4× 初始门槛尚未通过。完整的实装、资源数据和失败实验见[中文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.zh-CN.md)与[英文升级记录](docs/releases/2026-08-18-o6-minimax-h3-safe-fp16.en.md)。
 
-2026-08-19 启动体验更新：通用启动脚本现在默认选择每张 GPU `256 MiB` P2P buffer，明确提供 `128/256/512 MiB` 三档，并默认关闭 Rank/P2P 详细诊断日志。参见[中文更新说明](docs/releases/2026-08-19-launcher-controls.zh-CN.md)或[English release note](docs/releases/2026-08-19-launcher-controls.en.md)。
+2026-08-19 的三档手工容量说明保留为历史记录；1.11.0 起默认改为 `128 MiB` 自动分块。`256/512 MiB` 仅作为高级性能对照，不再是运行较大工作流的必要条件。Rank/P2P 详细诊断仍默认关闭。
 
 当前实现不是完整的 Windows NCCL，也不是通用 PyTorch `ProcessGroup`。它是针对
 单机、双 rank、Windows V100 推理所需 collective 的定向兼容层。
@@ -35,7 +37,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.10.2；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.11.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -46,6 +48,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - MiniMaxH3Director MODEL 适配器 1.10.0：[中文](docs/releases/2026-08-22-o8-mmh3director-adapter.zh-CN.md) / [English](docs/releases/2026-08-22-o8-mmh3director-adapter.en.md)
 - MiniMaxH3Director 连续分段修复 1.10.1：[中文](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md) / [English](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md)
 - 单一源码、部署与测试布局加固 1.10.2：[中文](docs/releases/2026-08-28-single-source-hardening.zh-CN.md) / [English](docs/releases/2026-08-28-single-source-hardening.en.md)
+- O9 自适应 CUDA P2P 分块 1.11.0：[中文](docs/releases/2026-08-o9-adaptive-p2p-chunking.zh-CN.md) / [English](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -69,6 +72,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 支持 MiniMax H3 FP8-scaled checkpoint、FSDP CPU offload、官方 Turbo LoRA、同 checkpoint 热复用和切换 checkpoint 时的 worker 回收。
 - 为 FSDP2 的 CUDA `all_gather_into_tensor` 和 Ulysses 的
   `all_to_all_single` 提供专用 P2P 快速路径。
+- 默认 128 MiB 固定 staging 显存预算；合法的大 collective 自动分块，逻辑 payload 不再决定持久 buffer 大小。
 - 保留 Gloo 作为 Windows 可用的进程组、控制面和兼容回退。
 - 启动时同时验证元素正确性和真实 P2P 带宽。
 - 在配置不变时复用健康的 Ray worker，减少重复初始化开销。
@@ -156,8 +160,8 @@ MiniMax H3 I2V 和 REF2VA 的已验收运行同样证明两个 rank 完成采样
 LTX 2.3 实测注册了 2,999 个 FSDP wrapper、2,620 个 DTensor；每个 rank
 长期保存的 Diffusion Model payload 约为 11,203 MiB。MiniMax H3 实测每个 rank 注册 684 个 FSDP wrapper。
 每张 GPU 仍需为当前完整层、
-激活张量、LoRA、所选 P2P 缓冲区和 CUDA 工作区保留临时显存；当前启动脚本默认每张 GPU
-使用 256 MiB，因此峰值仍可能接近 16GB。
+激活张量、LoRA、所选 P2P staging buffer 和 CUDA 工作区保留临时显存；当前启动脚本默认每张 GPU
+使用固定 128 MiB 并自动分块，因此峰值仍可能接近 16GB，但不会为了单次大 payload 永久扩大 buffer。
 
 ### 哪些模型会被分片
 
@@ -403,16 +407,16 @@ cd <ComfyUI>\custom_nodes\raylight
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY
 ```
 
-启动时会显示 `128/256/512 MiB` 三档选择和当前值。默认是 `256 MiB`，可显式切换：
+启动时会显示 staging budget、自动分块状态和高级 `128/256/512 MiB` 覆盖。默认直接使用 `128 MiB`，无需按分辨率、帧数或模型手工调节：
 
 ```powershell
-# 128 MiB：占用较少，但无法运行已验收的 1120×768 MiniMax H3 O6 工作流
+# 默认 128 MiB：较大的 collective 自动拆块，推荐日常使用
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 128
 
-# 256 MiB：默认值，覆盖当前 LTX 与 MiniMax H3 O6 已测 payload
+# 256 MiB：高级性能对照；每 rank 多占 128 MiB 持久显存
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 256
 
-# 512 MiB：为更大的单次 collective 预留空间，每张 GPU 比 256 MiB 档多占 256 MiB 显存
+# 512 MiB：高级性能对照；每 rank 比默认多占 384 MiB 持久显存
 .\scripts\start-comfyui-windows-p2p.ps1 -PythonPath $PY -P2PCapacityMiB 512
 ```
 
@@ -421,7 +425,6 @@ cd <ComfyUI>\custom_nodes\raylight
 ```powershell
 .\scripts\start-comfyui-windows-p2p.ps1 `
   -PythonPath $PY `
-  -P2PCapacityMiB 256 `
   -EnableDiagnostics
 ```
 
@@ -555,8 +558,7 @@ nvidia-smi --query-gpu=index,name,driver_model.current,memory.used,utilization.g
 
 #### 8.2 运行安全 FP16 主结果
 
-1120×768 的正式工作流需要 256 MiB P2P buffer；底层 worker 的 128 MiB 回退值无法容纳实测
-239,826,944 字节的 Ulysses 远端 payload。先关闭可选 host registration，再启动：
+1.11.0 已验证用默认 128 MiB staging 自动搬运 239,826,944 字节的 Ulysses 远端 payload；无需为 1120×768 工作流提高容量。先关闭可选 host registration，再启动：
 
 ```powershell
 Remove-Item Env:RAYLIGHT_FSDP_CPU_OFFLOAD_HOST_REGISTER -ErrorAction SilentlyContinue
@@ -566,7 +568,6 @@ Set-Location $RepoRoot
 .\scripts\start-comfyui-windows-p2p.ps1 `
   -PythonPath $PY `
   -ComfyRoot $ComfyRoot `
-  -P2PCapacityMiB 256 `
   -ReserveVramGiB 2
 ```
 
@@ -637,7 +638,6 @@ Set-Location $RepoRoot
 .\scripts\start-comfyui-windows-p2p.ps1 `
   -PythonPath $PY `
   -ComfyRoot $ComfyRoot `
-  -P2PCapacityMiB 256 `
   -ReserveVramGiB 2
 ```
 
@@ -690,7 +690,7 @@ FP16 dtype allowlist、FlashAttention、`--highvram` 或 `--disable-smart-memory
 
 ### 9. 使用 MiniMaxH3Director 双卡工作流
 
-1. 使用本仓库根目录的 `start_raylight_p2p.ps1` 启动 ComfyUI。当前已验收默认档为 `256 MiB` P2P buffer、`3 GiB` 主进程显存预留，正常使用保持详细诊断关闭。
+1. 使用本仓库根目录的 `start_raylight_p2p.ps1` 启动 ComfyUI。当前已验收默认值为 `128 MiB` 自动分块 staging budget、`3 GiB` 主进程显存预留，正常使用保持详细诊断关闭。
 2. 加载 `example_workflows/MMH3Director_Windows_V100_FSDP.json`。本机部署副本通常为 `<ComfyUI>\user\default\workflows\MMH3Director.json`。
 3. 在 Ray 初始化节点保持 `GPU=2`、`ulysses_degree=2`、`ring_degree=1`、`FSDP=true`、`FSDP_CPU_OFFLOAD=true`。V100 使用 `fp16_h3_safe`；checkpoint 与 Turbo LoRA 必须匹配 FL2VA 或 REF2VA 模式。
 4. Director 节点直接设置任务类型、seed、steps、sampler、scheduler、video/audio shift、Megapixels、宽高比、FPS、时长、Prompt group、分镜和输出。不要再连接一套 XFuser sampler/guider/scheduler。
@@ -713,7 +713,7 @@ FP16 dtype allowlist、FlashAttention、`--highvram` 或 `--disable-smart-memory
 | `RAY_DEBUG_DISABLE_MEMORY_MONITOR` | `1` | 避免 Ray 因高内存占用提前杀 worker |
 | `RAY_memory_usage_threshold` | `1` | 将 Ray 内存阈值提高到 100% |
 | `RAYLIGHT_WINDOWS_P2P` | `1` | 启用 Windows CUDA P2P 快速路径 |
-| `RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES` | `268435456` | 每 rank 256 MiB 持久发送缓冲区；可选 128/256/512 MiB |
+| `RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES` | `134217728` | 每 rank 128 MiB 持久 staging budget；更大的合法 collective 自动分块 |
 | `RAYLIGHT_WINDOWS_P2P_MIN_GIB_S` | `50` | 启动带宽硬门槛 |
 | `RAYLIGHT_RANK_DIAG` | `0` | 默认关闭 Rank/P2P 详细诊断；`-EnableDiagnostics` 设为 `1` |
 | `CUDA_VISIBLE_DEVICES` | `0,1` | 固定两张目标 GPU 的可见顺序 |
@@ -722,11 +722,7 @@ FP16 dtype allowlist、FlashAttention、`--highvram` 或 `--disable-smart-memory
 内存监控覆盖可能让系统在压力过高时进入换页；它是为了避免 Ray 过早终止大型工作流，
 不是免费的性能优化。请监控系统内存和 swap/pagefile。
 
-P2P capacity 是每张 GPU 的持久 CUDA staging buffer 上限，不是视频时长或分辨率的直接换算。
-增大它不会自动加速，也不会增加系统内存或分页文件的固定预留，但会按差额增加每张 GPU 的
-常驻显存：256 相比 128 MiB 多约 128 MiB/GPU，512 相比 256 MiB 多约 256 MiB/GPU。
-只有实际 collective payload 超过当前容量时才需要提高；显存更紧时可尝试较小档，但容量不足
-会明确报错，不会自动回退到主存。
+P2P capacity 是每张 GPU 的持久 CUDA staging 显存预算，不是视频时长或分辨率的直接换算，也不再是逻辑 payload 上限。默认 128 MiB；更大的合法 collective 会在同一个逻辑调用内依次走多个 CUDA P2P/NVLink 子块。增大 budget 不会增加系统内存或分页文件的固定预留，但会按差额增加每张 GPU 的常驻显存。256/512 MiB 仅适合有显存余量时做性能对照；O9 实测默认 128 MiB 对 256/512 MiB payload 保留匹配大 buffer 中位带宽的 98.91%/98.50%。
 
 ## 技术说明
 
@@ -747,7 +743,7 @@ flowchart LR
 FSDP2 继续调用标准 `torch.distributed.all_gather_into_tensor`，yunchang/xFuser
 继续调用标准 `torch.distributed.all_to_all_single`。Ray worker 内部路由器只拦截
 双 rank、CUDA、连续张量和受支持参数组合。大于当前 staging buffer 容量的 FSDP
-分片会分块传输。已匹配快速路径一旦发生错误会 poison 当前 endpoint，不会静默改用
+all-gather 与 Ulysses all-to-all 都会自动分块传输。已匹配快速路径一旦发生错误会 poison 当前 endpoint，不会静默改用
 CPU 主存后继续假装使用 NVLink；其他不匹配调用仍保留 Gloo 兼容路径。
 
 ### P2P 实现
@@ -762,7 +758,7 @@ CPU 主存后继续假装使用 NVLink；其他不匹配调用仍保留 Gloo 兼
 
 每个 rank 持有：
 
-- 一个持久 CUDA 发送缓冲区；底层 worker 在没有环境配置时回退到 128 MiB，当前启动脚本默认选择 256 MiB。
+- 一个持久 CUDA staging buffer；底层 worker 与启动脚本均默认 128 MiB，逻辑 collective 可由多个子块完成。
 - 可导出的 CUDA IPC storage handle。
 - `ready` 和 `consumed` 跨进程 CUDA Event。
 - Windows named shared memory + event 控制面。
@@ -832,6 +828,8 @@ P2P/Ulysses 的公平热对热提升为 10.28%，但它仍在每张 GPU 保存�
 |---|---:|---:|---:|---:|---|
 | FSDP 无 LoRA | 479.83 s | 约 11.0 s/it | 约 41.7 s/it | 16,218/16,208 MiB | 连贯，PASS |
 | FSDP + 原 BF16 LoRA | 551.82 s | 约 15.0 s/it | 约 45.6 s/it | 16,224/16,156 MiB | 连贯，PASS |
+| O9 默认 128 MiB，冷启动 | 517.13 s | 14.9 s/it | 45.9 s/it | 16,224/16,152 MiB | 121/121 唯一帧，PASS |
+| O9 默认 128 MiB，同进程热启动 | 386.36 s | 14.9 s/it | 47.8 s/it | 16,234/16,156 MiB | 121/121 唯一帧，PASS |
 
 FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性能仍需单独优化。
 
@@ -847,6 +845,8 @@ FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性�
 | O6 | 功能与质量通过；I2V/REF2VA 为 3.299×/3.416×，REF2VA 可选实验最佳 3.714×；4× 门槛未通过 |
 | O7 | LTX/LTXAV 模型专用安全 FP16 预研，等待 O6 性能收尾后校正 |
 | O8 Director MODEL 代理 | t2v/i2v/fl2v/r2v/v2v/rv2v、Refine、多段、媒体、复用与回收均通过；旧路径性能门槛通过 |
+| O9 自适应 P2P 分块 | 默认 128 MiB；历史大 payload、I2V、REF2VA、Director 多段/Refine 与 LTX 冷/热均通过 |
+| O10 Text Encoder TP2 | O9 Gate A–F 通过后解除阻塞；进入独立分阶段开发，不属于 1.11.0 已实现能力 |
 
 O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒、采样 160.72 s/it；REF2VA Turbo4 端到端 932.03 秒、采样 185.20 s/it。初始 4× 门槛分别为不高于 40.1799 和 46.3008 s/it；当前结果尚未达到。11× 仅保留为后续研究目标，不是当前版本能力。O5 的旧规格记录不作为 O6 分母。
 
@@ -857,6 +857,8 @@ O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒
 - O7 预研：[docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md](docs/superpowers/plans/2026-08-18-ltx-safe-fp16-research.md)
 - O8 Director 适配器测试：[中文](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.zh-CN.md) / [English](docs/testing/minimax-h3/MMH3DIRECTOR_ADAPTER_2026-08.md)
 - O8 实施计划：[中文](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.zh-CN.md) / [English](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.md)
+- O9 自适应 P2P 验收：[docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md](docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md)
+- O10 Text Encoder TP2 计划：[docs/superpowers/plans/2026-08-29-o10-minimax-h3-dual-v100-text-encoder-tp2.zh-CN.md](docs/superpowers/plans/2026-08-29-o10-minimax-h3-dual-v100-text-encoder-tp2.zh-CN.md)
 
 ## 已知限制
 
