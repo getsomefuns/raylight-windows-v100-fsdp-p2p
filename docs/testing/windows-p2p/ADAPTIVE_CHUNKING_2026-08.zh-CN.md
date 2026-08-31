@@ -2,7 +2,7 @@
 
 日期：2026-08-31
 
-状态：Tasks 1–7 与 Gate A–E 已完成；Gate F 发布、部署与最终 smoke 正在收尾。
+状态：O9 Tasks 1–8 与 Gate A–F 全部完成；版本 1.11.0 已提交并部署。
 
 ## 验证目标
 
@@ -213,4 +213,9 @@ LTX FSDP profile 的最大完整 all-gather payload 为 302,063,616 字节；每
 - transport 已支持大于 capacity 的 equal-split CUDA all-to-all，synthetic Gate B/D 通过。
 - Gate C 已证明 staging CUDA allocation 恒定、真实工作流系统内存/commit/pagefile 无 payload 等量 host staging，并完成进程退出回收。
 - Gate E 的历史大 payload、I2V、REF2VA、Director 多段/Refine 与 LTX 冷/热全部通过；视频和音频检查通过。
-- 下一步完成 Gate F 的版本、文档、完整测试、部署一致性、节点导入、P2P probe 与最终 smoke；全部通过后才解除 O10 阻塞。
+- Gate F 已通过：`482 passed`、`35 subtests passed`；目标 Python 文件 Ruff/py_compile 通过，`git diff --check` 通过。
+- 1.11.0 提交 `0568da2` 已由不可变 HEAD 部署器安装；源码与部署 `.raylight-deployed-commit` 完全一致，405 个受管理文件通过 hash/drift 校验。
+- 部署副本导入为 1.11.0，注册 75 个节点；`RayInitializer` 与 `Ray MODEL Adapter (MMH3Director)` 均存在。
+- 部署副本双 Ray actor P2P probe 约 59.32 GiB/s，并通过 all-gather 分块、同步/异步、多 dtype 与尾块检查。
+- ComfyUI 最终 API smoke 识别两张 GPU和两个关键节点；退出后两卡为 10 MiB、0% 利用率。
+- O10 Text Encoder TP2 的 O9 前置阻塞已解除，可按独立 Gate A–F 计划开始开发。

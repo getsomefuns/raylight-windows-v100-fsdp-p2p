@@ -599,7 +599,7 @@ These results prove sharding, dual-GPU computation, and correct output. LTX perf
 | O7 | preliminary model-specific safe-FP16 research for LTX/LTXAV after O6 performance closure |
 | O8 Director MODEL proxy | t2v/i2v/fl2v/r2v/v2v/rv2v, Refine, multi-segment, media, reuse, reclamation, and legacy performance gates pass |
 | O9 adaptive P2P chunking | 128 MiB default; historical large payload, I2V, REF2VA, Director multi-segment/Refine, and LTX cold/warm pass |
-| O10 Text Encoder TP2 | Unblocked only after O9 Gates A-F; separate staged development, not a shipped 1.11.0 capability |
+| O10 Text Encoder TP2 | O9 Gates A-F pass and the work is unblocked; separate staged development, not a shipped 1.11.0 capability |
 
 The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to end and 160.72 s/it; REF2VA Turbo4 takes 932.03 s and 185.20 s/it. The initial 4x limits are 40.1799 and 46.3008 s/it, and current results remain above them. The 11x value is a later research target, not a current capability. Older O5 geometry is not an O6 denominator.
 

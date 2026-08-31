@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 >
-> **状态：待用户评审，尚未批准开发。**
+> **状态：用户已批准；O9 前置依赖已满足，开始 Task 1。**
 >
-> **执行要求：**批准后按任务顺序执行；每个任务先写失败测试，再做最小实现，再完成独立审查和提交。不得直接修改部署目录，所有代码只在 E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p 修改，通过现有部署脚本安装到 ComfyUI。
+> **执行要求：**按任务顺序执行；每个任务先写失败测试，再做最小实现，再完成审查和提交。不得直接修改部署目录，所有代码只在 E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p 修改，通过现有部署脚本安装到 ComfyUI。
 >
-> **前置依赖：**O9 Windows CUDA P2P 自适应分块必须先完成 Gate A-F 并正式验收；O9 未完成时，本计划保持阻塞，不开始代码开发。
+> **前置依赖状态（2026-08-31）：已满足。**O9 Windows CUDA P2P 自适应分块的 Gate A–F 已全部通过，1.11.0 已提交、部署并完成真实工作流与最终 smoke。本计划解除阻塞，可以从 Task 1 基线审计开始；O10 自身的 Gate A–F 仍必须逐级通过。
 
 **目标：**让 MiniMax H3 的 Qwen3-VL-32B Text Encoder 在两张 Tesla V100-SXM2-16GB 上分别保存约一半语言模型权重，并在每个语言层中并发计算 Attention 和 MLP，降低 GPU0 单卡权重峰值、减少 CPU offload，并缩短进入采样前的 Text Encoder 阶段。
 

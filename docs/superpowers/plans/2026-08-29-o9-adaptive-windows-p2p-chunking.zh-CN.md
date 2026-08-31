@@ -1,10 +1,12 @@
 # O9：Windows CUDA P2P 自适应分块计划
 
+> **完成状态（2026-08-31）：**Tasks 1–8 与 Gate A–F 全部通过。1.11.0 已提交、部署并完成节点导入、双 V100 P2P probe、真实 MiniMax H3/Director/LTX 冷热工作流和最终 ComfyUI API smoke。验收数据见 `docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md`。O10 前置阻塞已解除。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 >
-> **状态：待用户评审，尚未批准开发。**
+> **状态：用户已批准，开发与验收已完成。**
 >
-> **执行要求：**批准后按任务顺序执行；每项代码改动先写失败测试，再做最小实现，再独立审查。不得直接修改部署目录；唯一源码树为 `E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p`，提交后使用仓库部署脚本安装到 ComfyUI。
+> **执行要求：**已按任务顺序执行；代码改动先写失败测试，再做最小实现和审查。唯一源码树为 `E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p`，部署目录只由仓库部署脚本生成。
 
 **目标：**消除普通用户为不同视频长度、分辨率和工作流手动在 256/512 MiB 之间调整 P2P staging buffer 的要求。无论单次 Ulysses `all_to_all_single` 的远端 payload 是否超过物理缓冲区，通信层都自动按有界小块连续搬运，并保持 CUDA P2P/NVLink 数据面、正确结果、可预测显存和现有 FSDP 行为。
 

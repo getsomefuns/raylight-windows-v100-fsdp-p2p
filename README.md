@@ -846,7 +846,7 @@ FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性�
 | O7 | LTX/LTXAV 模型专用安全 FP16 预研，等待 O6 性能收尾后校正 |
 | O8 Director MODEL 代理 | t2v/i2v/fl2v/r2v/v2v/rv2v、Refine、多段、媒体、复用与回收均通过；旧路径性能门槛通过 |
 | O9 自适应 P2P 分块 | 默认 128 MiB；历史大 payload、I2V、REF2VA、Director 多段/Refine 与 LTX 冷/热均通过 |
-| O10 Text Encoder TP2 | O9 Gate A–F 通过后解除阻塞；进入独立分阶段开发，不属于 1.11.0 已实现能力 |
+| O10 Text Encoder TP2 | O9 Gate A–F 已通过并解除阻塞；下一步按独立计划开发，不属于 1.11.0 已实现能力 |
 
 O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒、采样 160.72 s/it；REF2VA Turbo4 端到端 932.03 秒、采样 185.20 s/it。初始 4× 门槛分别为不高于 40.1799 和 46.3008 s/it；当前结果尚未达到。11× 仅保留为后续研究目标，不是当前版本能力。O5 的旧规格记录不作为 O6 分母。
 
