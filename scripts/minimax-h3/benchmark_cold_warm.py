@@ -151,6 +151,15 @@ def _one_node(prompt: dict, class_type: str) -> tuple[str, dict]:
     return matches[0]
 
 
+def normalize_lora_selector(lora_name: str) -> str:
+    if not isinstance(lora_name, str) or not lora_name.strip():
+        raise ValueError("lora_name must be a relative path inside the ComfyUI loras directory")
+    selector = Path(lora_name.strip())
+    if selector.is_absolute() or selector.drive or any(part in {".", ".."} for part in selector.parts):
+        raise ValueError("lora_name must be a relative path inside the ComfyUI loras directory")
+    return str(selector)
+
+
 def validate_prompt(prompt: dict) -> None:
     _, initializer = _one_node(prompt, "RayInitializer")
     inputs = initializer["inputs"]
@@ -176,8 +185,7 @@ def configure_prompt_variant(
         scheduler["inputs"]["steps"] = int(steps)
 
     if lora_name is not None:
-        if not lora_name or Path(lora_name).name != lora_name:
-            raise ValueError("lora_name must be a filename inside the ComfyUI loras directory")
+        lora_name = normalize_lora_selector(lora_name)
         existing = _nodes(prompt, "RayLoraLoader")
         if len(existing) > 1:
             raise ValueError(f"expected at most one RayLoraLoader, found {len(existing)}")
@@ -965,16 +973,30 @@ def resolve_turbo_variant(variant_id: str, mode: str, requested_steps: int | Non
 def lora_asset_identity(lora_name: str | None) -> dict | None:
     if lora_name is None:
         return None
-    if not lora_name or Path(lora_name).name != lora_name:
-        raise ValueError("lora_name must be a filename inside the ComfyUI loras directory")
+    lora_name = normalize_lora_selector(lora_name)
     lora_root = (COMFY_ROOT / "models" / "loras").resolve()
     path = (lora_root / lora_name).resolve()
-    if path.parent != lora_root:
+    if not path.is_relative_to(lora_root):
         raise ValueError("lora_name escapes the ComfyUI loras directory")
     if not path.is_file():
-        raise FileNotFoundError(f"Turbo LoRA not found: {path}")
+        if Path(lora_name).parent != Path("."):
+            raise FileNotFoundError(f"Turbo LoRA not found: {path}")
+        matches = sorted(candidate.resolve() for candidate in lora_root.rglob(lora_name))
+        matches = [
+            candidate
+            for candidate in matches
+            if candidate.is_relative_to(lora_root) and candidate.is_file()
+        ]
+        if not matches:
+            raise FileNotFoundError(f"Turbo LoRA not found under: {lora_root}")
+        if len(matches) != 1:
+            raise ValueError(
+                f"Turbo LoRA basename is ambiguous under {lora_root}: {lora_name}"
+            )
+        path = matches[0]
+    selector = str(path.relative_to(lora_root))
     return {
-        "name": lora_name,
+        "name": selector,
         "path": str(path),
         "size_bytes": path.stat().st_size,
         "sha256": sha256_file(path),
@@ -1109,6 +1131,8 @@ def run_benchmark(
     runtime_identity = collect_runtime_identity()
     validate_runtime_identity(runtime_identity)
     lora_identity = lora_asset_identity(lora_name)
+    if lora_identity is not None:
+        lora_name = lora_identity["name"]
     if turbo_spec and (
         lora_identity["size_bytes"] != turbo_spec["expected_bytes"]
         or lora_identity["sha256"] != turbo_spec["sha256"]

@@ -104,6 +104,32 @@ def test_lora_asset_identity_streams_hash_without_path_read_bytes(tmp_path):
     assert identity["sha256"] == hashlib.sha256(b"test-lora-payload").hexdigest()
 
 
+def test_lora_asset_identity_resolves_unique_nested_model_selector(tmp_path):
+    comfy_root = tmp_path / "ComfyUI"
+    path = comfy_root / "models" / "loras" / "MMH3" / "turbo.safetensors"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"nested-lora")
+
+    with mock.patch.object(benchmark, "COMFY_ROOT", comfy_root):
+        identity = benchmark.lora_asset_identity(path.name)
+
+    assert identity["name"] == "MMH3\\turbo.safetensors"
+    assert Path(identity["path"]) == path
+
+
+def test_lora_asset_identity_rejects_ambiguous_nested_basename(tmp_path):
+    comfy_root = tmp_path / "ComfyUI"
+    lora_root = comfy_root / "models" / "loras"
+    for subdir in ("A", "B"):
+        path = lora_root / subdir / "turbo.safetensors"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(subdir.encode("ascii"))
+
+    with mock.patch.object(benchmark, "COMFY_ROOT", comfy_root):
+        with pytest.raises(ValueError, match="ambiguous"):
+            benchmark.lora_asset_identity("turbo.safetensors")
+
+
 def test_bf16_lora_sidecar_follows_fp32_v100_compute_dtype():
     up = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.bfloat16)
     down = torch.tensor([[0.5, 1.0], [1.5, 2.0]], dtype=torch.bfloat16)
