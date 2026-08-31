@@ -34,15 +34,31 @@ def _load_module(rank):
     return module
 
 
-def _worker(rank, group_name, handles_queues, benchmark_barrier, results, iterations, sizes, dtype_name, shape):
+def _worker(
+    rank,
+    group_name,
+    handles_queues,
+    benchmark_barrier,
+    results,
+    iterations,
+    sizes,
+    capacity_bytes,
+    dtype_name,
+    shape,
+):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
     import torch
 
     module = _load_module(rank)
     torch.cuda.set_device(0)
-    capacity = max(sizes) // 2
     control = module.WindowsSpinControl(group_name, rank)
-    endpoint = module.CudaP2PAllToAll(rank, capacity, control, timeout_seconds=10)
+    endpoint = module.CudaP2PAllToAll(
+        rank,
+        capacity_bytes,
+        control,
+        timeout_seconds=10,
+    )
+    endpoint_allocated_bytes = torch.cuda.memory_allocated()
     handles_queues[1 - rank].put(endpoint.local_handles())
     peer_handles = handles_queues[rank].get(timeout=60)
     endpoint.connect(peer_handles)
@@ -60,6 +76,7 @@ def _worker(rank, group_name, handles_queues, benchmark_barrier, results, iterat
         source_flat[:half].fill_(rank * 100 + 1)
         source_flat[half:].fill_(rank * 100 + 2)
         output = torch.empty_like(source)
+        payload_allocated_bytes = torch.cuda.memory_allocated()
 
         for _ in range(3):
             endpoint.all_to_all_single(output, source)
@@ -80,7 +97,16 @@ def _worker(rank, group_name, handles_queues, benchmark_barrier, results, iterat
         elapsed = time.perf_counter() - start
         # Half of each all-to-all payload is remote traffic in each direction.
         remote_gib_s = (size_bytes / 2 / 2**30) * iterations / elapsed
-        rows.append((size_bytes, iterations, elapsed, remote_gib_s))
+        rows.append(
+            (
+                size_bytes,
+                iterations,
+                elapsed,
+                remote_gib_s,
+                endpoint_allocated_bytes,
+                payload_allocated_bytes,
+            )
+        )
         benchmark_barrier.wait(timeout=10)
 
     results.put((rank, rows))
@@ -89,18 +115,54 @@ def _worker(rank, group_name, handles_queues, benchmark_barrier, results, iterat
     control.close()
 
 
-def main(iterations, stress_iterations, dtype_name, shape):
+def resolve_probe_geometry(capacity_bytes, size_bytes, stress_iterations):
+    sizes = tuple(size_bytes) if size_bytes is not None else (
+        (516_096,) if stress_iterations else REAL_SIZES
+    )
+    if any(size <= 0 for size in sizes):
+        raise ValueError("size_bytes must be positive")
+    if any(size % 2 for size in sizes):
+        raise ValueError("size_bytes must be divisible by 2")
+    resolved_capacity = max(sizes) // 2 if capacity_bytes is None else capacity_bytes
+    if resolved_capacity <= 0:
+        raise ValueError("capacity_bytes must be positive")
+    return resolved_capacity, sizes
+
+
+def main(
+    iterations,
+    stress_iterations,
+    dtype_name,
+    shape,
+    capacity_bytes=None,
+    size_bytes=None,
+):
     ctx = mp.get_context("spawn")
     handles_queues = [ctx.Queue(), ctx.Queue()]
     benchmark_barrier = ctx.Barrier(2)
     results = ctx.Queue()
     group_name = f"probe_{os.getpid()}_{time.time_ns()}"
-    sizes = (516_096,) if stress_iterations else REAL_SIZES
+    capacity_bytes, sizes = resolve_probe_geometry(
+        capacity_bytes,
+        size_bytes,
+        stress_iterations,
+    )
     effective_iterations = stress_iterations or iterations
     processes = [
         ctx.Process(
             target=_worker,
-            args=(rank, group_name, handles_queues, benchmark_barrier, results, effective_iterations, sizes, dtype_name, shape),
+            args=(
+                rank,
+                group_name,
+                handles_queues,
+                benchmark_barrier,
+                results,
+                effective_iterations,
+                sizes,
+                capacity_bytes,
+                dtype_name,
+                shape,
+            ),
         )
         for rank in range(2)
     ]
@@ -118,10 +180,19 @@ def main(iterations, stress_iterations, dtype_name, shape):
             process.kill()
         print(f"pid={process.pid} exitcode={process.exitcode}")
     for rank, rank_rows in sorted(rows):
-        for size_bytes, count, elapsed, gib_s in rank_rows:
+        for (
+            size_bytes,
+            count,
+            elapsed,
+            gib_s,
+            endpoint_allocated_bytes,
+            payload_allocated_bytes,
+        ) in rank_rows:
             print(
                 f"rank={rank} bytes={size_bytes} iterations={count} "
-                f"elapsed_s={elapsed:.6f} remote_GiB_s={gib_s:.3f}"
+                f"elapsed_s={elapsed:.6f} remote_GiB_s={gib_s:.3f} "
+                f"endpoint_allocated_bytes={endpoint_allocated_bytes} "
+                f"payload_allocated_bytes={payload_allocated_bytes} "
             )
     if len(rows) != 2 or any(process.exitcode != 0 for process in processes):
         raise SystemExit(1)
@@ -133,10 +204,14 @@ if __name__ == "__main__":
     parser.add_argument("--stress-iterations", type=int, default=0)
     parser.add_argument("--dtype", choices=tuple(DTYPES), default="float32")
     parser.add_argument("--shape", type=int, nargs="+")
+    parser.add_argument("--capacity-bytes", type=int)
+    parser.add_argument("--size-bytes", type=int, nargs="+")
     args = parser.parse_args()
     main(
         args.iterations,
         args.stress_iterations,
         args.dtype,
         tuple(args.shape) if args.shape else None,
+        args.capacity_bytes,
+        tuple(args.size_bytes) if args.size_bytes else None,
     )
