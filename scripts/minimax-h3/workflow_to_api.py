@@ -38,17 +38,31 @@ def _is_widget(input_spec: Any) -> bool:
 
 def workflow_to_prompt(workflow: dict[str, Any], object_info: dict[str, Any]) -> dict[str, Any]:
     links = {link[0]: link for link in workflow.get("links", [])}
+    bypassed_source_ids = {
+        str(node["id"])
+        for node in workflow.get("nodes", [])
+        if node.get("mode", 0) == 4
+        and not any(
+            isinstance(node_input, dict) and node_input.get("link") is not None
+            for node_input in _as_list(node.get("inputs"))
+        )
+    }
     prompt: dict[str, Any] = {}
 
     for node in workflow.get("nodes", []):
         node_type = node["type"]
         if node_type in UI_ONLY_NODE_TYPES:
             continue
+        if str(node["id"]) in bypassed_source_ids:
+            continue
         if node.get("mode", 0) != 0:
             raise ValueError(f"unsupported node mode {node.get('mode')} for {node_type} ({node['id']})")
         if node_type not in object_info:
             raise ValueError(f"node type is not installed: {node_type} ({node['id']})")
 
+        definition = object_info[node_type]
+        definitions = definition.get("input", {})
+        required_definitions = definitions.get("required", {}) or {}
         node_inputs: dict[str, Any] = {}
         connected_names: set[str] = set()
         for ui_input in _as_list(node.get("inputs")):
@@ -59,11 +73,15 @@ def workflow_to_prompt(workflow: dict[str, Any], object_info: dict[str, Any]) ->
                 raise ValueError(f"missing link {link_id} for {node_type} ({node['id']})")
             link = links[link_id]
             name = ui_input["name"]
+            if str(link[1]) in bypassed_source_ids:
+                if name in required_definitions:
+                    raise ValueError(
+                        f"bypassed source cannot feed required input {node_type}.{name} ({node['id']})"
+                    )
+                continue
             node_inputs[name] = [str(link[1]), link[2]]
             connected_names.add(name)
 
-        definition = object_info[node_type]
-        definitions = definition.get("input", {})
         input_order = definition.get("input_order", {})
         frontend_only_indexes = FRONTEND_ONLY_WIDGET_INDEXES.get(node_type, ())
         widgets = [

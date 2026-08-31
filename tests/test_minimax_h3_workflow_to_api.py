@@ -232,3 +232,74 @@ def test_converter_skips_mmh3director_frontend_only_widget_slots():
         "clear_vram_between_segments": True,
         "export_source_images": False,
     }
+
+
+def test_converter_omits_bypassed_source_and_its_optional_downstream_link():
+    converter = _load_converter()
+    workflow = {
+        "nodes": [
+            {
+                "id": 19,
+                "type": "UpscaleModelLoader",
+                "mode": 4,
+                "inputs": [],
+                "widgets_values": ["4x-UltraSharp.pth"],
+            },
+            {
+                "id": 20,
+                "type": "MiniMaxH3DirectorRefine",
+                "mode": 0,
+                "inputs": [
+                    {"name": "upscale_model", "type": "UPSCALE_MODEL", "link": 18},
+                ],
+                "widgets_values": ["refine"],
+            },
+        ],
+        "links": [[18, 19, 0, 20, 0, "UPSCALE_MODEL"]],
+    }
+    object_info = {
+        "UpscaleModelLoader": {
+            "input": {"required": {"model_name": [["4x-UltraSharp.pth"], {}]}},
+            "input_order": {"required": ["model_name"]},
+        },
+        "MiniMaxH3DirectorRefine": {
+            "input": {
+                "required": {"mode": [["refine"], {}]},
+                "optional": {"upscale_model": ["UPSCALE_MODEL", {}]},
+            },
+            "input_order": {"required": ["mode"], "optional": ["upscale_model"]},
+        },
+    }
+
+    prompt = converter.workflow_to_prompt(workflow, object_info)
+
+    assert "19" not in prompt
+    assert prompt["20"]["inputs"] == {"mode": "refine"}
+
+
+def test_converter_rejects_bypassed_source_feeding_required_input():
+    converter = _load_converter()
+    workflow = {
+        "nodes": [
+            {"id": 1, "type": "Source", "mode": 4, "inputs": [], "widgets_values": []},
+            {
+                "id": 2,
+                "type": "Target",
+                "mode": 0,
+                "inputs": [{"name": "model", "type": "MODEL", "link": 9}],
+                "widgets_values": [],
+            },
+        ],
+        "links": [[9, 1, 0, 2, 0, "MODEL"]],
+    }
+    object_info = {
+        "Source": {"input": {"required": {}}},
+        "Target": {"input": {"required": {"model": ["MODEL", {}]}}},
+    }
+
+    try:
+        converter.workflow_to_prompt(workflow, object_info)
+    except ValueError as exc:
+        assert "required input Target.model" in str(exc)
+    else:
+        raise AssertionError("bypassed source silently removed a required input")
