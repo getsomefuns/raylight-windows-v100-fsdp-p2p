@@ -594,13 +594,15 @@ Task 10 / Gate F 结果：完整 50 层共有 350 次双卡 Linear，冷/热加�
 - Create: docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md
 - Modify: __init__.py
 
-- [ ] 运行完整 pytest 与 Windows P2P/FSDP/Director 关键回归。
-- [ ] 用 scripts/deploy-to-comfyui.ps1 -VerifyOnly 验证部署前 source of truth。
-- [ ] 更新中英文 README：支持范围、节点连接、显存租约、限制、fallback 和实际验收数据必须一致。
-- [ ] 发布说明明确区分“语言层 TP2”“GPU0 视觉塔”和“Diffusion FSDP/Ulysses”，不得写成统一 32GB 显存池。
-- [ ] 更新版本号并提交。
-- [ ] 部署到 E:\ComfyUI-py310\ComfyUI\custom_nodes\raylight，再运行部署一致性和一次端到端烟雾测试。
-- [ ] 用户明确要求后才推送 GitHub。
+- [x] 运行完整 pytest 与 Windows P2P/FSDP/Director 关键回归。
+- [x] 用 scripts/deploy-to-comfyui.ps1 -VerifyOnly 验证部署前 source of truth。
+- [x] 更新中英文 README：支持范围、节点连接、显存租约、限制、fallback 和实际验收数据必须一致。
+- [x] 发布说明明确区分“语言层 TP2”“GPU0 视觉塔”和“Diffusion FSDP/Ulysses”，不得写成统一 32GB 显存池。
+- [x] 更新版本号并提交。
+- [x] 部署到 E:\ComfyUI-py310\ComfyUI\custom_nodes\raylight，再运行部署一致性和一次端到端烟雾测试。
+- [x] 用户明确要求后才推送 GitHub（本阶段未收到推送指令，未推送）。
+
+Task 11 结果：完整回归为 611 项测试和 35 个 subtests 全部通过；双 Ray actor CUDA P2P 探针覆盖同步/异步、自动分块、FP32/FP16/BF16/uint8 尾块，实测大 payload 约 60–61.6 GiB/s 且逐元素正确；最小 FSDP2 forward 两 rank 均只保留 96/192 参数，最大误差 0。1.12.0 已从唯一工作树提交并原子部署，445 个跟踪文件通过 hash 验证。部署后真实 TP2 conditioning 冷/热烟雾分别为 31.17/29.28 秒，两卡峰值 9,273/9,255 MiB 与 9,467/9,449 MiB，50/50 层双卡重叠、100 次 P2P SUM、token=221、来源工作流 hash 一致；测试退出后无 ComfyUI/Ray/Python 目标进程、无 GPU compute app。O10 全量开发、测试、文档、版本和部署收口完成；性能定级仍为默认关闭的实验性容量模式，未推送 GitHub。
 
 ## 25. 计划自审
 
