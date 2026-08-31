@@ -94,6 +94,19 @@ class RayWorkerWindowsP2PTests(unittest.TestCase):
 
         self.assertEqual(iterations, 100)
 
+    def test_default_windows_p2p_health_payload_crosses_staging_boundary(self):
+        capacity_bytes = 128 * 1024 * 1024
+
+        size_bytes = ray_worker.windows_p2p_health_size_bytes(capacity_bytes)
+
+        self.assertEqual(size_bytes, 264 * 1024 * 1024)
+        self.assertGreater(size_bytes // 2, capacity_bytes)
+
+    def test_advanced_capacity_does_not_make_health_payload_unbounded(self):
+        size_bytes = ray_worker.windows_p2p_health_size_bytes(512 * 1024 * 1024)
+
+        self.assertEqual(size_bytes, 264 * 1024 * 1024)
+
     def test_windows_p2p_warmup_requires_both_ranks_to_reach_measurement_gate(self):
         self.assertFalse(
             ray_worker.windows_p2p_warmup_ready(

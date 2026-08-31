@@ -14,7 +14,7 @@ param(
     [int]$MasterPort = 29500,
     [Parameter(ParameterSetName = "MiB")]
     [ValidateSet(128, 256, 512)]
-    [int]$P2PCapacityMiB = 256,
+    [int]$P2PCapacityMiB = 128,
     [Parameter(ParameterSetName = "Bytes", Mandatory = $true, Position = 6)]
     [ValidateRange(1, [long]::MaxValue)]
     [long]$P2PCapacityBytes,
@@ -92,7 +92,8 @@ Write-Host "ComfyUI root: $comfyRoot"
 Write-Host "Python: $PythonPath"
 Write-Host "GPU selection: $GpuSelect"
 Write-Host "P2P capacity choices: 128, 256, 512 MiB"
-Write-Host "Selected P2P capacity: $selectedCapacityMiB MiB ($selectedCapacityBytes bytes per GPU)"
+Write-Host "P2P staging budget: $selectedCapacityMiB MiB ($selectedCapacityBytes bytes per GPU)"
+Write-Host "Larger collectives are auto-chunked: enabled"
 Write-Host "Rank/P2P diagnostics: $(if ($EnableDiagnostics) { 'enabled' } else { 'disabled' })"
 Write-Host "Minimum P2P bandwidth: $MinimumP2PGiBs GiB/s"
 Write-Host "Reserved VRAM: $ReserveVramGiB GiB"

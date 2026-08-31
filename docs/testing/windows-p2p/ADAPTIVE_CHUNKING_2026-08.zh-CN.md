@@ -2,7 +2,7 @@
 
 日期：2026-08-31
 
-状态：Task 1 基线已冻结；transport 尚未修改。
+状态：Tasks 1–5 已完成；Gate B 与 Gate D 首轮通过，Gate C 的工作流级系统内存/commit/pagefile 峰值仍待部署后采集。
 
 ## 验证目标
 
@@ -87,9 +87,72 @@ ValueError: remote payload 239826944 exceeds P2P buffer capacity 134217728
 
 正式工作流验收前需复制这些 JSON 到 run artifact，并记录实际 API prompt 中的模型、尺寸、帧数、steps、seed、LoRA、精度和输入素材哈希。若用户在 O9 开发期间改动工作流，必须同时保留本表冻结版本和新版本，不得覆盖基线身份。
 
-## Task 1 结论
+## 自适应分块实现后的 synthetic correctness
+
+核心实现提交：`75be33c`。
+
+历史失败命令保持完全相同。修复后结果：
+
+| 项目 | rank 0 | rank 1 |
+|---|---:|---:|
+| 128 MiB buffer 搬运 239,826,944 字节远端 payload，20 次 | 61.161 GiB/s | 61.184 GiB/s |
+| endpoint allocation | 128 MiB | 128 MiB |
+| logical calls（含 3 次 warmup） | 23 | 23 |
+| data chunks | 46 | 46 |
+| next operation id | 70 | 70 |
+
+每次 logical call 精确产生一次完整尺寸握手和两个数据子块，因此 23 次共消耗 69 个内部 operation id。该结果排除了“静默扩容”或“误走单块路径”。
+
+### 64 MiB 固定 buffer 的多规格/多 dtype
+
+四种存储类型分别运行：FP32、FP16、BF16 原始字节、uint8。每个规格先 warmup 3 次，再正式运行 20 次，并验证首字节、每个 64 MiB 边界前后和最终字节。
+
+| 远端 payload/rank | chunks/call | 各 dtype 最低观察值 | 各 dtype 最高观察值 | endpoint allocation/rank |
+|---:|---:|---:|---:|---:|
+| 64 MiB | 1 | 59.535 GiB/s | 60.195 GiB/s | 64 MiB |
+| 128 MiB | 2 | 60.227 GiB/s | 60.325 GiB/s | 64 MiB |
+| 256 MiB | 4 | 60.338 GiB/s | 60.424 GiB/s | 64 MiB |
+| 512 MiB | 8 | 60.336 GiB/s | 60.447 GiB/s | 64 MiB |
+| 768 MiB | 12 | 60.277 GiB/s | 60.504 GiB/s | 64 MiB |
+
+主压力规格使用 64 MiB buffer、512 MiB 远端 payload、uint8 连续正式运行 100 次：两 rank 均约 59.91 GiB/s；103 个 logical calls（含 warmup）记录为 824 个 data chunks，next operation id 为 928，全部边界正确。
+
+BF16 只证明原始字节搬运正确，不代表 V100 支持 BF16 计算。
+
+### 故障和混合 collective
+
+- 第二子块故障注入在 operation 3 把 rank1 发布尺寸从 2,097,152 改为 2,097,151 字节；rank0 在约 3 ms 内失败并 poison group，后续调用在进入 transport 前被拒绝。
+- 现有 operation mismatch 和 missing peer 均在 2 秒测试 timeout 内失败；没有放宽正式 10 秒 timeout。
+- 同一 Ray actor session 依次完成 all-to-all、同步/异步 all-gather、64/128/256/384 MiB all-gather、两块大 shard 和所有 dtype 尾块；operation id 与可复用 CUDA event 没有互相污染。
+- session 结束后两卡均恢复 10 MiB、0% 利用率，无残留 compute process。
+
+## Gate D：匹配大 buffer 与 128 MiB 自动分块
+
+测试方法：每个规格 5 个独立 session；奇数 trial 先跑匹配 buffer，偶数 trial 先跑 128 MiB 分块，降低温度/顺序偏差。每次 3 次 warmup、50 次正式循环，使用两 rank 中较低的吞吐。
+
+| 远端 payload | 模式 | 5 次 GiB/s | 中位数 | 相对匹配模式 |
+|---:|---|---|---:|---:|
+| 256 MiB | 匹配 256 MiB | 62.415 / 62.405 / 62.344 / 62.340 / 62.378 | 62.378 | 100% |
+| 256 MiB | 固定 128 MiB，2 chunks | 61.686 / 61.714 / 61.719 / 61.692 / 61.696 | 61.696 | 98.91% |
+| 512 MiB | 匹配 512 MiB | 62.717 / 62.734 / 62.718 / 62.725 / 62.709 | 62.718 | 100% |
+| 512 MiB | 固定 128 MiB，4 chunks | 61.464 / 61.777 / 61.785 / 61.774 / 61.411 | 61.774 | 98.50% |
+
+512 MiB 分块的 5 次最大 elapsed 为 0.404632–0.407094 秒，中位数 0.404701 秒；最慢样本仅比中位数高约 0.59%，没有超过 25% 的长尾门槛。两种规格均显著高于计划要求的 85% 吞吐门槛。
+
+相对旧 512 MiB staging，默认 128 MiB endpoint 的 `torch.cuda.memory_allocated()` 每 rank 精确少 384 MiB，双卡共少 768 MiB。逻辑 payload 从 128 MiB 增到 768 MiB 时，endpoint allocation 保持固定；payload tensor 本身随测试规模增长，不计入 staging。
+
+## 启动与健康检查变更
+
+- 仓库启动器默认 staging budget 从 256 MiB 改为 128 MiB。
+- 128/256/512 MiB 与 legacy bytes 参数仍保留为高级性能/显存覆盖。
+- `-ValidateOnly` 显示 `Larger collectives are auto-chunked: enabled`。
+- 默认 worker 健康输入改为 264 MiB，远端 132 MiB，可在模型加载前实际验证 128 MiB 边界。
+- 新增环境根薄包装安装器；生成的 `start_raylight_p2p.ps1` 不保存 128/256/512 任一默认值，只把全部参数转发到部署仓库启动器。
+
+## 当前结论
 
 - 旧失败已在空闲双 V100 TCC 环境中稳定复现。
 - probe 已能独立指定物理 buffer 和逻辑 payload，并记录 endpoint/payload CUDA allocation。
-- transport 没有修改；当前大于 capacity 的 all-to-all 仍按预期失败。
-- 下一步进入 Task 2，先用失败测试定义两个 rank 的精确分块布局。
+- transport 已支持大于 capacity 的 equal-split CUDA all-to-all，synthetic Gate B/D 通过。
+- Gate C 已证明 staging CUDA allocation 恒定并完成退出回收；系统内存、commit 与 pagefile 峰值将在真实工作流监控中完成最终门禁。
+- 下一步提交 Tasks 4–6 代码与记录，然后部署并执行真实 MiniMax H3/LTX Gate E。

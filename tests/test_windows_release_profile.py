@@ -27,10 +27,12 @@ class WindowsReleaseProfileTests(unittest.TestCase):
         matrix = json.loads(ENVIRONMENT_MATRIX.read_text(encoding="utf-8"))
         gates = matrix["release_gates"]
 
-        self.assertEqual(gates["p2p_capacity_bytes_per_rank"], 268435456)
-        self.assertEqual(gates["launcher_default_p2p_capacity_mib_per_rank"], 256)
+        self.assertEqual(gates["p2p_capacity_bytes_per_rank"], 134217728)
+        self.assertEqual(gates["launcher_default_p2p_capacity_mib_per_rank"], 128)
         self.assertEqual(gates["worker_fallback_p2p_capacity_bytes_per_rank"], 134217728)
-        self.assertEqual(gates["maximum_validated_collective_input_bytes"], 230686720)
+        self.assertTrue(gates["adaptive_all_to_all_chunking"])
+        self.assertEqual(gates["maximum_validated_collective_input_bytes"], 1610612736)
+        self.assertEqual(gates["maximum_validated_remote_payload_bytes"], 805306368)
         self.assertEqual(gates["p2p_timeout_seconds"], 10)
 
     def test_worker_default_matches_validated_10s_capacity(self):
@@ -65,15 +67,16 @@ class WindowsReleaseProfileTests(unittest.TestCase):
             timeout=30,
         )
 
-    def test_validate_only_defaults_to_256_mib_with_diagnostics_disabled(self):
+    def test_validate_only_defaults_to_128_mib_auto_chunking_with_diagnostics_disabled(self):
         result = self.run_launcher()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("P2P capacity choices: 128, 256, 512 MiB", result.stdout)
         self.assertIn(
-            "Selected P2P capacity: 256 MiB (268435456 bytes per GPU)",
+            "P2P staging budget: 128 MiB (134217728 bytes per GPU)",
             result.stdout,
         )
+        self.assertIn("Larger collectives are auto-chunked: enabled", result.stdout)
         self.assertIn("Rank/P2P diagnostics: disabled", result.stdout)
         self.assertIn("Reserved VRAM: 3 GiB", result.stdout)
 
@@ -91,7 +94,7 @@ class WindowsReleaseProfileTests(unittest.TestCase):
 
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(
-                    f"Selected P2P capacity: {capacity_mib} MiB "
+                    f"P2P staging budget: {capacity_mib} MiB "
                     f"({capacity_bytes} bytes per GPU)",
                     result.stdout,
                 )
@@ -112,7 +115,7 @@ class WindowsReleaseProfileTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
-            "Selected P2P capacity: 256 MiB (268435456 bytes per GPU)",
+            "P2P staging budget: 256 MiB (268435456 bytes per GPU)",
             result.stdout,
         )
 
@@ -148,7 +151,7 @@ class WindowsReleaseProfileTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
-            "Selected P2P capacity: 256 MiB (268435456 bytes per GPU)",
+            "P2P staging budget: 256 MiB (268435456 bytes per GPU)",
             result.stdout,
         )
 

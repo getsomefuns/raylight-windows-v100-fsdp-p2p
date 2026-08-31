@@ -150,6 +150,12 @@ def windows_p2p_health_iterations(
     return max(minimum_iterations, target_iterations)
 
 
+def windows_p2p_health_size_bytes(capacity_bytes):
+    if capacity_bytes <= 0:
+        raise ValueError("P2P staging capacity must be positive")
+    return DEFAULT_WINDOWS_P2P_CAPACITY_BYTES * 2 + 8 * 1024 * 1024
+
+
 def windows_p2p_warmup_ready(checks, minimum_gib_s):
     if minimum_gib_s < 0:
         raise ValueError("minimum_gib_s cannot be negative")
@@ -2250,7 +2256,7 @@ def make_ray_actor_fn(world_size, parallel_dict):
             capacity_bytes = int(
                 os.environ.get("RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES", str(DEFAULT_WINDOWS_P2P_CAPACITY_BYTES))
             )
-            health_check_bytes = min(capacity_bytes * 2, 115_343_360)
+            health_check_bytes = windows_p2p_health_size_bytes(capacity_bytes)
             health_target_gib = float(
                 os.environ.get("RAYLIGHT_WINDOWS_P2P_HEALTH_REMOTE_GIB", "100")
             )

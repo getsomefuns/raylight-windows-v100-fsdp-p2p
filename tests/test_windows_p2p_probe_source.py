@@ -90,3 +90,33 @@ def test_probe_can_report_logical_calls_chunks_and_operation_ids():
     assert "profile = endpoint.profile_snapshot(reset=False)" in source
     assert 'f"next_operation_id={next_operation_id} "' in source
     assert 'f"profile_calls={profile_calls} profile_chunks={profile_chunks}"' in source
+
+
+def test_validation_positions_cover_every_chunk_boundary_and_final_byte():
+    probe = _load_probe()
+
+    assert probe.validation_positions(20, 8) == (0, 7, 8, 15, 16, 19)
+    assert probe.validation_positions(8, 8) == (0, 7)
+
+
+def test_chunk_byte_value_distinguishes_rank_half_and_chunk():
+    probe = _load_probe()
+
+    values = {
+        probe.chunk_byte_value(rank, half_index, chunk_index)
+        for rank in (0, 1)
+        for half_index in (0, 1)
+        for chunk_index in range(4)
+    }
+
+    assert len(values) == 16
+    assert all(0 < value < 256 for value in values)
+
+
+def test_expected_output_byte_matches_equal_all_to_all_layout():
+    probe = _load_probe()
+
+    assert probe.expected_output_byte(0, 0, 9, 8) == probe.chunk_byte_value(0, 0, 1)
+    assert probe.expected_output_byte(0, 1, 9, 8) == probe.chunk_byte_value(1, 0, 1)
+    assert probe.expected_output_byte(1, 0, 9, 8) == probe.chunk_byte_value(0, 1, 1)
+    assert probe.expected_output_byte(1, 1, 9, 8) == probe.chunk_byte_value(1, 1, 1)
