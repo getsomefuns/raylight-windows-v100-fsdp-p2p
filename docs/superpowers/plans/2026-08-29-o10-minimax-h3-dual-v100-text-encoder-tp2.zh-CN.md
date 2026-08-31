@@ -517,12 +517,14 @@ Task 6 / Gate D 结果：真实 50 层 checkpoint 的纯文本 TP2 对普通 Com
 
 - Produces: ExternalGpuLease、DualGpuLeaseCoordinator.acquire()/release() 和 RayWorker 三个远程方法。
 
-- [ ] 写状态机失败测试：idle、loading、sampling、leased、取消、单 rank 失败、重复释放。
-- [ ] 实现 worker 锁、stream synchronize、clear_sampling_vram 和 free-memory 回执。
-- [ ] 实现协调器的全有或全无租约。
-- [ ] 注入编码异常和用户取消，验证 finally 释放。
-- [ ] 验证租约释放后原 Diffusion CPU/mmap state 可继续采样，不重建无关 worker。
-- [ ] 提交：feat: coordinate dual-GPU text encoder leases。
+- [x] 写状态机失败测试：idle、loading、sampling、leased、取消、单 rank 失败、重复释放。
+- [x] 实现 worker 锁、stream synchronize、clear_sampling_vram 和 free-memory 回执。
+- [x] 实现协调器的全有或全无租约。
+- [x] 注入编码异常和用户取消，验证 finally 释放。
+- [x] 验证租约释放后原 Diffusion CPU/mmap state 可继续采样，不重建无关 worker。
+- [x] 提交：feat: coordinate dual-GPU text encoder leases（`58739b5`）。
+
+Task 7 结果：新增同步 Worker GPU 生命周期状态机和双 rank 全有或全无协调器。真实两个 RayWorker 探针中，两卡从 `idle` 同时进入 `leased_for_text_encoder`，分别回执 15.25/15.55 GiB 可用显存；租约期间两卡 `load_unet` 入口均被拒绝，归还后恢复 `idle`。单 rank 获取失败会在另一 rank 回滚；编码异常和 `KeyboardInterrupt` 均通过 `finally` 归还。`clear_sampling_vram` 只解除 GPU 驻留，不替换 `ModelPatcher`、checkpoint/mmap cache key 或 active request key，归还后采样状态可以继续使用。Task 7 完成时全仓库 573 项测试、35 个子测试通过，可以进入节点与工作流接入。
 
 ## 21. Task 8：节点、工作流与 Director 接入
 

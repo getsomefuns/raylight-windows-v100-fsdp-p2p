@@ -3,8 +3,8 @@
 ## 文档状态
 
 - 阶段：O10。
-- 当前任务：Task 6，完整 MiniMax H3 CLIP 代理。
-- 状态：完成；Gate A、Gate B、Gate C、Gate D 均通过，准备进入 Worker 双 GPU 显存租约。
+- 当前任务：Task 7，Worker 双 GPU 显存租约。
+- 状态：完成；Gate A–D 及 Gate D 生命周期补充验收通过，准备进入节点、工作流与 Director 接入。
 
 ## 测试验证目标
 
@@ -180,4 +180,27 @@ Gate C 结论：通过。该阶段证明真实单个 language block 的完整 At
 
 单元测试覆盖纯文本、单图 I2V、双图 REF2VA、视频 reference、当前 ComfyUI MRoPE 精确一致、DeepStack 注入层序、CLIP clone/metadata、Text Encoder LoRA 明确拒绝和编码异常清理。Task 6 完成时全仓库 `559 passed`、`35 subtests passed`；18 条 warning 为已有 Windows pytest 临时目录清理和 PyTorch nested tensor 原型提示，不是功能失败。
 
-Gate D 结论：通过。真实 50 层 checkpoint、GPU0 视觉塔、DeepStack、`minimax_token_tags` 和两卡语言主干均已给出实机 conditioning 证据，TP2 显存峰值从约 11.8 GiB 单卡降为每卡约 7.4 GiB，异常/正常关闭后未遗留 6.7 GiB 语言分片。节点尚未公开，Ray worker 显存租约尚未实现；这两项分别属于 Task 7、Task 8。
+Gate D conditioning 结论：通过。真实 50 层 checkpoint、GPU0 视觉塔、DeepStack、`minimax_token_tags` 和两卡语言主干均已给出实机 conditioning 证据，TP2 显存峰值从约 11.8 GiB 单卡降为每卡约 7.4 GiB，异常/正常关闭后未遗留 6.7 GiB 语言分片。节点尚未公开；Worker 显存租约由下面的 Task 7 补充验收关闭。
+
+## Task 7：Worker 双 GPU 显存租约
+
+实机附件：`.local/artifacts/o10/text-encoder-tp2/worker-lease-probe-20260831.json`。
+
+本阶段把 Ray Worker 的 GPU 使用从隐式约定改成显式状态：`idle`、`loading_diffusion`、`loading_lora`、`sampling` 和 `leased_for_text_encoder`。Text Encoder 只有在两个 rank 都空闲时才能取得同一 `operation_id`/`owner` 的租约；任何一个 rank 失败都会归还另一 rank，不允许单卡租出后继续伪装成 TP2。
+
+| 验证项 | 结果 |
+|---|---|
+| 真实 Worker 初始/结束状态 | rank 0/1 均为 `idle` |
+| 双卡租约 | 两 rank 同时为 `leased_for_text_encoder`，operation/owner 一致 |
+| free-memory 回执 | GPU0 15.25 GiB；GPU1 15.55 GiB |
+| 冲突保护 | 租约期间两 rank 的 `load_unet` 均在入口处明确拒绝 |
+| 单 rank 失败 | 已验证另一 rank 自动回滚 |
+| 编码异常/用户取消 | 普通异常与 `KeyboardInterrupt` 均由 `finally` 归还 |
+| 重复释放 | 同一 operation/owner 幂等；错误 owner 被拒绝 |
+| Diffusion 缓存保持 | ModelPatcher 对象、CPU/mmap cache key、active request key 不替换；归还后可重新进入 sampling 状态 |
+
+真实探针不加载 Diffusion 大模型，只验证两个实际 RayWorker 的远程协议、CUDA 清理、free-memory 回执、冲突拒绝和归还。缓存保持使用带真实 `clear_sampling_vram` 语义的生命周期回归验证；完整 Diffusion 模型的“编码后继续采样”由 Task 9 端到端工作流验收，不在本阶段冒充已经完成。
+
+Task 7 定向生命周期回归为 `29 passed`；完成时全仓库为 `573 passed`、`35 subtests passed`。全量测试的 warning 仍来自 Windows pytest 临时目录清理和 PyTorch nested tensor 原型提示，不是租约失败。
+
+Task 7 结论：通过。显存租约解决的是 RayWorker 与主进程 TP2 Text Encoder 争用同两张卡的问题，不把两卡显存合并成统一 32 GiB 地址空间，也不改变现有 Diffusion FSDP/Ulysses 的模型缓存格式。下一步是 Task 8 的显式节点和工作流接入。
