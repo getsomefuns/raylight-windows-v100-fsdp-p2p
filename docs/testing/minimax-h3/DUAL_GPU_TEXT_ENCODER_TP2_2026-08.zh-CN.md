@@ -3,8 +3,8 @@
 ## 文档状态
 
 - 阶段：O10。
-- 当前任务：Task 5，真实 Qwen3-VL language block TP2。
-- 状态：完成；Gate A、Gate B、Gate C 均通过，准备进入完整 CLIP 代理 / Gate D。
+- 当前任务：Task 6，完整 MiniMax H3 CLIP 代理。
+- 状态：完成；Gate A、Gate B、Gate C、Gate D 均通过，准备进入 Worker 双 GPU 显存租约。
 
 ## 测试验证目标
 
@@ -153,3 +153,31 @@ Task 4 定向测试、双 V100 探针以及当时全仓库 543 项测试、35 �
 单元测试另覆盖 dense FP32 单 block、合成 NVFP4 单 block、2/8/50 层 FP32 误差累积。50 层测试要求两卡每层输出一致、operation ID 严格覆盖 1–100、finite 且最终 max abs error 不超过 1e-3。Task 5 定向测试、真实双 V100 探针以及当时全仓库 550 项测试、35 个子测试均通过。
 
 Gate C 结论：通过。该阶段证明真实单个 language block 的完整 Attention、MLP、RoPE、RMSNorm、残差、AWQ smoothing 和两次 P2P SUM 正确；尚未证明真实 50 层全 checkpoint、vision/DeepStack、conditioning 返回、生命周期或 Text Encoder 总速度，这些属于 Gate D–F。
+
+## Task 6：完整 CLIP 代理 / Gate D
+
+测试附件位于 `.local/artifacts/o10/text-encoder-tp2/`：
+
+- `clip-proxy-single-20260831.json` / `.pt`：普通单 GPU ComfyUI 纯文本参照。
+- `clip-proxy-tp2-20260831.json` / `.pt`：纯文本 TP2 及逐元素 conditioning 附件。
+- `clip-proxy-i2v-single-20260831.json` / `.pt`：普通单 GPU 单图 I2V 参照。
+- `clip-proxy-i2v-tp2-20260831.json` / `.pt`：单图视觉塔、DeepStack 与 50 层 TP2。
+- `clip-proxy-ref2va-tp2-20260831.json` / `.pt`：双图 REF2VA TP2。
+- `clip-proxy-video-tp2-20260831.json` / `.pt`：两帧视频 reference TP2。
+
+代理不实例化普通 ComfyUI `CLIP` 的完整 Qwen3-VL-32B 模型。真实 checkpoint 中语言层量化权重约 12.78 GiB，按 row/column TP2 后每卡约 6.39 GiB；0.725 GiB INT8 token embedding 和视觉塔只在 GPU0 的短生命周期预处理器中运行。预处理完成后，embedding、DeepStack、MRoPE 元数据先回到 conditioning 中间设备，GPU0 预处理权重释放，再加载两卡语言分片，避免 GPU0 同时持有完整单卡语言模型和 TP2 分片。
+
+| 路径 | token / tags（文本、视觉） | 单卡/TP2 总时长 | 单卡 GPU 峰值 | TP2 GPU0 / GPU1 峰值 | 数值与清理 |
+|---|---:|---:|---:|---:|---|
+| 纯文本 | 29 / 29、0 | 17.83 / 17.41 s | 11,778.5 MiB | 7,350.0 / 7,350.0 MiB | cosine 0.99999999997；tags 相同；关闭后 16.25 / 16.25 MiB |
+| 单图 I2V，320×320 输入 | 137 / 35、102 | 19.03 / 16.63 s | 11,813.3 MiB | 7,396.2 / 7,390.0 MiB | cosine 0.99999930685；相对 RMSE 0.164%；tags 相同；关闭后 24.38 / 16.25 MiB |
+| 双图 REF2VA，128×128×2 | 77 / 41、36 | 未做单卡重复参照 / 16.66 s | — | 7,376.5 / 7,368.3 MiB | finite；关闭后 25.27 / 17.15 MiB |
+| 视频 reference，128×128×2 帧 | 59 / 41、18 | 未做单卡重复参照 / 19.43 s | — | 7,369.8 / 7,360.9 MiB | finite；关闭后 24.38 / 16.25 MiB |
+
+表中总时长均为一次独立进程的冷探针，包含 checkpoint 读取、选择性预处理权重加载、语言权重加载、编码和清理。它用于 Gate D 数值/容量判定，不代替 Task 9 的冷 3 次、热 3 次中位数，也不能据此提前认定达到 20% 性能门槛。
+
+单图对照的最大单点绝对误差为 37.98，但该位置的参照 conditioning 绝对峰值为 18,130.09；整体平均绝对误差为 0.0070、相对 RMSE 为 0.164%、cosine 为 0.99999931。结合 shape、token tags、finite 与后续视频质量门槛，Gate D 判定通过；正文保留最大值，避免只报告有利指标。
+
+单元测试覆盖纯文本、单图 I2V、双图 REF2VA、视频 reference、当前 ComfyUI MRoPE 精确一致、DeepStack 注入层序、CLIP clone/metadata、Text Encoder LoRA 明确拒绝和编码异常清理。Task 6 完成时全仓库 `559 passed`、`35 subtests passed`；18 条 warning 为已有 Windows pytest 临时目录清理和 PyTorch nested tensor 原型提示，不是功能失败。
+
+Gate D 结论：通过。真实 50 层 checkpoint、GPU0 视觉塔、DeepStack、`minimax_token_tags` 和两卡语言主干均已给出实机 conditioning 证据，TP2 显存峰值从约 11.8 GiB 单卡降为每卡约 7.4 GiB，异常/正常关闭后未遗留 6.7 GiB 语言分片。节点尚未公开，Ray worker 显存租约尚未实现；这两项分别属于 Task 7、Task 8。

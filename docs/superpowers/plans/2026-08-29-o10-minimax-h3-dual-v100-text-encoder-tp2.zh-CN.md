@@ -494,12 +494,14 @@ Task 5 / Gate C 结果：已冻结 MiniMax H3 当前 ComfyUI 配置（5120 hidde
 - Consumes: TP2Qwen3VLBlock、现有 MiniMaxH3Tokenizer 和视觉处理逻辑。
 - Produces: MiniMaxH3TP2ClipProxy。
 
-- [ ] 写纯文本、单图 I2V、双图 REF2VA、视频 reference 的 token/shape/tag 契约失败测试。
-- [ ] 实现 tokenizer/config 复用、GPU0 视觉塔和两卡语言主干。
-- [ ] 保持 minimax_token_tags、DeepStack 注入和 conditioning metadata。
-- [ ] 对真实 checkpoint 运行 encoder-only，比较单卡输出 cosine、finite 和 shape。
-- [ ] 验证 encode 异常后两卡 GPU 权重被释放。
-- [ ] 提交：feat: add MiniMax H3 TP2 CLIP proxy。
+- [x] 写纯文本、单图 I2V、双图 REF2VA、视频 reference 的 token/shape/tag 契约失败测试。
+- [x] 实现 tokenizer/config 复用、GPU0 视觉塔和两卡语言主干。
+- [x] 保持 minimax_token_tags、DeepStack 注入和 conditioning metadata。
+- [x] 对真实 checkpoint 运行 encoder-only，比较单卡输出 cosine、finite 和 shape。
+- [x] 验证 encode 异常后两卡 GPU 权重被释放。
+- [x] 提交：feat: add MiniMax H3 TP2 CLIP proxy。
+
+Task 6 / Gate D 结果：真实 50 层 checkpoint 的纯文本 TP2 对普通 ComfyUI 单卡 conditioning cosine 为 0.99999999997；320×320 单图视觉塔 + DeepStack 路径 cosine 为 0.99999930685，shape 与 `minimax_token_tags` 相同。双图 REF2VA、两帧视频 reference 均 finite。普通单卡峰值约 11.8 GiB，TP2 四类探针均约为 GPU0/GPU1 各 7.35–7.40 GiB；关闭后两卡 allocated 回落到 16–25 MiB。全仓库 559 项测试、35 个子测试通过。Gate D 通过，可以进入 Worker 双 GPU 显存租约。
 
 ## 20. Task 7：Worker 双 GPU 显存租约
 
