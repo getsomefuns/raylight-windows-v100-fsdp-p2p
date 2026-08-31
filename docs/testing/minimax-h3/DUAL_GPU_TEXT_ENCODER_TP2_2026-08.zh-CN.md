@@ -3,8 +3,8 @@
 ## 文档状态
 
 - 阶段：O10。
-- 当前任务：Task 3，MiniMax H3 NVFP4 row/column 分片。
-- 状态：完成；Gate A、Gate B 均通过，准备进入并行 Linear。
+- 当前任务：Task 4，双 V100 Column/Row Parallel Linear。
+- 状态：完成；Gate A、Gate B 与并行 Linear 前置验证通过，准备进入 Qwen3-VL block / Gate C。
 
 ## 测试验证目标
 
@@ -97,3 +97,26 @@ Task 2 的 19 项定向测试与当时全仓库 522 项测试均通过。Gate A 
 NVFP4 block-scale 采用 cuBLAS tiled/swizzled 排列，不能按表面二维 shape 直接切。实现仅把这张体积约为 qdata 八分之一的 FP8 缩放表还原布局、切片、重新排列；packed 4-bit qdata 直接切片，全局 `weight_scale_2` 只读复用。单元测试通过 monkeypatch 禁止调用 `QuantizedTensor.dequantize()`，证明分片构造过程不会生成完整 FP16/FP32 权重临时副本。
 
 Gate B 结论：通过。该结论证明真实 checkpoint 的量化权重可以无损拆为两个 TP rank，但尚未证明 Linear 数学、完整 Qwen3-VL block、GPU 显存或端到端速度；这些分别属于 Gate C–F。
+
+## Task 4：双 V100 并行 Linear
+
+测试附件：`.local/artifacts/o10/text-encoder-tp2/linear-probe-20260831.json`。
+
+Column Parallel Linear 按输出通道拆权重，两卡接收相同 hidden，各自产生一半输出通道；Row Parallel Linear 按输入通道拆权重，两卡计算同一完整输出的 partial，再用 Task 2 的 CUDA P2P SUM 聚合。Row bias 只在 SUM 之后各加一次，避免被重复累加。
+
+| 测试 | 条件 | 数值 | rank 0 / rank 1 | 墙钟 | 重叠率 |
+|---|---|---|---:|---:|---:|
+| dense FP32 Column | 2048 tokens，每卡 4096×4096 | 单元测试 max abs ≤1e-4 | 5.47 / 5.89 ms | 6.34 ms | 91.8% |
+| 真实 NVFP4 q_proj Column | 221 tokens，源 8192×5120，每卡 4096×5120 | 两卡 finite | 2.86 / 2.22 ms | 3.21 ms | 84.2% |
+| 合成 NVFP4 Column | 256×128 | cosine 0.99999964，finite | 2.51 / 2.89 ms | 3.41 ms | 79.4% |
+| 合成 NVFP4 Row + P2P SUM | 128×256 | cosine 0.99999988，finite，两卡逐元素一致 | 1.68 / 1.69 ms | 2.17 ms | 71.0% |
+
+Row 小矩阵正式 P2P SUM payload 为 9,728 B，耗时 0.469 ms。小矩阵重叠率受双线程调度与 CUDA event 固定开销影响，因此并行能力判断以真实 221-token q_proj 和 FP32 大矩阵为主；数值正确性仍覆盖两个小型 NVFP4 方向。
+
+### 已发现并修复的性能问题
+
+初版虽使用两张独立 CUDA stream，但由一个 Python 主线程先调用 rank 0 的 `F.linear`，再调用 rank 1。V100 无原生 NVFP4，comfy_kitchen eager 路径要先在 Python 调度多步反量化；真实 q_proj 的局部 GPU 时间只有约 1.2–1.4 ms，而两次顺序 Python 提交已经足以让两张卡近似串行，实测重叠率约 7%。
+
+实装方案使用两个持久主机线程同时向 cuda:0/cuda:1 的独立 stream 提交。修复后同一真实 q_proj 重叠率为 84.2%，不是通过放宽标准获得。线程池会在后续完整 50 层实现中由整个 TP2 主干共享，不为每层创建一组线程。
+
+Task 4 定向测试、双 V100 探针以及当时全仓库 543 项测试、35 个子测试均通过。该阶段证明并行 Linear 原语可用；完整 Attention、MLP、残差与误差累积仍由 Task 5 / Gate C 验收。

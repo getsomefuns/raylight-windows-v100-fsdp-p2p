@@ -453,12 +453,14 @@ Task 3 / Gate B 结果：真实 `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` �
 - Consumes: QuantizedLinearShard、CudaPeerGroup2。
 - Produces: ColumnParallelLinear.forward(x) 和 RowParallelLinear.forward(x, operation_id)。
 
-- [ ] 写 dense FP32 小矩阵失败测试，要求 TP2 输出匹配完整 Linear。
-- [ ] 写 NVFP4 小矩阵失败测试，要求输出满足正式 cosine 和 finite 门槛。
-- [ ] 实现两设备并发 kernel 提交；RowParallelLinear 使用 P2P SUM。
-- [ ] 用 CUDA event 证明两张卡局部 Linear 时间区间重叠。
-- [ ] 运行单元测试和双 V100 探针。
-- [ ] 提交：feat: add TP2 linear primitives。
+- [x] 写 dense FP32 小矩阵失败测试，要求 TP2 输出匹配完整 Linear。
+- [x] 写 NVFP4 小矩阵失败测试，要求输出满足正式 cosine 和 finite 门槛。
+- [x] 实现两设备并发 kernel 提交；RowParallelLinear 使用 P2P SUM。
+- [x] 用 CUDA event 证明两张卡局部 Linear 时间区间重叠。
+- [x] 运行单元测试和双 V100 探针。
+- [x] 提交：feat: add TP2 linear primitives（`a77636a`）。
+
+Task 4 结果：Column/Row Parallel Linear 的 dense FP32 与 NVFP4 数值测试通过，Row 路径通过现有 `CudaPeerGroup2` 聚合且两卡结果逐元素一致。实机探针先发现单主线程顺序提交使真实 NVFP4 q_proj 仅有约 7% 重叠；改为两个持久主机线程向独立 CUDA stream 同时提交后，同一真实 q_proj 的局部 Linear 重叠率达到 84.2%，FP32 大矩阵达到 91.8%。全仓库 543 项测试与 35 个子测试通过。Task 4 关闭，可以进入 Qwen3-VL block / Gate C。
 
 ## 18. Task 5：Qwen3-VL 语言 block TP2
 
