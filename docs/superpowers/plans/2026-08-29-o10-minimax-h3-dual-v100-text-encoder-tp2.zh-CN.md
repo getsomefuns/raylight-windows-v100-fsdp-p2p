@@ -386,12 +386,14 @@ TP2 禁用条件：
 - BaselineRecord 数据结构和 JSON/CSV 字段契约。
 - 单卡冷 3 次、热 3 次基线。
 
-- [ ] 写失败测试，要求解析器拒绝缺少 checkpoint、token_count、te_total_s、gpu0_peak_mib、ram_peak_mib 或 pagefile_peak_mib 的记录。
-- [ ] 运行 python -m pytest tests/test_text_encoder_tp_benchmark_contract.py -q，确认测试因实现不存在而失败。
-- [ ] 实现只读基线记录器，阶段计时默认关闭，基准脚本显式开启。
-- [ ] 使用当前标准 CLIPLoader 和现有 MMH3Director 输入完成冷 3 次、热 3 次。
-- [ ] 把中位数、峰值和工作流 hash 写入测试汇总，不复制长篇控制台日志。
-- [ ] 运行测试并提交：test: freeze MiniMax H3 text encoder baseline。
+- [x] 写失败测试，要求解析器拒绝缺少 checkpoint、token_count、te_total_s、gpu0_peak_mib、ram_peak_mib 或 pagefile_peak_mib 的记录。
+- [x] 运行 python -m pytest tests/test_text_encoder_tp_benchmark_contract.py -q，确认测试因实现不存在而失败。
+- [x] 实现只读基线记录器，阶段计时默认关闭，基准脚本显式开启。
+- [x] 使用当前标准 CLIPLoader 和现有 MMH3Director 输入完成冷 3 次、热 3 次。
+- [x] 把中位数、峰值和工作流 hash 写入测试汇总，不复制长篇控制台日志。
+- [x] 运行测试并提交：test: freeze MiniMax H3 text encoder baseline（`526a9f6`）。
+
+Task 1 实机结果：冷中位数 20.76 秒，热中位数 10.37 秒，token 数固定 221，GPU 0 峰值 13,906 MiB；详见 `docs/testing/minimax-h3/DUAL_GPU_TEXT_ENCODER_TP2_2026-08.zh-CN.md`。Task 2 可以开始。
 
 ## 15. Task 2：双 GPU P2P SUM 原语
 
