@@ -3,8 +3,8 @@
 ## 文档状态
 
 - 阶段：O10。
-- 当前任务：Task 4，双 V100 Column/Row Parallel Linear。
-- 状态：完成；Gate A、Gate B 与并行 Linear 前置验证通过，准备进入 Qwen3-VL block / Gate C。
+- 当前任务：Task 5，真实 Qwen3-VL language block TP2。
+- 状态：完成；Gate A、Gate B、Gate C 均通过，准备进入完整 CLIP 代理 / Gate D。
 
 ## 测试验证目标
 
@@ -120,3 +120,36 @@ Row 小矩阵正式 P2P SUM payload 为 9,728 B，耗时 0.469 ms。小矩阵重
 实装方案使用两个持久主机线程同时向 cuda:0/cuda:1 的独立 stream 提交。修复后同一真实 q_proj 重叠率为 84.2%，不是通过放宽标准获得。线程池会在后续完整 50 层实现中由整个 TP2 主干共享，不为每层创建一组线程。
 
 Task 4 定向测试、双 V100 探针以及当时全仓库 543 项测试、35 个子测试均通过。该阶段证明并行 Linear 原语可用；完整 Attention、MLP、残差与误差累积仍由 Task 5 / Gate C 验收。
+
+## Task 5：真实 Qwen3-VL block / Gate C
+
+测试附件：`.local/artifacts/o10/text-encoder-tp2/qwen3vl-block-probe-20260831.json`。
+
+当前 ComfyUI MiniMax H3 language 配置已冻结为：hidden 5120、intermediate 25600、50 层、64 个 Q head、8 个 KV head、head_dim 128、RMSNorm epsilon 1e-6、Qwen3-VL interleaved MRoPE。TP2 后每卡 32 个 Q head、4 个 KV head，GQA 的 8:1 比例保持不变。
+
+真实探针读取 checkpoint layer 0 的 q/k/v/o、gate/up/down 七个 NVFP4 Linear、input/post-attention/q/k 四组 norm，以及 o_proj/down_proj 两条 BF16 `pre_quant_scale`。V100 执行前将 norm/scale 明确转换为 FP16；`pre_quant_scale` 按 o/down 的本地输入通道切半后在局部 Linear 前应用，不会遗漏 ModelOpt AWQ smoothing。
+
+| 项目 | 结果 |
+|---|---:|
+| token 数 | 32 |
+| TP2 对单 GPU同语义基线 cosine | 0.99999595 |
+| max abs error | 0.015625 |
+| finite | 是 |
+| rank 0 / rank 1 hidden | 逐元素一致 |
+| 每个测量 block P2P SUM | 2 次 |
+| o_proj / down_proj operation ID | 3 / 4 |
+| GPU0 / GPU1 显存峰值 | 663.7 / 655.6 MiB |
+
+| Linear | rank 0 / rank 1 | 墙钟 | 重叠率 |
+|---|---:|---:|---:|
+| q_proj | 2.01 / 2.18 ms | 2.67 ms | 75.8% |
+| k_proj | 2.18 / 2.24 ms | 2.78 ms | 75.1% |
+| v_proj | 2.29 / 2.16 ms | 2.76 ms | 78.5% |
+| o_proj | 2.39 / 2.27 ms | 2.90 ms | 77.7% |
+| gate_proj | 3.14 / 3.18 ms | 3.49 ms | 90.3% |
+| up_proj | 3.11 / 3.15 ms | 3.48 ms | 89.4% |
+| down_proj | 2.89 / 2.84 ms | 3.15 ms | 90.9% |
+
+单元测试另覆盖 dense FP32 单 block、合成 NVFP4 单 block、2/8/50 层 FP32 误差累积。50 层测试要求两卡每层输出一致、operation ID 严格覆盖 1–100、finite 且最终 max abs error 不超过 1e-3。Task 5 定向测试、真实双 V100 探针以及当时全仓库 550 项测试、35 个子测试均通过。
+
+Gate C 结论：通过。该阶段证明真实单个 language block 的完整 Attention、MLP、RoPE、RMSNorm、残差、AWQ smoothing 和两次 P2P SUM 正确；尚未证明真实 50 层全 checkpoint、vision/DeepStack、conditioning 返回、生命周期或 Text Encoder 总速度，这些属于 Gate D–F。

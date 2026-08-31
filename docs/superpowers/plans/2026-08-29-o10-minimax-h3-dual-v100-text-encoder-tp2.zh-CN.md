@@ -473,12 +473,14 @@ Task 4 结果：Column/Row Parallel Linear 的 dense FP32 与 NVFP4 数值测试
 
 - Produces: TP2Qwen3VLBlock.forward(hidden_rank0: torch.Tensor, hidden_rank1: torch.Tensor, position_ids: torch.Tensor, attention_mask: torch.Tensor | None, operation_id: int) -> tuple[torch.Tensor, torch.Tensor]
 
-- [ ] 从 ComfyUI 当前 Qwen3-VL block 冻结 forward 参数和 GQA 头配置测试。
-- [ ] 写单 block FP32/NVFP4 对照失败测试。
-- [ ] 实现 replicated RMSNorm/residual、head-sharded Attention 和 channel-sharded MLP。
-- [ ] 验证每层正好两次 P2P SUM，operation_id 单调且两卡 hidden 一致。
-- [ ] 扩展到 2 层、8 层、50 层合成模型，检查误差累积、显存和通信统计。
-- [ ] 提交：feat: add Qwen3-VL TP2 language blocks。
+- [x] 从 ComfyUI 当前 Qwen3-VL block 冻结 forward 参数和 GQA 头配置测试。
+- [x] 写单 block FP32/NVFP4 对照失败测试。
+- [x] 实现 replicated RMSNorm/residual、head-sharded Attention 和 channel-sharded MLP。
+- [x] 验证每层正好两次 P2P SUM，operation_id 单调且两卡 hidden 一致。
+- [x] 扩展到 2 层、8 层、50 层合成模型，检查误差累积、显存和通信统计。
+- [x] 提交：feat: add Qwen3-VL TP2 language blocks（`eb7e04b`）。
+
+Task 5 / Gate C 结果：已冻结 MiniMax H3 当前 ComfyUI 配置（5120 hidden、25600 MLP、64 Q heads、8 KV heads、128 head dim、50 层），TP2 后每卡保持 32 Q / 4 KV heads，GQA 比例不变。真实 checkpoint layer 0 的七个 NVFP4 Linear、四组 norm 与两条 `pre_quant_scale` 实机通过：对单 GPU 同语义基线 cosine 0.99999595，输出 finite，两卡逐元素一致；测量 block 恰好两次 P2P SUM，operation ID 为 3、4。显存峰值为 GPU0 663.7 MiB、GPU1 655.6 MiB。2/8/50 层合成回归及全仓库 550 项测试、35 个子测试通过。Gate C 通过，可以进入完整 CLIP 代理 / Gate D。
 
 ## 19. Task 6：完整 MiniMax H3 CLIP 代理
 
