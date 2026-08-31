@@ -59,3 +59,22 @@
 基线工具不会改变 conditioning 或工作流输出；其 begin/complete 事件把资源采样严格裁剪在 Text Encoder 有效区间，避免把参考图 VAE 编码或后续采样误算入 Text Encoder。
 
 Task 1 已关闭。O10 后续验收的本机对照值为：冷中位数 20.76 秒、热中位数 10.37 秒、GPU 0 显存峰值 13,906 MiB。此处只建立单卡基线，尚未声明 TP2 已有性能收益。
+
+## Task 2：双 GPU P2P SUM / Gate A
+
+测试附件：`.local/artifacts/o10/text-encoder-tp2/p2p-sum-probe-20260831.json`。
+
+测试对象为单进程、固定 GPU 0/1 的 `CudaPeerGroup2`。每次操作并发提交两个方向的 CUDA peer copy，两卡分别把本地 partial 与接收缓冲相加；不建立 Gloo/NCCL ProcessGroup，也不构造 world-size 倍 all-gather 缓冲。operation ID 必须严格递增，shape、dtype、连续性、设备或拓扑不匹配均立即失败。
+
+| dtype | 每卡 payload | 正式迭代 | 平均通信与本地求和 | 双向聚合带宽 | 迭代显存增长 | 数值 |
+|---|---:|---:|---:|---:|---:|---|
+| FP16 | 1 MiB | 100 | 0.299 ms | 6.54 GiB/s | 0 / 0 B | 逐元素一致、finite |
+| FP16 | 16 MiB | 100 | 0.535 ms | 58.45 GiB/s | 0 / 回落 | 逐元素一致、finite |
+| FP16 | 64 MiB | 100 | 1.517 ms | 82.39 GiB/s | 0 / 回落 | 逐元素一致、finite |
+| FP32 | 1 MiB | 100 | 0.302 ms | 6.47 GiB/s | 0 / 回落 | 逐元素一致、finite |
+| FP32 | 16 MiB | 100 | 0.527 ms | 59.32 GiB/s | 0 / 回落 | 逐元素一致、finite |
+| FP32 | 64 MiB | 100 | 1.523 ms | 82.09 GiB/s | 0 / 回落 | 逐元素一致、finite |
+
+每种组合先执行 1 次不计时预热，表中均为后续 100 次结果。1 MiB 由固定的 Python/CUDA event 提交成本主导；16/64 MiB 更接近 Text Encoder 层内 partial 的有效数据面性能。负的“增长”表示前一个更大测试缓冲在后续采样期间释放，不是测量错误。
+
+Task 2 的 19 项定向测试与当时全仓库 522 项测试均通过。Gate A 通过，可以进入 NVFP4 row/column 分片；该结果只证明 SUM 原语可用，尚不代表完整 Text Encoder TP2 已通过 Gate B–F。

@@ -409,13 +409,15 @@ Task 1 实机结果：冷中位数 20.76 秒，热中位数 10.37 秒，token �
 
 - Produces: CudaPeerGroup2.validate() 和 CudaPeerGroup2.all_reduce_sum(rank0_partial, rank1_partial, operation_id)。
 
-- [ ] 写 CPU 级失败测试，覆盖设备错误、shape/dtype 不一致、operation_id 重复、缓冲复用和统计聚合。
-- [ ] 运行对应 pytest，确认失败原因是类和接口尚不存在。
-- [ ] 实现设备无关的 copy plan 和状态机，再实现 CUDA stream/event 后端。
-- [ ] 运行单元测试，确认关闭诊断时不生成逐层日志。
-- [ ] 运行双 V100 探针，覆盖 1 MiB、16 MiB、64 MiB，FP16/FP32，各 100 次。
-- [ ] 验证输出与 torch.add 基线一致、正式 payload 不经过 Gloo/CPU、无逐次显存增长。
-- [ ] 提交：feat: add two-GPU CUDA peer sum collective。
+- [x] 写 CPU 级失败测试，覆盖设备错误、shape/dtype 不一致、operation_id 重复、缓冲复用和统计聚合。
+- [x] 运行对应 pytest，确认失败原因是类和接口尚不存在。
+- [x] 实现设备无关的 copy plan 和状态机，再实现 CUDA stream/event 后端。
+- [x] 运行单元测试，确认关闭诊断时不生成逐层日志。
+- [x] 运行双 V100 探针，覆盖 1 MiB、16 MiB、64 MiB，FP16/FP32，各 100 次。
+- [x] 验证输出与 torch.add 基线一致、正式 payload 不经过 Gloo/CPU、无逐次显存增长。
+- [x] 提交：feat: add two-GPU CUDA peer sum collective（`d90a4ae`）。
+
+Task 2 / Gate A 结果：六种组合全部逐元素一致且 finite；100 次正式迭代无正向显存增长。16 MiB 聚合带宽为 58.45–59.32 GiB/s，64 MiB 为 82.09–82.39 GiB/s。正式数据面只执行跨设备 CUDA `copy_` 与各卡本地 `torch.add`，未建立 ProcessGroup、Gloo 或 CPU payload 缓冲。Gate A 通过，Task 3 可以开始。
 
 ## 16. Task 3：NVFP4 row/column 分片
 
