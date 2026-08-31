@@ -1,3 +1,5 @@
 from .xfuser_compat import install_minimal_xfuser
+from .text_encoder_parallel.baseline import install_comfy_clip_timing_from_environment
 
 install_minimal_xfuser()
+install_comfy_clip_timing_from_environment()
