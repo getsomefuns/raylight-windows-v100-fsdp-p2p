@@ -113,3 +113,25 @@ def test_parse_args_defaults_to_cold_and_warm_runs():
 def test_parse_args_rejects_non_positive_runs():
     with pytest.raises(ValueError, match="runs must be positive"):
         benchmark.parse_args(["workflow.json", "--runs", "0"])
+
+
+def test_prepare_director_prompt_changes_seed_and_output_prefix_per_run():
+    template = {
+        "5": {
+            "class_type": "MiniMaxH3Director",
+            "inputs": {"seed": 42, "global_prompt": "same prompt"},
+        },
+        "7": {
+            "class_type": "SaveVideo",
+            "inputs": {"filename_prefix": "video/MMH3Director_O9Adaptive128"},
+        },
+    }
+
+    cold = benchmark.prepare_director_prompt(template, 0)
+    warm = benchmark.prepare_director_prompt(template, 1)
+
+    assert cold["5"]["inputs"]["seed"] == 42
+    assert warm["5"]["inputs"]["seed"] == 43
+    assert cold["7"]["inputs"]["filename_prefix"].endswith("_run0")
+    assert warm["7"]["inputs"]["filename_prefix"].endswith("_run1")
+    assert template["5"]["inputs"]["seed"] == 42

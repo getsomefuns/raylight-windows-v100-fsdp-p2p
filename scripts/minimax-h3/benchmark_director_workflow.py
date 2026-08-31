@@ -64,6 +64,22 @@ def validate_director_prompt(prompt: dict) -> None:
         raise ValueError("Director benchmark requires FSDP=true")
 
 
+def prepare_director_prompt(template: dict, run_index: int) -> dict:
+    if run_index < 0:
+        raise ValueError("run_index must be non-negative")
+    prompt = copy.deepcopy(template)
+    directors = _nodes(prompt, "MiniMaxH3Director")
+    if len(directors) != 1:
+        raise ValueError(f"expected one MiniMaxH3Director, found {len(directors)}")
+    director_inputs = directors[0][1].setdefault("inputs", {})
+    director_inputs["seed"] = (int(director_inputs["seed"]) + run_index) % (2**64)
+    for _, node in _nodes(prompt, "SaveVideo"):
+        inputs = node.setdefault("inputs", {})
+        prefix = str(inputs.get("filename_prefix", "video/MMH3Director"))
+        inputs["filename_prefix"] = f"{prefix}_run{run_index}"
+    return prompt
+
+
 def summarize_director_phases(
     events: list[dict],
     profiles: list[dict],
@@ -332,10 +348,7 @@ def run_workflow(
             )
 
             for run_index in range(runs):
-                run_prompt = copy.deepcopy(prompt)
-                for _, node in _nodes(run_prompt, "SaveVideo"):
-                    prefix = str(node.get("inputs", {}).get("filename_prefix", "video/MMH3Director"))
-                    node["inputs"]["filename_prefix"] = f"{prefix}_run{run_index}"
+                run_prompt = prepare_director_prompt(prompt, run_index)
                 prompt_sha256 = base.write_prompt_artifact(
                     result_dir / f"run{run_index}-prompt.json", run_prompt
                 )
@@ -417,6 +430,9 @@ def run_workflow(
                 run = {
                     "run_index": run_index,
                     "temperature": "cold" if run_index == 0 else "warm",
+                    "director_seed": int(
+                        _nodes(run_prompt, "MiniMaxH3Director")[0][1]["inputs"]["seed"]
+                    ),
                     "prompt_id": prompt_id,
                     "elapsed_seconds": elapsed,
                     "api_prompt_sha256": prompt_sha256,
