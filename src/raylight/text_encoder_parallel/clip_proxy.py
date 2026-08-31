@@ -10,6 +10,7 @@ short-lived TP2 backbone consumes them.  Both resources are closed in
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 import gc
 import math
@@ -610,10 +611,12 @@ class MiniMaxH3TP2ClipProxy:
         tokenizer: Any,
         preprocessor_factory: Callable[[], Any],
         backbone_factory: Callable[[], Any],
+        execution_context_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.tokenizer = tokenizer
         self._preprocessor_factory = preprocessor_factory
         self._backbone_factory = backbone_factory
+        self._execution_context_factory = execution_context_factory or nullcontext
         self.tokenizer_options: dict[str, Any] = {}
         self.layer_idx = None
         self.use_clip_schedule = False
@@ -626,6 +629,7 @@ class MiniMaxH3TP2ClipProxy:
             tokenizer=self.tokenizer,
             preprocessor_factory=self._preprocessor_factory,
             backbone_factory=self._backbone_factory,
+            execution_context_factory=self._execution_context_factory,
         )
         clone.tokenizer_options = self.tokenizer_options.copy()
         clone.layer_idx = self.layer_idx
@@ -682,17 +686,18 @@ class MiniMaxH3TP2ClipProxy:
         if any(weight != 1.0 for section in weights for weight in section):
             raise ValueError("weighted MiniMax prompts are not supported by the TP2 proxy")
 
-        preprocessor = self._preprocessor_factory()
-        try:
-            prepared = preprocessor.prepare(sections)
-        finally:
-            preprocessor.close()
+        with self._execution_context_factory():
+            preprocessor = self._preprocessor_factory()
+            try:
+                prepared = preprocessor.prepare(sections)
+            finally:
+                preprocessor.close()
 
-        backbone = self._backbone_factory()
-        try:
-            encoded = backbone.encode(prepared)
-        finally:
-            backbone.close()
+            backbone = self._backbone_factory()
+            try:
+                encoded = backbone.encode(prepared)
+            finally:
+                backbone.close()
         if encoded.ndim != 3 or encoded.shape[:2] != prepared.embeddings.shape[:2]:
             raise RuntimeError("TP2 backbone returned an invalid conditioning shape")
         if not torch.isfinite(encoded).all().item():

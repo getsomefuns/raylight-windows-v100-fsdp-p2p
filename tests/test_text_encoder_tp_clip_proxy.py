@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import pytest
@@ -212,6 +213,27 @@ def test_encode_exception_releases_preprocessor_and_both_gpu_backbone() -> None:
 
     assert state.preprocess_active == 0
     assert state.backbone_active == 0
+    assert state.preprocess_closed == 1
+    assert state.backbone_closed == 1
+
+
+def test_proxy_wraps_preprocessor_and_backbone_in_execution_context() -> None:
+    state = _ResourceState()
+    events = []
+
+    @contextmanager
+    def execution_context():
+        events.append("lease-enter")
+        try:
+            yield
+        finally:
+            events.append("lease-exit")
+
+    proxy = _proxy(state)
+    proxy._execution_context_factory = execution_context
+    proxy.encode_from_tokens(proxy.tokenize("prompt"), return_dict=True)
+
+    assert events == ["lease-enter", "lease-exit"]
     assert state.preprocess_closed == 1
     assert state.backbone_closed == 1
 

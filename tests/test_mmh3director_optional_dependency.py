@@ -35,7 +35,11 @@ def test_root_import_registers_adapter_without_importing_director_package():
         "node=package.NODE_CLASS_MAPPINGS['RayMMH3DirectorModelAdapter']; "
         "assert package.NODE_DISPLAY_NAME_MAPPINGS['RayMMH3DirectorModelAdapter'] == "
         "'Ray MODEL Adapter (MMH3Director)'; "
-        "assert node.RETURN_TYPES == ('MODEL',); print('PASS')"
+        "assert node.RETURN_TYPES == ('MODEL',); "
+        "tp=package.NODE_CLASS_MAPPINGS['RayMiniMaxH3DualGPUCLIPLoader']; "
+        "assert package.NODE_DISPLAY_NAME_MAPPINGS['RayMiniMaxH3DualGPUCLIPLoader'] == "
+        "'Load MiniMax H3 Text Encoder (Dual V100 TP2)'; "
+        "assert tp.RETURN_TYPES == ('CLIP', 'RAY_ACTORS_INIT'); print('PASS')"
     )
 
     completed = subprocess.run(
