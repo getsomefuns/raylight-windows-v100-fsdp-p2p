@@ -66,70 +66,141 @@ def validate_director_prompt(prompt: dict) -> None:
 
 def summarize_director_phases(
     events: list[dict],
+    profiles: list[dict],
     *,
     execution_start_ms: int,
     execution_end_ms: int,
 ) -> dict:
-    required = {
-        "sampler_entry",
+    required_order = (
+        "prepare_sampling_begin",
         "load_models_gpu_begin",
         "load_models_gpu_end",
-        "sample_begin",
-        "sample_returned",
-        "sampler_return",
-    }
+        "prepare_sampling_end",
+    )
+    required = set(required_order)
     start_ns = execution_start_ms * 1_000_000
     end_ns = execution_end_ms * 1_000_000
-    groups: dict[tuple[int, int, int], dict[str, dict]] = {}
+    events_by_rank: dict[int, list[dict]] = {0: [], 1: []}
     for event in events:
         name = event.get("event")
         event_time_ns = int(event.get("time_ns", -1))
         if name not in required or not start_ns <= event_time_ns <= end_ns:
             continue
-        key = (int(event["invocation"]), int(event["rank"]), int(event["pid"]))
-        target = groups.setdefault(key, {})
-        if name in target:
-            raise RuntimeError(f"duplicate {name} diagnostic for {key}")
-        target[name] = event
+        rank = int(event["rank"])
+        if rank in events_by_rank:
+            events_by_rank[rank].append(event)
 
-    complete: dict[int, dict[int, tuple[tuple[int, int, int], dict[str, dict]]]] = {}
-    for key, values in groups.items():
-        if required <= values.keys():
-            invocation, rank, _ = key
-            if rank in complete.setdefault(invocation, {}):
-                raise RuntimeError(f"duplicate complete rank {rank} for invocation {invocation}")
-            complete[invocation][rank] = (key, values)
-    if not complete:
-        raise RuntimeError("no complete Director rank diagnostics found")
+    sequences_by_rank: dict[int, list[dict[str, dict]]] = {}
+    for rank in (0, 1):
+        rank_events = sorted(events_by_rank[rank], key=lambda event: int(event["perf_ns"]))
+        sequences: list[dict[str, dict]] = []
+        current: dict[str, dict] = {}
+        for event in rank_events:
+            name = event["event"]
+            if name == required_order[0]:
+                if current:
+                    raise RuntimeError(f"incomplete Director rank {rank} preparation sequence")
+                current = {name: event}
+                continue
+            if not current:
+                continue
+            expected = required_order[len(current)]
+            if name != expected:
+                raise RuntimeError(
+                    f"out-of-order Director rank {rank} diagnostic: expected {expected}, got {name}"
+                )
+            current[name] = event
+            if name == required_order[-1]:
+                sequences.append(current)
+                current = {}
+        if current:
+            raise RuntimeError(f"incomplete Director rank {rank} preparation sequence")
+        sequences_by_rank[rank] = sequences
+
+    counts = {rank: len(values) for rank, values in sequences_by_rank.items()}
+    if not counts[0] or counts[0] != counts[1]:
+        found = [rank for rank, count in counts.items() if count]
+        raise RuntimeError(
+            f"Director operations require ranks 0 and 1 with equal counts; found ranks {found}, counts={counts}"
+        )
+
+    timed_profiles = []
+    for profile in profiles:
+        profile_time_ns = int(profile.get("time_ns", -1))
+        if (
+            profile.get("status") == "success"
+            and int(profile.get("rank", -1)) in (0, 1)
+            and start_ns <= profile_time_ns <= end_ns
+        ):
+            timed_profiles.append(profile)
+    timed_profiles.sort(key=lambda profile: int(profile["time_ns"]))
+    profile_groups: list[dict[int, dict]] = []
+    profile_group_last_ns: list[int] = []
+    pair_window_ns = 2_000_000_000
+    for profile in timed_profiles:
+        rank = int(profile["rank"])
+        profile_time_ns = int(profile["time_ns"])
+        if (
+            not profile_groups
+            or rank in profile_groups[-1]
+            or profile_time_ns - profile_group_last_ns[-1] > pair_window_ns
+        ):
+            profile_groups.append({rank: profile})
+            profile_group_last_ns.append(profile_time_ns)
+        else:
+            profile_groups[-1][rank] = profile
+            profile_group_last_ns[-1] = profile_time_ns
+    if len(profile_groups) != counts[0]:
+        raise RuntimeError(
+            f"Director P2P profiles do not match preparation sequences: profiles={len(profile_groups)} preparations={counts[0]}"
+        )
 
     rows = []
     worker_pids = set()
-    for invocation, ranks in sorted(complete.items()):
-        if set(ranks) != {0, 1}:
-            raise RuntimeError(
-                f"Director invocation {invocation} requires ranks 0 and 1, found {sorted(ranks)}"
-            )
-
-        def seconds(rank: int, end: str, begin: str) -> float:
-            values = ranks[rank][1]
-            return (values[end]["perf_ns"] - values[begin]["perf_ns"]) / 1e9
-
+    for operation_index, profile_group in enumerate(profile_groups):
         per_rank = {}
         for rank in (0, 1):
-            key, _ = ranks[rank]
-            worker_pids.add(key[2])
+            values = sequences_by_rank[rank][operation_index]
+            pid = int(values["prepare_sampling_begin"]["pid"])
+            worker_pids.add(pid)
             per_rank[str(rank)] = {
-                "pid": key[2],
-                "model_to_gpu_seconds": seconds(rank, "load_models_gpu_end", "load_models_gpu_begin"),
-                "sampling_seconds": seconds(rank, "sample_returned", "sample_begin"),
-                "sampler_total_seconds": seconds(rank, "sampler_return", "sampler_entry"),
+                "pid": pid,
+                "model_to_gpu_seconds": (
+                    int(values["load_models_gpu_end"]["perf_ns"])
+                    - int(values["load_models_gpu_begin"]["perf_ns"])
+                )
+                / 1e9,
+                "prepare_sampling_seconds": (
+                    int(values["prepare_sampling_end"]["perf_ns"])
+                    - int(values["prepare_sampling_begin"]["perf_ns"])
+                )
+                / 1e9,
             }
+        sampling_seconds = max(int(profile["elapsed_ns"]) for profile in profile_group.values()) / 1e9
+        calls = {
+            int(profile.get("profile", {})
+                .get("collectives", {})
+                .get("all_to_all", {})
+                .get("calls", 0))
+            for profile in profile_group.values()
+        }
+        if len(calls) != 1:
+            raise RuntimeError(f"Director operation {operation_index} rank profiles disagree: {calls}")
         rows.append(
             {
-                "invocation": invocation,
-                "sampling_seconds": max(value["sampling_seconds"] for value in per_rank.values()),
-                "sampler_total_seconds": max(value["sampler_total_seconds"] for value in per_rank.values()),
-                "model_to_gpu_seconds": max(value["model_to_gpu_seconds"] for value in per_rank.values()),
+                "operation_index": operation_index,
+                "reported_invocations": sorted(
+                    {int(profile.get("invocation", -1)) for profile in profile_group.values()}
+                ),
+                "sampling_seconds": sampling_seconds,
+                "model_to_gpu_seconds": max(
+                    value["model_to_gpu_seconds"] for value in per_rank.values()
+                ),
+                "prepare_sampling_seconds": max(
+                    value["prepare_sampling_seconds"] for value in per_rank.values()
+                ),
+                "all_to_all_calls": calls.pop(),
+                "profiled_ranks": sorted(profile_group),
                 "per_rank": per_rank,
             }
         )
@@ -141,7 +212,7 @@ def summarize_director_phases(
             rank: rows[0]["per_rank"][rank]["pid"] for rank in ("0", "1")
         },
         "sampling_seconds": sum(row["sampling_seconds"] for row in rows),
-        "sampler_total_seconds": sum(row["sampler_total_seconds"] for row in rows),
+        "prepare_sampling_seconds": sum(row["prepare_sampling_seconds"] for row in rows),
         "model_to_gpu_seconds": sum(row["model_to_gpu_seconds"] for row in rows),
         "invocations": rows,
     }
@@ -155,6 +226,7 @@ def wait_for_director_phases(read_segment, *, execution_start_ms: int, execution
         try:
             summary = summarize_director_phases(
                 base.extract_rank_diag(text),
+                extract_p2p_profiles(text),
                 execution_start_ms=execution_start_ms,
                 execution_end_ms=execution_end_ms,
             )
