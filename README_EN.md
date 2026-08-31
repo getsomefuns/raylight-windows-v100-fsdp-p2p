@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.12.0 (O10) adds an explicit MiniMax H3 Qwen3-VL-32B NVFP4 Text Encoder TP2 capacity path. GPU 0 performs vision preprocessing; the seven Linear operations in each of the 50 language layers are tensor-sharded and execute concurrently on both V100s, with CUDA P2P/NVLink SUM for partial results. Formal peaks are 9.25/9.23 GiB and GPU 0 falls 31.9% from the single-GPU peak. I2V, REF2VA, Director three/five-second, and five-segment outputs pass numerical and media quality gates. Text Encoder cold/warm medians are nevertheless 27.17/26.91 seconds versus 20.76/10.37 seconds for one V100, so this remains an explicit, default-off experimental capacity mode rather than a recommended performance mode. See the [O10 English release note](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md) and [test record](docs/testing/minimax-h3/DUAL_GPU_TEXT_ENCODER_TP2_2026-08.zh-CN.md).
+
 Version 1.11.0 (O9) turns the Windows CUDA P2P buffer from a logical-payload limit into a fixed VRAM budget. The default is now 128 MiB per rank; larger Ulysses/FSDP collectives are automatically split into CUDA P2P chunks without CPU/Gloo payload fallback. The historical 239,826,944-byte remote payload, MiniMax H3 I2V/REF2VA, five-segment Director + Refine, and LTX five-second cold/warm runs all pass. See the [O9 English release note](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md) and [acceptance record](docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md).
 
 Version 1.10.2 hardens the single-source layout. The only editable Git worktree is now strictly separated from the plain ComfyUI deployment copy, which records a verifiable source commit. Tests, FSDP probes, and benchmark identity checks support the canonical worktree, a plain `custom_nodes` deployment, and a clean Git clone. Ray's local working directory no longer lives inside the node source tree. See the [1.10.2 English release note](docs/releases/2026-08-28-single-source-hardening.en.md).
@@ -27,7 +29,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.11.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.12.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -39,6 +41,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - MiniMaxH3Director continuity fix 1.10.1: [English](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md) / [中文](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md)
 - Single-source deployment and test-layout hardening 1.10.2: [English](docs/releases/2026-08-28-single-source-hardening.en.md) / [中文](docs/releases/2026-08-28-single-source-hardening.zh-CN.md)
 - O9 adaptive CUDA P2P chunking 1.11.0: [English](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md) / [中文](docs/releases/2026-08-o9-adaptive-p2p-chunking.zh-CN.md)
+- O10 dual-V100 Text Encoder TP2 1.12.0: [English](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md) / [中文](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -71,6 +74,30 @@ It does not:
 - shard every model or every ComfyUI node;
 - support GGUF with FSDP, training/backward collectives, multi-node execution, or arbitrary GPU counts.
 
+## MiniMax H3 dual-V100 Text Encoder TP2 (experimental)
+
+### Node wiring and modes
+
+This path supports only `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` and requires the explicit `Load MiniMax H3 Text Encoder (Dual V100 TP2)` node. Connect `RayInitializer.ray_actors_init` to it, route its `clip` output into the existing MiniMax H3 conditioning/Director path, and continue its second `ray_actors_init` output into the Ray Diffusion chain. Existing `CLIPLoader` nodes, workflow JSON, and ordinary ComfyUI CLIP execution remain unchanged.
+
+| `execution_mode` | Behavior | Status |
+|---|---|---|
+| `tp2` | vision tower on GPU 0; every Linear in the 50-layer language backbone is split across both V100s and merged with CUDA P2P SUM | explicit, default-off experimental capacity mode |
+| `single_gpu_fallback` | invokes ComfyUI's native MiniMax CLIP loader | recommended compatibility path; no silent fallback |
+
+Before TP2 encoding, the main process unloads current ComfyUI GPU models and acquires a synchronized Text Encoder GPU lease from both Ray workers. The workers release resident Diffusion weights while retaining rebuildable checkpoint/mmap state, and reject sampling-model load during the lease. Success, exceptions, and interruption all return both leases in `finally`. This prevents vision/language and Diffusion weights from competing at the same instant; it does not create a transparent 32 GB pool.
+
+### Capability, measurements, and limits
+
+- The vision tower runs on GPU 0. Both GPUs overlap work in all 50 language layers and all seven Linear operations per layer.
+- This is not Text Encoder FSDP or contiguous-layer pipeline parallelism. Each Linear is row/column tensor-sharded and both GPUs compute the same layer.
+- A warm encode performs 100 P2P SUM operations with 4,453.12 MiB aggregate bidirectional payload in 70.70 ms, about 1.96% of language compute.
+- Formal three-run medians: TP2 cold/warm 27.17/26.91 seconds; single V100 20.76/10.37 seconds. The speed gate fails.
+- TP2 peak VRAM is 9.25/9.23 GiB, below 14 GiB per card; GPU 0 is 31.9% below the 13.58 GiB single-card peak.
+- Ordinary I2V/REF2VA, Director three/five-second, and 3-second x5-segment runs finish with decodable unique frames, no black interval, no NaN/Inf, and both GPUs returning to about 10 MiB after worker exit.
+- Other Qwen3-VL checkpoints, Text Encoder LoRA, batch>1, more GPUs, multi-node, training, and silent single-GPU fallback are unsupported.
+- The current bottleneck is about 16.4 seconds of NVFP4 shard loading per encode, not NVLink/P2P. Use ordinary `CLIPLoader` or `single_gpu_fallback` when speed is the priority.
+
 ## MiniMaxH3Director adapter
 
 ### Two workflow paths
@@ -89,7 +116,7 @@ Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is expl
 - Validated: t2v, i2v, fl2v, r2v, v2v, rv2v, same-checkpoint Refine, and multi-segment R2V.
 - One Director pass maps to one remote operation. Segments invoke separate passes but reuse the same workers, Gloo group, and FSDP shards.
 - Director owns all generation arguments. Raylight owns GPU count, parallel degrees, FSDP, CPU offload, attention, and worker lifecycle.
-- Only the Diffusion Model is FSDP-sharded. CLIP/Text Encoder, Video VAE, Audio VAE, preprocessing, mux, and save remain in the ComfyUI main process.
+- Only the Diffusion Model is FSDP-sharded. The explicit O10 node can use separate TP2 for the supported Text Encoder language backbone; its vision tower, Video VAE, Audio VAE, mux, and save remain in the ComfyUI main process.
 - Main-process preprocessing models are released from GPU before remote sampling to avoid rank-0 overlap. Reloadable weights can remain in RAM/commit, so multi-segment and long jobs must be sized against host memory and pagefile too.
 - Same-model Refine is validated. A custom refine path requiring another checkpoint, different weights, or bypassing standard `comfy.sample.sample()` is outside the guarantee.
 - Remote workers expose no separate per-frame preview stream. Director resumes its normal preview/decode path after receiving latent.
@@ -108,7 +135,7 @@ The whole workflow is not dual-GPU at every moment:
 
 | Workflow stage | GPU0 | GPU1 | Reason |
 |---|---:|---:|---|
-| Text encoding and image preprocessing | primary | mostly idle | ordinary ComfyUI nodes |
+| Text encoding and image preprocessing | ordinary path primary; TP2 vision + language shard | TP2 language backbone participates | separate experimental TP2, not FSDP |
 | Diffusion sampler 1 | high load | high load | two-rank FSDP sampling |
 | Latent upscale | primary | mostly idle | ordinary upscaler node |
 | Diffusion sampler 2 | high load | high load | two-rank FSDP sampling |
@@ -135,7 +162,7 @@ The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each 
 | LTX 2.3 Diffusion Model | Yes | loaded through `RayUNETLoader` |
 | MiniMax H3 Diffusion Model | Yes | validated FP8-scaled I2V/REF2VA checkpoints |
 | Video/audio transformers inside LTXAV | Yes | part of the Diffusion Model |
-| Text Encoder | No | ordinary ComfyUI path |
+| Text Encoder | No FSDP; experimental TP2 | ordinary CLIP remains unsharded; O10 supports only MiniMax H3 Qwen3-VL-32B NVFP4 and keeps vision on GPU 0 |
 | Video VAE | No | ordinary `VAELoader` / tiled decode path |
 | Audio VAE | No | ordinary audio VAE decode path |
 | Spatial latent upscaler | No | ordinary loader/node |
@@ -599,7 +626,7 @@ These results prove sharding, dual-GPU computation, and correct output. LTX perf
 | O7 | preliminary model-specific safe-FP16 research for LTX/LTXAV after O6 performance closure |
 | O8 Director MODEL proxy | t2v/i2v/fl2v/r2v/v2v/rv2v, Refine, multi-segment, media, reuse, reclamation, and legacy performance gates pass |
 | O9 adaptive P2P chunking | 128 MiB default; historical large payload, I2V, REF2VA, Director multi-segment/Refine, and LTX cold/warm pass |
-| O10 Text Encoder TP2 | O9 Gates A-F pass and the work is unblocked; separate staged development, not a shipped 1.11.0 capability |
+| O10 Text Encoder TP2 | shipped in 1.12.0 after Gates A-F: capacity, numerical, video, and dual-compute gates pass; performance fails, so it remains default-off experimental capacity mode |
 
 The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to end and 160.72 s/it; REF2VA Turbo4 takes 932.03 s and 185.20 s/it. The initial 4x limits are 40.1799 and 46.3008 s/it, and current results remain above them. The 11x value is a later research target, not a current capability. Older O5 geometry is not an O6 denominator.
 
@@ -626,7 +653,7 @@ A playable file, non-black pixels, and absence of NaN/Inf are only basic gates. 
 - One native-Windows machine, exactly two ranks, inference only.
 - TCC is the release mode; WDDM is unsupported for the CUDA IPC/P2P fast path.
 - Only the Diffusion Model loaded through `RayUNETLoader` is FSDP-sharded.
-- Text Encoder, Video/Audio VAE, and upscalers are not automatically sharded or dual-GPU.
+- Text Encoder, Video/Audio VAE, and upscalers are not FSDP-sharded; only the supported MiniMax H3 Text Encoder can explicitly select separate TP2.
 - GGUF does not use this FSDP implementation.
 - Do not force the LTX 2.3 model globally to FP16: the validated experiment produced black video and audio NaN/Inf. Keep the default BF16/FP32 inference policy and the branch's V100 fallbacks.
 - Ray on Windows is Beta and has more startup/host-memory overhead than Linux + NCCL.

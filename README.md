@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.12.0（O10）新增显式可选的 MiniMax H3 Qwen3-VL-32B NVFP4 Text Encoder TP2 容量路径。GPU0 完成视觉塔预处理后，50 层语言主干的 7 个 Linear 在两张 V100 上按张量维度分片并同时计算，层内 partial 通过 CUDA P2P/NVLink SUM 合并。正式验证中每卡峰值为 9.25/9.23 GiB，相比单卡 GPU0 峰值下降 31.9%；普通 I2V、REF2VA、Director 3 秒/5 秒和五段视频均通过数值与媒体质量验收。但 Text Encoder 冷/热中位数 27.17/26.91 秒，慢于单卡 20.76/10.37 秒，因此该能力只定级为默认关闭的实验性容量模式，不是推荐性能模式。详见 [O10 中文发布说明](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/DUAL_GPU_TEXT_ENCODER_TP2_2026-08.zh-CN.md)。
+
 1.11.0（O9）把 Windows CUDA P2P 的 `all_to_all_single` 容量从“单次逻辑 payload 上限”改成固定显存预算：默认每 rank 只保留 `128 MiB` staging buffer，更大的 Ulysses/FSDP collective 会自动拆成多个 CUDA P2P 子块，不经过 CPU/Gloo，也不再要求用户按视频规格手工切换 256/512 MiB。历史 239,826,944 字节远端 payload、MiniMax H3 I2V/REF2VA、五段 Director + Refine 和 LTX 5 秒冷/热均已通过。详见 [O9 中文发布说明](docs/releases/2026-08-o9-adaptive-p2p-chunking.zh-CN.md)和[验收记录](docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md)。
 
 1.10.2 完成单一源码治理加固：唯一可编辑 Git 工作树与 ComfyUI 纯部署副本严格分离，部署副本写入可核验的来源提交号；测试、FSDP 探针和基准工具同时支持正式工作树、`custom_nodes` 纯副本及干净 Git 克隆布局。Ray 的本地工作目录已移出节点源码树。详见 [1.10.2 中文发布说明](docs/releases/2026-08-28-single-source-hardening.zh-CN.md)。
@@ -37,7 +39,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.11.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.12.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -49,6 +51,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - MiniMaxH3Director 连续分段修复 1.10.1：[中文](docs/releases/2026-08-28-mmh3director-continuity-fix.zh-CN.md) / [English](docs/releases/2026-08-28-mmh3director-continuity-fix.en.md)
 - 单一源码、部署与测试布局加固 1.10.2：[中文](docs/releases/2026-08-28-single-source-hardening.zh-CN.md) / [English](docs/releases/2026-08-28-single-source-hardening.en.md)
 - O9 自适应 CUDA P2P 分块 1.11.0：[中文](docs/releases/2026-08-o9-adaptive-p2p-chunking.zh-CN.md) / [English](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md)
+- O10 双 V100 Text Encoder TP2 1.12.0：[中文](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md) / [English](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -88,6 +91,30 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
   加载的 Diffusion Model。
 - 当前不支持 GGUF + FSDP、多于两个 rank、多机和训练反向传播。
 
+## MiniMax H3 双 V100 Text Encoder TP2（实验性）
+
+### 节点连接与模式
+
+该能力只支持 `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors`，必须显式使用 `Load MiniMax H3 Text Encoder (Dual V100 TP2)` 节点。把 `RayInitializer.ray_actors_init` 接到该节点，再把它输出的 `clip` 接到原 MiniMax H3 conditioning/Director 路径；第二个 `ray_actors_init` 输出继续传给 Ray Diffusion 节点。旧 `CLIPLoader`、旧 JSON 和普通 ComfyUI CLIP 路径不变。
+
+| `execution_mode` | 行为 | 当前定位 |
+|---|---|---|
+| `tp2` | GPU0 运行视觉塔；50 层语言主干的 Linear 权重和计算拆到两张 V100，层内结果用 CUDA P2P SUM 合并 | 实验性容量模式，默认不启用 |
+| `single_gpu_fallback` | 调用 ComfyUI 原生 MiniMax CLIP loader | 推荐兼容路径；不会静默切换 |
+
+TP2 编码开始前，主进程主动卸载当前 ComfyUI GPU 模型，并向两个 Ray worker 同时申请 Text Encoder GPU 租约。租约期间 worker 的 Diffusion Model 退出显存但保留可重建的 checkpoint/mmap 状态，禁止新的采样模型换入；编码成功、异常或中断都会在 `finally` 中归还两张卡。这个机制避免视觉塔、语言分片和 Diffusion 权重在同一时刻争抢显存，但不把两张 16GB 显卡变成透明 32GB 池。
+
+### 能力、数据和限制
+
+- 视觉塔仅在 GPU0 执行；语言主干 50/50 层、每层 7 个 Linear 都有两卡计算重叠。
+- TP2 不是 Text Encoder FSDP，也不是连续层 Pipeline；每个 Linear 按 row/column 维度分片，两卡都参与同一层。
+- 热路径每次编码有 100 次 P2P SUM，累计双向 payload 4,453.12 MiB、累计 70.70 ms，约占语言计算 1.96%。
+- 正式 3 次中位数：TP2 冷/热 27.17/26.91 秒；单卡冷/热 20.76/10.37 秒。TP2 速度门槛失败。
+- TP2 峰值显存 9.25/9.23 GiB，每卡低于 14 GiB；GPU0 相对单卡 13.58 GiB 峰值下降 31.9%。
+- 普通 I2V、普通 REF2VA、Director 3 秒、Director 5 秒与 3 秒×5 段均完成；输出逐帧可解码、无黑段、无 NaN/Inf，worker 最终退出后两卡回到约 10 MiB。
+- 不支持其他 Qwen3-VL checkpoint、Text Encoder LoRA、batch>1、多于两卡、多机、训练或静默单卡回退。
+- 当前最大瓶颈是每次约 16.4 秒的 NVFP4 分片加载，不是 NVLink/P2P。需要速度时继续使用普通 `CLIPLoader` 或 `single_gpu_fallback`。
+
 ## MiniMaxH3Director 适配器
 
 ### 两条工作流路径
@@ -106,7 +133,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 已验证 t2v、i2v、fl2v、r2v、v2v、rv2v、同 checkpoint Refine 和多段 R2V。
 - 每个 Director pass 对应一个远程 operation；多段按段调用但复用相同 Worker、Gloo 组和 FSDP shard。
 - Director 仍负责并保留所有生成参数；Raylight 只负责 GPU 数量、并行度、FSDP、CPU offload、attention 和 Worker 生命周期。
-- 只有 Diffusion Model 被 FSDP 分片。CLIP/Text Encoder、Video VAE、Audio VAE、预处理、拼接和保存仍在 ComfyUI 主进程。
+- 只有 Diffusion Model 被 FSDP 分片。显式 O10 节点可让受支持 Text Encoder 的语言主干使用独立 TP2；其视觉塔、Video VAE、Audio VAE、拼接和保存仍在 ComfyUI 主进程。
 - 主进程预处理模型会在远程采样前卸载出 GPU，避免与 rank 0 抢显存；可重载权重仍可能占用物理内存/commit，多段与长视频必须同时监控 RAM 和 pagefile。
 - 已验证同模型 Refine；需要另一 checkpoint、不同权重或不经过标准 `comfy.sample.sample()` 的自定义 refine 不作保证。
 - 远程 Worker 不提供独立逐帧预览；Director 在拿到返回 latent 后继续其原有预览/解码流程。
@@ -138,7 +165,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 
 | 工作流阶段 | GPU0 | GPU1 | 当前原因 |
 |---|---:|---:|---|
-| 文本编码、图片预处理 | 主要工作 | 多数空闲 | 普通 ComfyUI 节点，没有 FSDP |
+| 文本编码、图片预处理 | 普通路径主要工作；TP2 路径视觉塔+语言分片 | TP2 语言主干参与 | Text Encoder TP2 是独立实验路径，不是 FSDP |
 | Diffusion Sampler 1 | 高负载 | 高负载 | FSDP 双 rank 采样 |
 | Latent Upscale | 主要工作 | 多数空闲 | 普通 Upscaler 节点 |
 | Diffusion Sampler 2 | 高负载 | 高负载 | FSDP 双 rank 采样 |
@@ -170,7 +197,7 @@ LTX 2.3 实测注册了 2,999 个 FSDP wrapper、2,620 个 DTensor；每个 rank
 | LTX 2.3 Diffusion Model | 是 | 通过 `RayUNETLoader` 进入 FSDP |
 | MiniMax H3 Diffusion Model | 是 | FP8-scaled I2V/REF2VA checkpoint 已通过双 rank FSDP/P2P 验收 |
 | Diffusion Model 内的视频/音频 Transformer | 是 | 属于 LTXAV Diffusion Model 本体 |
-| Text Encoder | 否 | `DualCLIPLoader + CLIPTextEncode` 是普通 ComfyUI 路径 |
+| Text Encoder | 否（FSDP）；实验性 TP2 | 普通 CLIP 默认不分片；O10 节点仅支持 MiniMax H3 Qwen3-VL-32B NVFP4，视觉塔仍在 GPU0 |
 | Video VAE | 否 | 当前使用普通 `VAELoader + VAEDecodeTiled` |
 | Audio VAE | 否 | 当前使用普通 `VAELoader + LTXVAudioVAEDecode` |
 | Spatial Latent Upscaler | 否 | 当前使用普通 `LatentUpscaleModelLoader` |
@@ -275,7 +302,7 @@ CPU offload 数据可能进入页面文件。页面文件可以推迟 OOM，但�
 | Ray worker | 两个 worker / 两个 rank |
 | 已验收 FSDP 配置 | LTX：CPU Offload=false、Ulysses/Ring/CFG=0/0/0；MiniMax H3 完整工作流：CPU Offload=true、Ulysses/Ring/CFG=2/1/1；均为 FSDP=true、DP=1 |
 | Collective | 双 rank CUDA `all_gather_into_tensor` 与 `all_to_all_single` |
-| FSDP 范围 | 已验证的 LTX 2.3 与 MiniMax H3 Diffusion Model；Text Encoder、VAE、Upscaler 不分片 |
+| FSDP 范围 | 已验证的 LTX 2.3 与 MiniMax H3 Diffusion Model；Text Encoder 不做 FSDP，但 O10 提供独立、默认关闭的 MiniMax H3 TP2；VAE、Upscaler 不分片 |
 
 物理上是否通过同一个 PCIe 插槽、载板或桥接芯片连接，不是代码判断条件。
 真正的准入标准是 CUDA P2P 能否工作，以及完整探针的正确性与带宽是否达标。
@@ -846,7 +873,7 @@ FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性�
 | O7 | LTX/LTXAV 模型专用安全 FP16 预研，等待 O6 性能收尾后校正 |
 | O8 Director MODEL 代理 | t2v/i2v/fl2v/r2v/v2v/rv2v、Refine、多段、媒体、复用与回收均通过；旧路径性能门槛通过 |
 | O9 自适应 P2P 分块 | 默认 128 MiB；历史大 payload、I2V、REF2VA、Director 多段/Refine 与 LTX 冷/热均通过 |
-| O10 Text Encoder TP2 | O9 Gate A–F 已通过并解除阻塞；下一步按独立计划开发，不属于 1.11.0 已实现能力 |
+| O10 Text Encoder TP2 | 1.12.0 已完成 Gate A–F：容量、数值、视频与双卡计算通过；性能失败，定级为默认关闭的实验性容量模式 |
 
 O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒、采样 160.72 s/it；REF2VA Turbo4 端到端 932.03 秒、采样 185.20 s/it。初始 4× 门槛分别为不高于 40.1799 和 46.3008 s/it；当前结果尚未达到。11× 仅保留为后续研究目标，不是当前版本能力。O5 的旧规格记录不作为 O6 分母。
 
@@ -867,7 +894,7 @@ O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒
 - 只有通过 `RayUNETLoader` 加载的 Diffusion Model 获得 FSDP 权重分片。
 - GGUF 不能通过当前实现获得 FSDP 权重分片。
 - LTX/LTXAV 应保持 ComfyUI 默认 BF16/FP32 推理范围；实测强制全局 FP16 会产生全黑视频和音频 NaN/Inf。
-- Text Encoder、Video/Audio VAE 和 Spatial/Temporal Upscaler 当前不做 FSDP 权重分片。
+- Text Encoder、Video/Audio VAE 和 Spatial/Temporal Upscaler 当前不做 FSDP 权重分片；仅受支持的 MiniMax H3 Text Encoder 可显式选择独立 TP2。
 - VAE 编解码与文本编码当前不会自动使用两张 GPU。
 - Director 适配器只保证 MiniMaxH3Director 1.0.0（提交 `d655912`）的标准采样接缝；不兼容版本会明确失败。
 - Director 多段复用减少模型重载，但不能消除主进程 CLIP/VAE、中间 latent、RAM 与 commit/pagefile 压力。
@@ -950,7 +977,7 @@ raylight/
 - 降低 FSDP 逐层 all-gather、LoRA sidecar、Python 控制面和同步开销。
 - 评估多 buffer/ring slot、批量控制、预取和通信/计算重叠。
 - 评估 FSDP + Ulysses 组合，但在正式验收前不声明支持。
-- 分别评估 Text Encoder、VAE 和 Upscaler 的多 GPU 路径，而不是把它们误称为已分片。
+- 继续优化 O10 Text Encoder TP2 的加载热路径；VAE 和 Upscaler 仍需分别评估，不能把独立 TP2 或未来能力误称为 FSDP 已覆盖。
 - 在获得真实硬件和视觉验证后扩展模型与 GPU 支持矩阵。
 
 ## 安全与可再分发内容
