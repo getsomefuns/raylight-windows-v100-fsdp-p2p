@@ -71,6 +71,7 @@ def test_probe_cli_exposes_capacity_and_payload_bytes():
 
     assert 'parser.add_argument("--capacity-bytes", type=int)' in source
     assert 'parser.add_argument("--size-bytes", type=int, nargs="+")' in source
+    assert 'parser.add_argument("--profile", action="store_true")' in source
 
 
 def test_probe_reports_endpoint_and_payload_cuda_memory():
@@ -80,3 +81,12 @@ def test_probe_reports_endpoint_and_payload_cuda_memory():
     assert "payload_allocated_bytes = torch.cuda.memory_allocated()" in source
     assert 'f"endpoint_allocated_bytes={endpoint_allocated_bytes} "' in source
     assert 'f"payload_allocated_bytes={payload_allocated_bytes} "' in source
+
+
+def test_probe_can_report_logical_calls_chunks_and_operation_ids():
+    source = PROBE_PATH.read_text(encoding="utf-8")
+
+    assert 'os.environ["RAYLIGHT_P2P_PROFILE"] = "1"' in source
+    assert "profile = endpoint.profile_snapshot(reset=False)" in source
+    assert 'f"next_operation_id={next_operation_id} "' in source
+    assert 'f"profile_calls={profile_calls} profile_chunks={profile_chunks}"' in source

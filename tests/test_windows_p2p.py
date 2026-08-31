@@ -47,6 +47,79 @@ class WindowsP2PTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "divisible by 2"):
             module.copy_plan(rank=0, total_bytes=15)
 
+    def test_all_to_all_chunk_plan_uses_absolute_offsets_for_both_ranks(self):
+        module = load_module()
+
+        self.assertEqual(
+            module.all_to_all_chunk_send_slice(
+                rank=0,
+                total_bytes=40,
+                chunk_start=8,
+                chunk_end=16,
+            ),
+            (28, 36),
+        )
+        self.assertEqual(
+            module.all_to_all_chunk_copy_plan(
+                rank=0,
+                total_bytes=40,
+                chunk_start=8,
+                chunk_end=16,
+            ),
+            ((8, 16, "input", 8, 16), (28, 36, "peer", 0, 8)),
+        )
+        self.assertEqual(
+            module.all_to_all_chunk_send_slice(
+                rank=1,
+                total_bytes=40,
+                chunk_start=8,
+                chunk_end=16,
+            ),
+            (8, 16),
+        )
+        self.assertEqual(
+            module.all_to_all_chunk_copy_plan(
+                rank=1,
+                total_bytes=40,
+                chunk_start=8,
+                chunk_end=16,
+            ),
+            ((8, 16, "peer", 0, 8), (28, 36, "input", 28, 36)),
+        )
+
+    def test_all_to_all_chunk_plan_handles_first_and_tail_chunks(self):
+        module = load_module()
+
+        self.assertEqual(
+            module.all_to_all_chunk_send_slice(0, 40, 0, 8),
+            (20, 28),
+        )
+        self.assertEqual(
+            module.all_to_all_chunk_send_slice(0, 40, 16, 20),
+            (36, 40),
+        )
+        self.assertEqual(
+            module.all_to_all_chunk_copy_plan(1, 40, 16, 20),
+            ((16, 20, "peer", 0, 4), (36, 40, "input", 36, 40)),
+        )
+
+    def test_all_to_all_chunk_plan_rejects_invalid_geometry(self):
+        module = load_module()
+
+        invalid_cases = (
+            (2, 40, 0, 8, "rank must be 0 or 1"),
+            (0, 39, 0, 8, "divisible by 2"),
+            (0, 40, -1, 8, "chunk range"),
+            (0, 40, 8, 8, "chunk range"),
+            (0, 40, 16, 21, "chunk range"),
+        )
+        for rank, total, start, end, message in invalid_cases:
+            with self.subTest(rank=rank, total=total, start=start, end=end):
+                with self.assertRaisesRegex(ValueError, message):
+                    module.all_to_all_chunk_send_slice(rank, total, start, end)
+                with self.assertRaisesRegex(ValueError, message):
+                    module.all_to_all_chunk_copy_plan(rank, total, start, end)
+
     def test_chunk_ranges_covers_payload_with_literal_half_open_ranges(self):
         module = load_module()
 
@@ -127,6 +200,28 @@ class WindowsP2PTests(unittest.TestCase):
         )
 
         self.assertEqual(module.validate_collective(output, source, capacity_bytes=16), 32)
+
+    def test_validate_collective_accepts_remote_payload_larger_than_buffer(self):
+        module = load_module()
+        source = mock.Mock(
+            is_cuda=True,
+            is_contiguous=lambda: True,
+            dtype=torch.float32,
+            numel=lambda: 16,
+            element_size=lambda: 4,
+        )
+        output = mock.Mock(
+            is_cuda=True,
+            is_contiguous=lambda: True,
+            dtype=torch.float32,
+            numel=lambda: 16,
+            element_size=lambda: 4,
+        )
+
+        self.assertEqual(
+            module.validate_collective(output, source, capacity_bytes=16),
+            64,
+        )
 
     def test_validate_all_gather_accepts_one_shard_and_two_shard_output(self):
         module = load_module()
@@ -225,7 +320,7 @@ class WindowsP2PTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "same dtype"):
             module.validate_all_gather(output, source, capacity_bytes=16)
 
-    def test_validate_collective_rejects_shape_dtype_capacity_and_split(self):
+    def test_validate_collective_rejects_shape_dtype_and_split(self):
         module = load_module()
         source = mock.Mock(
             is_cuda=False,
@@ -254,8 +349,6 @@ class WindowsP2PTests(unittest.TestCase):
             output.numel = lambda: 4
             module.validate_collective(output, source, capacity_bytes=32)
         output.numel = lambda: 8
-        with self.assertRaisesRegex(ValueError, "capacity"):
-            module.validate_collective(output, source, capacity_bytes=15)
         with self.assertRaisesRegex(ValueError, "divisible by 2"):
             odd = mock.Mock(
                 is_cuda=True,
@@ -273,6 +366,49 @@ class WindowsP2PTests(unittest.TestCase):
 
         with self.assertRaisesRegex(module.P2PGroupError, "peer timeout"):
             endpoint._ensure_healthy()
+
+    def test_geometry_handshake_compares_full_logical_size_before_chunks(self):
+        module = load_module()
+        endpoint = module.CudaP2PAllToAll.__new__(module.CudaP2PAllToAll)
+        endpoint.rank = 0
+        endpoint._operation_id = 7
+        endpoint.timeout_seconds = 10
+        endpoint.control = mock.Mock()
+        endpoint.control.wait_ready.return_value = 80
+        endpoint._profiler = mock.Mock(enabled=False)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "all-to-all size mismatch.*local=64, peer=80",
+        ):
+            endpoint._exchange_collective_geometry(64, "all-to-all")
+
+        endpoint.control.publish_ready.assert_called_once_with(0, 7, 64)
+        endpoint.control.wait_ready.assert_called_once_with(
+            1,
+            7,
+            timeout_seconds=10,
+        )
+        self.assertEqual(endpoint._operation_id, 8)
+
+    def test_geometry_handshake_returns_control_wait_for_matching_size(self):
+        module = load_module()
+        endpoint = module.CudaP2PAllToAll.__new__(module.CudaP2PAllToAll)
+        endpoint.rank = 1
+        endpoint._operation_id = 3
+        endpoint.timeout_seconds = 5
+        endpoint.control = mock.Mock()
+        endpoint.control.wait_ready.return_value = 64
+        endpoint._profiler = mock.Mock(enabled=True)
+
+        operation_id, wait_ns = endpoint._exchange_collective_geometry(
+            64,
+            "all-to-all",
+        )
+
+        self.assertEqual(operation_id, 3)
+        self.assertGreaterEqual(wait_ns, 0)
+        self.assertEqual(endpoint._operation_id, 4)
 
     def test_router_uses_p2p_only_for_supported_sync_cuda_collective(self):
         module = load_module()

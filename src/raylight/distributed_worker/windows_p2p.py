@@ -203,6 +203,77 @@ def copy_plan(rank: int, total_bytes: int):
     return ((0, half, "peer", 0, half), (half, total_bytes, "input", half, total_bytes))
 
 
+def _validate_all_to_all_chunk_geometry(
+    rank: int,
+    total_bytes: int,
+    chunk_start: int,
+    chunk_end: int,
+) -> int:
+    if rank not in (0, 1):
+        raise ValueError(f"rank must be 0 or 1, got {rank}")
+    if total_bytes < 0 or total_bytes % 2:
+        raise ValueError(
+            f"total_bytes must be non-negative and divisible by 2, got {total_bytes}"
+        )
+    remote_bytes = total_bytes // 2
+    if not 0 <= chunk_start < chunk_end <= remote_bytes:
+        raise ValueError(
+            "chunk range must satisfy "
+            f"0 <= start < end <= {remote_bytes}, got [{chunk_start}, {chunk_end})"
+        )
+    return remote_bytes
+
+
+def all_to_all_chunk_send_slice(
+    rank: int,
+    total_bytes: int,
+    chunk_start: int,
+    chunk_end: int,
+) -> tuple[int, int]:
+    """Return the absolute input byte slice sent for one equal all-to-all chunk."""
+    remote_bytes = _validate_all_to_all_chunk_geometry(
+        rank,
+        total_bytes,
+        chunk_start,
+        chunk_end,
+    )
+    offset = remote_bytes if rank == 0 else 0
+    return offset + chunk_start, offset + chunk_end
+
+
+def all_to_all_chunk_copy_plan(
+    rank: int,
+    total_bytes: int,
+    chunk_start: int,
+    chunk_end: int,
+):
+    """Return output/source byte slices for one equal all-to-all chunk."""
+    remote_bytes = _validate_all_to_all_chunk_geometry(
+        rank,
+        total_bytes,
+        chunk_start,
+        chunk_end,
+    )
+    chunk_bytes = chunk_end - chunk_start
+    local_offset = 0 if rank == 0 else remote_bytes
+    peer_offset = remote_bytes if rank == 0 else 0
+    local = (
+        local_offset + chunk_start,
+        local_offset + chunk_end,
+        "input",
+        local_offset + chunk_start,
+        local_offset + chunk_end,
+    )
+    peer = (
+        peer_offset + chunk_start,
+        peer_offset + chunk_end,
+        "peer",
+        0,
+        chunk_bytes,
+    )
+    return (local, peer) if rank == 0 else (peer, local)
+
+
 def chunk_ranges(total_bytes: int, capacity_bytes: int) -> tuple[tuple[int, int], ...]:
     """Split a byte payload into ordered half-open ranges."""
     if total_bytes < 0:
@@ -265,11 +336,6 @@ def validate_collective(output, input_tensor, capacity_bytes: int) -> int:
     total_bytes = input_tensor.numel() * input_tensor.element_size()
     if total_bytes % 2:
         raise ValueError(f"payload bytes must be divisible by 2, got {total_bytes}")
-    remote_bytes = total_bytes // 2
-    if remote_bytes > capacity_bytes:
-        raise ValueError(
-            f"remote payload {remote_bytes} exceeds P2P buffer capacity {capacity_bytes}"
-        )
     return total_bytes
 
 
@@ -325,6 +391,7 @@ class CudaP2PAllToAll:
         self._peer_buffer = None
         self._peer_ready_event = None
         self._peer_consumed_event = None
+        self._buffer_has_previous_exchange = False
 
     def local_handles(self):
         # Keep the cross-process metadata pickle free of dynamically imported
@@ -367,82 +434,154 @@ class CudaP2PAllToAll:
         self._poisoned_reason = f"{type(exc).__name__}: {exc}"
         raise P2PGroupError(self._poisoned_reason) from exc
 
+    def _exchange_collective_geometry(self, total_bytes, collective_name):
+        operation_id = self._operation_id
+        self._operation_id += 1
+        self.control.publish_ready(self.rank, operation_id, total_bytes)
+        wait_started_ns = time.perf_counter_ns()
+        peer_total_bytes = self.control.wait_ready(
+            1 - self.rank,
+            operation_id,
+            timeout_seconds=self.timeout_seconds,
+        )
+        wait_ns = time.perf_counter_ns() - wait_started_ns
+        if peer_total_bytes != total_bytes:
+            raise ValueError(
+                f"{collective_name} size mismatch at operation {operation_id}: "
+                f"local={total_bytes}, peer={peer_total_bytes}"
+            )
+        return operation_id, wait_ns
+
+    def _all_to_all_chunk(
+        self,
+        input_bytes,
+        output_bytes,
+        total_bytes,
+        chunk_start,
+        chunk_end,
+    ):
+        operation_id = self._operation_id
+        self._operation_id += 1
+        chunk_bytes = chunk_end - chunk_start
+
+        with torch.cuda.stream(self._stream):
+            if self._buffer_has_previous_exchange:
+                self._stream.wait_event(self._peer_consumed_event)
+            send_start, send_end = all_to_all_chunk_send_slice(
+                self.rank,
+                total_bytes,
+                chunk_start,
+                chunk_end,
+            )
+            self._send_buffer[:chunk_bytes].copy_(
+                input_bytes[send_start:send_end],
+                non_blocking=True,
+            )
+            self._ready_event.record(self._stream)
+
+        self.control.publish_ready(self.rank, operation_id, chunk_bytes)
+        wait_started_ns = time.perf_counter_ns()
+        peer_chunk_bytes = self.control.wait_ready(
+            1 - self.rank,
+            operation_id,
+            timeout_seconds=self.timeout_seconds,
+        )
+        wait_ns = time.perf_counter_ns() - wait_started_ns
+        if peer_chunk_bytes != chunk_bytes:
+            raise ValueError(
+                f"all-to-all chunk size mismatch at operation {operation_id}: "
+                f"local={chunk_bytes}, peer={peer_chunk_bytes}"
+            )
+
+        with torch.cuda.stream(self._stream):
+            self._stream.wait_event(self._peer_ready_event)
+            for dst_start, dst_end, source_kind, src_start, src_end in (
+                all_to_all_chunk_copy_plan(
+                    self.rank,
+                    total_bytes,
+                    chunk_start,
+                    chunk_end,
+                )
+            ):
+                source = input_bytes if source_kind == "input" else self._peer_buffer
+                output_bytes[dst_start:dst_end].copy_(
+                    source[src_start:src_end],
+                    non_blocking=True,
+                )
+            self._consumed_event.record(self._stream)
+        self._buffer_has_previous_exchange = True
+        return operation_id, wait_ns
+
     def all_to_all_single(self, output, input_tensor):
         self._ensure_healthy()
         if self._peer_buffer is None:
             raise P2PGroupError("P2P endpoint is not connected")
         total_bytes = validate_collective(output, input_tensor, self.capacity_bytes)
-        operation_id = self._operation_id
-        self._operation_id += 1
+        operation_id = None
         call_perf = time.perf_counter()
         submit_started_ns = time.perf_counter_ns() if self._profiler.enabled else 0
         idle_seconds = None if self._last_call_perf is None else call_perf - self._last_call_perf
         self._last_call_perf = call_perf
         log_boundary = self._diag_enabled and (idle_seconds is None or idle_seconds >= 1.0)
         current_stream = torch.cuda.current_stream(0)
+        remote_bytes = total_bytes // 2
+        chunks = chunk_ranges(remote_bytes, self.capacity_bytes)
+        chunk_count = len(chunks)
+        control_wait_ns = 0
 
         try:
             if log_boundary:
                 self._diag(
                     "collective_after_idle",
-                    operation_id=operation_id,
+                    operation_id=self._operation_id,
                     idle_seconds=idle_seconds,
                     total_bytes=total_bytes,
+                    remote_bytes=remote_bytes,
+                    capacity_bytes=self.capacity_bytes,
+                    chunks=chunk_count,
                 )
             input_bytes = input_tensor.view(torch.uint8).reshape(-1)
             output_bytes = output.view(torch.uint8).reshape(-1)
 
             self._stream.wait_stream(current_stream)
-            with torch.cuda.stream(self._stream):
-                if operation_id > 1:
-                    # The peer records this only after it has finished reading
-                    # our reusable send buffer for the previous operation.
-                    self._stream.wait_event(self._peer_consumed_event)
-                send_start, send_end = send_slice(self.rank, total_bytes)
-                remote_bytes = send_end - send_start
-                self._send_buffer[:remote_bytes].copy_(
-                    input_bytes[send_start:send_end],
-                    non_blocking=True,
+            if chunk_count != 1:
+                operation_id, geometry_wait_ns = self._exchange_collective_geometry(
+                    total_bytes,
+                    "all-to-all",
                 )
-                self._ready_event.record(self._stream)
-            self.control.publish_ready(self.rank, operation_id, total_bytes)
-            wait_started = time.perf_counter()
-            if log_boundary:
-                self._diag("ready_published", operation_id=operation_id, total_bytes=total_bytes)
-            peer_total_bytes = self.control.wait_ready(
-                1 - self.rank,
-                operation_id,
-                timeout_seconds=self.timeout_seconds,
-            )
-            wait_seconds = time.perf_counter() - wait_started
+                control_wait_ns += geometry_wait_ns
+
+            for chunk_start, chunk_end in chunks:
+                operation_id, chunk_wait_ns = self._all_to_all_chunk(
+                    input_bytes,
+                    output_bytes,
+                    total_bytes,
+                    chunk_start,
+                    chunk_end,
+                )
+                control_wait_ns += chunk_wait_ns
+
+            wait_seconds = control_wait_ns / 1_000_000_000
             if log_boundary or wait_seconds >= 0.05:
                 self._diag(
                     "peer_ready_observed",
                     operation_id=operation_id,
                     wait_seconds=wait_seconds,
                     total_bytes=total_bytes,
-                )
-            if peer_total_bytes != total_bytes:
-                raise ValueError(
-                    f"collective size mismatch at operation {operation_id}: "
-                    f"local={total_bytes}, peer={peer_total_bytes}"
+                    remote_bytes=remote_bytes,
+                    capacity_bytes=self.capacity_bytes,
+                    chunks=chunk_count,
                 )
 
-            with torch.cuda.stream(self._stream):
-                self._stream.wait_event(self._peer_ready_event)
-                for dst_start, dst_end, source_kind, src_start, src_end in copy_plan(self.rank, total_bytes):
-                    source = input_bytes if source_kind == "input" else self._peer_buffer
-                    output_bytes[dst_start:dst_end].copy_(source[src_start:src_end], non_blocking=True)
-                self._consumed_event.record(self._stream)
-
-            current_stream.wait_event(self._consumed_event)
+            if chunks:
+                current_stream.wait_event(self._consumed_event)
             if self._profiler.enabled:
                 self._profiler.record(
                     "all_to_all",
                     payload_bytes=total_bytes,
-                    remote_bytes=total_bytes // 2,
-                    chunks=1,
-                    control_wait_ns=int(wait_seconds * 1_000_000_000),
+                    remote_bytes=remote_bytes,
+                    chunks=chunk_count,
+                    control_wait_ns=control_wait_ns,
                     submit_ns=time.perf_counter_ns() - submit_started_ns,
                 )
             return output
@@ -458,6 +597,9 @@ class CudaP2PAllToAll:
                 error=f"{type(exc).__name__}: {exc}",
                 peer_operation=peer_operation,
                 total_bytes=total_bytes,
+                remote_bytes=remote_bytes,
+                capacity_bytes=self.capacity_bytes,
+                chunks=chunk_count,
             )
             self._fail(exc)
 
@@ -474,7 +616,7 @@ class CudaP2PAllToAll:
         chunk_bytes = chunk_end - chunk_start
 
         with torch.cuda.stream(self._stream):
-            if operation_id > 1:
+            if self._buffer_has_previous_exchange:
                 self._stream.wait_event(self._peer_consumed_event)
             self._send_buffer[:chunk_bytes].copy_(
                 input_bytes[chunk_start:chunk_end],
@@ -509,6 +651,7 @@ class CudaP2PAllToAll:
                     source[src_start:src_end], non_blocking=True
                 )
             self._consumed_event.record(self._stream)
+        self._buffer_has_previous_exchange = True
         return operation_id
 
     def all_gather_into_tensor(self, output, input_tensor, async_op=False):

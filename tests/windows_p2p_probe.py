@@ -97,6 +97,11 @@ def _worker(
         elapsed = time.perf_counter() - start
         # Half of each all-to-all payload is remote traffic in each direction.
         remote_gib_s = (size_bytes / 2 / 2**30) * iterations / elapsed
+        profile = endpoint.profile_snapshot(reset=False)
+        all_to_all_profile = profile.get("collectives", {}).get("all_to_all", {})
+        profile_calls = all_to_all_profile.get("calls", 0)
+        profile_chunks = all_to_all_profile.get("chunks", 0)
+        next_operation_id = endpoint._operation_id
         rows.append(
             (
                 size_bytes,
@@ -105,6 +110,9 @@ def _worker(
                 remote_gib_s,
                 endpoint_allocated_bytes,
                 payload_allocated_bytes,
+                next_operation_id,
+                profile_calls,
+                profile_chunks,
             )
         )
         benchmark_barrier.wait(timeout=10)
@@ -136,7 +144,10 @@ def main(
     shape,
     capacity_bytes=None,
     size_bytes=None,
+    profile=False,
 ):
+    if profile:
+        os.environ["RAYLIGHT_P2P_PROFILE"] = "1"
     ctx = mp.get_context("spawn")
     handles_queues = [ctx.Queue(), ctx.Queue()]
     benchmark_barrier = ctx.Barrier(2)
@@ -187,12 +198,17 @@ def main(
             gib_s,
             endpoint_allocated_bytes,
             payload_allocated_bytes,
+            next_operation_id,
+            profile_calls,
+            profile_chunks,
         ) in rank_rows:
             print(
                 f"rank={rank} bytes={size_bytes} iterations={count} "
                 f"elapsed_s={elapsed:.6f} remote_GiB_s={gib_s:.3f} "
                 f"endpoint_allocated_bytes={endpoint_allocated_bytes} "
                 f"payload_allocated_bytes={payload_allocated_bytes} "
+                f"next_operation_id={next_operation_id} "
+                f"profile_calls={profile_calls} profile_chunks={profile_chunks}"
             )
     if len(rows) != 2 or any(process.exitcode != 0 for process in processes):
         raise SystemExit(1)
@@ -206,6 +222,7 @@ if __name__ == "__main__":
     parser.add_argument("--shape", type=int, nargs="+")
     parser.add_argument("--capacity-bytes", type=int)
     parser.add_argument("--size-bytes", type=int, nargs="+")
+    parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
     main(
         args.iterations,
@@ -214,4 +231,5 @@ if __name__ == "__main__":
         tuple(args.shape) if args.shape else None,
         args.capacity_bytes,
         tuple(args.size_bytes) if args.size_bytes else None,
+        args.profile,
     )
