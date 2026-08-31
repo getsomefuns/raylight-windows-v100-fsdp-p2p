@@ -113,10 +113,17 @@ def load_baseline_spec(path: Path) -> BaselineSpec:
     )
 
 
-def build_conditioning_prompt(spec: BaselineSpec, *, length: int) -> dict:
+def build_conditioning_prompt(
+    spec: BaselineSpec,
+    *,
+    length: int,
+    engine: str = "single",
+) -> dict:
     if length <= 0:
         raise ValueError("length must be positive")
-    return {
+    if engine not in {"single", "tp2"}:
+        raise ValueError("engine must be single or tp2")
+    prompt = {
         "1": {
             "class_type": "CLIPLoader",
             "inputs": {"clip_name": spec.checkpoint, "type": "minimax", "device": "default"},
@@ -140,6 +147,36 @@ def build_conditioning_prompt(spec: BaselineSpec, *, length: int) -> dict:
         },
         "6": {"class_type": "PreviewAny", "inputs": {"source": ["5", 0]}},
     }
+    if engine == "single":
+        return prompt
+    prompt["0"] = {
+        "class_type": "RayInitializer",
+        "inputs": {
+            "ray_cluster_address": "local",
+            "ray_cluster_namespace": "default",
+            "GPU": 2,
+            "ulysses_degree": 2,
+            "ring_degree": 1,
+            "cfg_degree": 1,
+            "dp_degree": 1,
+            "sync_ulysses": True,
+            "clear_vram_after_sampling": False,
+            "FSDP": True,
+            "FSDP_CPU_OFFLOAD": True,
+            "XFuser_attention": "TORCH_EFFICIENT",
+            "skip_comm_test": True,
+            "use_mmap": True,
+        },
+    }
+    prompt["1"] = {
+        "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+        "inputs": {
+            "clip_name": spec.checkpoint,
+            "execution_mode": "tp2",
+            "ray_actors_init": ["0", 0],
+        },
+    }
+    return prompt
 
 
 def parse_event_pair(events: list[dict]) -> dict:
@@ -209,6 +246,7 @@ def _write_records_csv(path: Path, records: list[BaselineRecord]) -> None:
 def run_benchmark(
     workflow: Path,
     *,
+    engine: str = "single",
     sessions: int = 3,
     port: int = 8193,
     timeout: int = 1800,
@@ -216,10 +254,12 @@ def run_benchmark(
 ) -> Path:
     if sessions < 1:
         raise ValueError("sessions must be positive")
+    if engine not in {"single", "tp2"}:
+        raise ValueError("engine must be single or tp2")
     helpers = _load_helpers()
     spec = load_baseline_spec(workflow)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    result_dir = result_root / f"{timestamp}-single-v100-cold-warm"
+    result_dir = result_root / f"{timestamp}-{engine}-v100-cold-warm"
     result_dir.mkdir(parents=True, exist_ok=False)
     report_path = result_dir / "benchmark.json"
     records: list[BaselineRecord] = []
@@ -229,6 +269,7 @@ def run_benchmark(
         "workflow_sha256": spec.workflow_sha256,
         "checkpoint": spec.checkpoint,
         "reference_image": spec.reference_image,
+        "engine": engine,
         "sessions": sessions,
         "records": [],
         "started_ns": time.time_ns(),
@@ -285,7 +326,7 @@ def run_benchmark(
                 job = helpers.attach_kill_on_close_job(process)
                 helpers.wait_server(base_url, process)
                 for mode, length in (("cold", spec.length), ("warm", spec.length + 17)):
-                    prompt = build_conditioning_prompt(spec, length=length)
+                    prompt = build_conditioning_prompt(spec, length=length, engine=engine)
                     prompt_path = session_dir / f"{mode}-prompt.json"
                     prompt_text = json.dumps(prompt, indent=2, ensure_ascii=False) + "\n"
                     prompt_path.write_text(prompt_text, encoding="utf-8")
@@ -361,6 +402,7 @@ def run_benchmark(
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workflow", type=Path, default=DEFAULT_WORKFLOW)
+    parser.add_argument("--engine", choices=("single", "tp2"), default="single")
     parser.add_argument("--sessions", type=int, default=3)
     parser.add_argument("--port", type=int, default=8193)
     parser.add_argument("--timeout", type=int, default=1800)
@@ -373,6 +415,7 @@ def main() -> int:
     print(
         run_benchmark(
             args.workflow,
+            engine=args.engine,
             sessions=args.sessions,
             port=args.port,
             timeout=args.timeout,

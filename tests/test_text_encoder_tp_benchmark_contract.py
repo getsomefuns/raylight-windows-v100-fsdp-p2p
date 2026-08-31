@@ -121,6 +121,33 @@ def test_disabled_hook_does_not_patch_class(monkeypatch: pytest.MonkeyPatch) -> 
     assert FakeClip.encode_from_tokens_scheduled is original
 
 
+def test_comfy_installer_patches_stock_and_tp2_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from raylight.text_encoder_parallel import baseline
+    class FakeStockClip:
+        def encode_from_tokens_scheduled(self, tokens):
+            return tokens
+
+    class FakeTP2Clip:
+        def encode_from_tokens_scheduled(self, tokens):
+            return tokens
+
+    monkeypatch.setenv(baseline.BASELINE_ENV, "1")
+    monkeypatch.setattr("comfy.sd.CLIP", FakeStockClip)
+    monkeypatch.setattr(
+        "raylight.text_encoder_parallel.clip_proxy.MiniMaxH3TP2ClipProxy",
+        FakeTP2Clip,
+    )
+    stock_original = FakeStockClip.encode_from_tokens_scheduled
+    tp2_original = FakeTP2Clip.encode_from_tokens_scheduled
+
+    assert baseline.install_comfy_clip_timing_from_environment() is True
+
+    assert FakeStockClip.encode_from_tokens_scheduled is not stock_original
+    assert FakeTP2Clip.encode_from_tokens_scheduled is not tp2_original
+
+
 def test_count_tokens_counts_minimax_vision_entry_as_one_token() -> None:
     from raylight.text_encoder_parallel.baseline import count_tokens
 

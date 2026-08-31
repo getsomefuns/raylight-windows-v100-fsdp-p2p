@@ -1,5 +1,6 @@
 param(
     [string]$Workflow = "E:\ComfyUI-py310\ComfyUI\user\default\workflows\MMH3Director.json",
+    [ValidateSet("single", "tp2")][string]$Engine = "single",
     [ValidateRange(1, 20)][int]$Sessions = 3,
     [ValidateRange(1024, 65535)][int]$Port = 8193,
     [ValidateRange(60, 7200)][int]$TimeoutSeconds = 1800,
@@ -12,6 +13,7 @@ $scriptPath = Join-Path $PSScriptRoot "minimax-h3\benchmark_text_encoder_tp2.py"
 $arguments = @(
     $scriptPath,
     "--workflow", $Workflow,
+    "--engine", $Engine,
     "--sessions", $Sessions,
     "--port", $Port,
     "--timeout", $TimeoutSeconds

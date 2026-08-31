@@ -205,10 +205,13 @@ def install_clip_timing_hook(clip_class: type[Any]) -> bool:
 
 
 def install_comfy_clip_timing_from_environment() -> bool:
-    """Install the hook in ComfyUI; normal launches return without importing it."""
+    """Install stock and TP2 CLIP hooks; normal launches remain untouched."""
 
     if not stage_timing_enabled():
         return False
     from comfy.sd import CLIP
+    from .clip_proxy import MiniMaxH3TP2ClipProxy
 
-    return install_clip_timing_hook(CLIP)
+    stock_installed = install_clip_timing_hook(CLIP)
+    tp2_installed = install_clip_timing_hook(MiniMaxH3TP2ClipProxy)
+    return stock_installed or tp2_installed

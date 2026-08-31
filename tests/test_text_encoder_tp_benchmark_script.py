@@ -93,6 +93,49 @@ def test_builds_conditioning_only_comfyui_prompt(tmp_path: Path) -> None:
     assert conditioning["inputs"]["prompt"] == "A deliberate baseline prompt."
 
 
+def test_builds_tp2_conditioning_prompt_with_real_ray_dependency(tmp_path: Path) -> None:
+    module = _load_script()
+    path = tmp_path / "workflow.json"
+    path.write_text(json.dumps(_workflow()), encoding="utf-8")
+    baseline = module.load_baseline_spec(path)
+
+    prompt = module.build_conditioning_prompt(baseline, length=90, engine="tp2")
+
+    by_type = {node["class_type"]: node for node in prompt.values()}
+    assert "CLIPLoader" not in by_type
+    assert by_type["RayInitializer"]["inputs"] == {
+        "ray_cluster_address": "local",
+        "ray_cluster_namespace": "default",
+        "GPU": 2,
+        "ulysses_degree": 2,
+        "ring_degree": 1,
+        "cfg_degree": 1,
+        "dp_degree": 1,
+        "sync_ulysses": True,
+        "clear_vram_after_sampling": False,
+        "FSDP": True,
+        "FSDP_CPU_OFFLOAD": True,
+        "XFuser_attention": "TORCH_EFFICIENT",
+        "skip_comm_test": True,
+        "use_mmap": True,
+    }
+    loader = by_type["RayMiniMaxH3DualGPUCLIPLoader"]
+    assert loader["inputs"]["execution_mode"] == "tp2"
+    assert loader["inputs"]["ray_actors_init"] == ["0", 0]
+    conditioning = by_type["MiniMaxH3ReferenceToVideo"]
+    assert conditioning["inputs"]["clip"] == ["1", 0]
+
+
+def test_rejects_unknown_benchmark_engine(tmp_path: Path) -> None:
+    module = _load_script()
+    path = tmp_path / "workflow.json"
+    path.write_text(json.dumps(_workflow()), encoding="utf-8")
+    baseline = module.load_baseline_spec(path)
+
+    with pytest.raises(ValueError, match="engine"):
+        module.build_conditioning_prompt(baseline, length=90, engine="auto")
+
+
 def test_event_pair_requires_one_begin_and_one_complete() -> None:
     module = _load_script()
     events = [
@@ -135,4 +178,3 @@ def test_summary_reports_cold_and_warm_medians() -> None:
     assert summary["cold"]["median_te_total_s"] == 20.0
     assert summary["cold"]["peak_gpu0_mib"] == 10_003
     assert summary["warm"]["runs"] == 0
-
