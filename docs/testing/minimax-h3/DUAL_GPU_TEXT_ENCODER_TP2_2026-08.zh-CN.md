@@ -231,3 +231,79 @@ Task 7 结论：通过。显存租约解决的是 RayWorker 与主进程 TP2 Tex
 41 项 Task 8 定向测试通过；全仓库为 `595 passed`、`35 subtests passed`。部署到 `E:\ComfyUI-py310\ComfyUI\custom_nodes\raylight` 后真实启动无节点导入错误，验证结束已关闭 ComfyUI 和 Ray，双卡无残留进程。
 
 Task 8 结论：通过。这里证明的是节点注册、显式模式、工作流无环、Director 控制面和无重复本地采样旁路；尚未宣称三个工作流已完成真实视频质量/显存/多段验收，该证据必须由 Task 9 提供。
+
+## Task 9：真实显存、数值、视频质量与多段稳定性 / Gate E
+
+### Encoder-only 冷热基准
+
+正式 TP2 附件：`.local/artifacts/o10/text-encoder-baseline/20260831-162658-tp2-v100-cold-warm/`。单卡冻结基线仍为 `.local/artifacts/o10/text-encoder-baseline/20260831-142005-single-v100-cold-warm/`。两组使用同一 checkpoint、工作流 hash、221 tokens、提示词和参考图；每组都是 3 个独立 ComfyUI 进程，每个进程各执行一次冷编码和一次热编码。
+
+| 模式 | 冷 3 次 | 冷中位数 | 热 3 次 | 热中位数 | 相对单卡 |
+|---|---|---:|---|---:|---|
+| 单卡 | 18.91 / 20.97 / 20.76 s | 20.76 s | 10.37 / 10.41 / 10.35 s | 10.37 s | 基线 |
+| TP2 | 27.17 / 27.28 / 27.03 s | 27.17 s | 26.88 / 27.09 / 26.91 s | 26.91 s | 冷慢 30.9%；热慢 159.6% |
+
+TP2 每次编码都释放 GPU 权重，因此“热”只复用 tokenizer、配置、CPU/mmap 描述和 Ray workers，不保留约 6.4 GiB/rank 的语言权重。该定义符合 O10 不允许用常驻两卡模型伪造热启动速度的约束，但也暴露了当前最主要的性能成本。
+
+| TP2 阶段中位数 | 冷 | 热 |
+|---|---:|---:|
+| 预处理器加载 | 0.657 s | 0.685 s |
+| 图像预处理与视觉塔 | 2.688 s | 2.672 s |
+| 预处理器清理 | 0.459 s | 0.456 s |
+| 50 层语言主干分片加载 | 16.508 s | 16.468 s |
+| 50 层语言主干计算 | 4.039 s | 3.769 s |
+| 语言分片清理 | 0.627 s | 0.633 s |
+| conditioning finalize | 0.021 s | 0.020 s |
+
+约 16.5 秒的分片权重加载主导总时长，实际语言主干计算约 3.8–4.0 秒。它解释了 TP2 为何能降低显存并让两卡重叠计算，却仍明显慢于单卡热路径；不能把该问题归因于 P2P 数据面本身。
+
+| 资源门槛 | 单卡基线 | TP2 | 判定 |
+|---|---:|---:|---|
+| 任意单卡显存峰值 | GPU0 13,906 MiB | GPU0 9,467 / GPU1 9,449 MiB | 通过；低于 14 GiB |
+| GPU0 峰值下降 | — | 31.9% | 通过；要求至少 25% |
+| 系统 RAM 峰值 | 40,358 MiB | 37,395 MiB | 通过 |
+| 系统 commit 峰值 | 48,389 MiB | 51,731 MiB | 增加 6.9%；通过 20% 上限 |
+| 页面文件 used delta | 0 | 0 | 通过 |
+| 编码后、worker 保留时 | — | GPU0 1,108–1,212 / GPU1 1,030–1,134 MiB | 仅 worker/CUDA context |
+| 进程退出后 | — | 两卡各 10 MiB；无 Python/raylet | 通过 |
+
+### 普通 I2V / REF2VA 视频
+
+| 工作流 | 输出 | 总耗时 | Ray 初始化 | 采样节点 | VAE 解码 | 保存 | GPU0 / GPU1 峰值 | RAM / commit 峰值 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| I2V Turbo8 | 640×640，56 帧，24 FPS，2.333 s | 310.14 s | 30.24 s | 222.52 s | 7.83 s | 2.50 s | 8,675 / 8,667 MiB | 61,071 / 100,231 MiB |
+| REF2VA Turbo4 | 864×480，124 帧，24 FPS，5.167 s | 388.56 s | 30.40 s | 274.25 s | 24.08 s | 6.00 s | 12,668 / 12,626 MiB | 64,303 / 101,396 MiB |
+
+I2V 附件：`.local/artifacts/o10/video/20260831-163954-i2v-full-o10-tp2-i2v-turbo8/`；REF2VA 附件：`.local/artifacts/o10/video/20260831-164633-ref2va-full-o10-tp2-ref2va-turbo4/`。两组均包含 benchmark JSON、monitor CSV、ffprobe、逐帧 framemd5、blackdetect 和联系表。I2V 为 56/56 唯一帧，REF2VA 为 124/124 唯一帧；两组黑帧事件均为 0，H.264 与 AAC 均可解码，人工抽帧未见首帧后噪声、分块乱码或主体崩坏。
+
+### MMH3Director 单段与五段
+
+| 工作流 | 输出 | 总耗时 | Director 节点 | 双 rank 采样 | Ray 初始化 | 保存 | GPU0 / GPU1 峰值 | RAM / commit 峰值 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| REF2VA Turbo4 单段 | 864×480，73 帧，24 FPS，约 3.04 s | 170.19 s | 122.44 s | 63.77 s | 30.82 s | 2.44 s | 8,611 / 8,589 MiB | 65,615 / 102,430 MiB |
+| REF2VA Turbo4 单段 | 960×544，124 帧，24 FPS，约 5.17 s | 243.35 s | 197.89 s | 115.95 s | 30.43 s | 0.55 s | 9,173 / 9,123 MiB | 67,277 / 104,042 MiB |
+| REF2VA Turbo4 五段连续 | 864×480，350 帧，24 FPS，约 14.58 s | 723.78 s | 661.16 s | 355.96 s | 32.41 s | 14.03 s | 9,447 / 9,403 MiB | 66,955 / 103,485 MiB |
+
+Director 节点内部同时包含 Text Encoder、参考 conditioning、分段采样和每段 VAE/音频解码，因此表中另列由两个 rank profile 给出的真实采样时间，不能把整个 Director 节点时长误称为采样。三组页面文件 used 均未增长。
+
+五段附件：`.local/artifacts/o10/text-encoder-tp2/task9/director/864x480-3s-x5/20260831-171039-director/`。`segment-resources.json`、CSV 和 PNG 由 `scripts/minimax-h3/summarize_director_segment_resources.py` 根据双 rank 开始时间与 P2P profile 完成时间机械切分监控窗口：
+
+| 段 | 双 rank 采样 | GPU0 / GPU1 峰值 | RAM 峰值 | commit 峰值 | pagefile 峰值 |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 68.11 s | 6,125 / 6,083 MiB | 58,643 MiB | 85,549 MiB | 753.762 MiB |
+| 2 | 71.57 s | 9,367 / 9,323 MiB | 52,428 MiB | 67,570 MiB | 753.703 MiB |
+| 3 | 72.30 s | 9,397 / 9,353 MiB | 52,940 MiB | 68,057 MiB | 753.664 MiB |
+| 4 | 72.30 s | 9,417 / 9,373 MiB | 53,531 MiB | 68,692 MiB | 753.660 MiB |
+| 5 | 71.67 s | 9,447 / 9,403 MiB | 54,074 MiB | 69,198 MiB | 753.473 MiB |
+
+首段只采 73 帧；第 2–5 段加入 22 帧连续性上下文，实际采样 107 帧，因此显存从约 6.1 GiB 升至约 9.3 GiB。稳定段 2–5 的双卡峰值只增加约 80 MiB；RAM/commit 增加约 1.65/1.63 GiB，用于保留已解码帧、音频和连续性上下文以最终拼接，不是每段新增一份 worker 或 Diffusion 模型。页面文件反而略降。五段始终复用同一 PID 12572/14332，退出后无 Python/raylet 和 GPU 进程。
+
+### 数值与视觉质量
+
+Gate D 已对纯文本、单图 I2V、双图 REF2VA 和视频 reference 的 conditioning 完成 shape、token tags、finite 与数值对照；Task 9 没有用视频“看起来正常”替代 conditioning 数值测试。单图 TP2 对单卡 cosine 为 0.99999930685，纯文本为 0.99999999997；双图与视频 reference 全部 finite。
+
+Director 三组分别为 73/73、124/124、350/350 唯一帧，blackdetect 均为 0，视频与音频流可解码。五段输出的 350 帧来自 365 逻辑帧减去三次 5 帧相位重叠，符合上游 Director 既有规则。固定 seed 的五段 TP2 成品与同一源工作流的原版单卡成品生成了无标签上下联系表 `blind-compare.jpg`；两者都保持绿色机器人队伍、紫色传送门、从异世界走入城市的镜头推进和 reference 身份，TP2 未见明显质量退化。原版单卡耗时 54:48，TP2/FSDP/TP2-Text-Encoder 为 12:04；该端到端差值同时包含 Diffusion FSDP/Ulysses，不可全部归功于 Text Encoder TP2。
+
+### Gate E 结论
+
+Gate E 通过。普通 I2V、普通 REF2VA、Director 3 秒、Director 5 秒和五段连续生成均完成；数值、显存、内存、页面文件、逐帧解码、黑帧、视觉抽检、双 rank/P2P 和进程回收证据完整。该结论只允许进入 Task 10 性能定级，不等于 TP2 已达到推荐性能门槛。Encoder-only 数据已明确显示当前 TP2 冷/热均慢于单卡，因此 Task 10 必须如实定级，不能把端到端 Diffusion 加速偷换成 Text Encoder 加速。

@@ -558,14 +558,16 @@ Task 8 结果：新增 `RayMiniMaxH3DualGPUCLIPLoader`，输出 `CLIP` 与原 `R
 - Modify: scripts/benchmark-minimax-h3-text-encoder-tp2.ps1
 - Modify: docs/testing/minimax-h3/DUAL_GPU_TEXT_ENCODER_TP2_2026-08.zh-CN.md
 
-- [ ] encoder-only 冷 3 次、热 3 次，记录全部 11.1 指标。
-- [ ] 运行 I2V Turbo8 和 REF2VA Turbo4。
-- [ ] 运行 Director 3 秒 480p、5 秒 960×544。
-- [ ] 运行 5 段压力测试，绘制每段 GPU0/GPU1、RAM、commit、pagefile 峰值。
-- [ ] 对所有 conditioning 做 shape、tag、finite、cosine 检查。
-- [ ] 对视频执行 ffprobe、唯一帧 hash、黑帧/噪声检查和固定 seed 盲看。
-- [ ] 任何门槛失败时停止，不进入性能定级。
-- [ ] 提交：test: validate MiniMax H3 TP2 text encoder end to end。
+- [x] encoder-only 冷 3 次、热 3 次，记录全部 11.1 指标。
+- [x] 运行 I2V Turbo8 和 REF2VA Turbo4。
+- [x] 运行 Director 3 秒 480p、5 秒 960×544。
+- [x] 运行 5 段压力测试，绘制每段 GPU0/GPU1、RAM、commit、pagefile 峰值。
+- [x] 对所有 conditioning 做 shape、tag、finite、cosine 检查。
+- [x] 对视频执行 ffprobe、唯一帧 hash、黑帧/噪声检查和固定 seed 盲看。
+- [x] 任何门槛失败时停止，不进入性能定级。
+- [x] 提交：test: validate MiniMax H3 TP2 text encoder end to end。
+
+Task 9 / Gate E 结果：encoder-only TP2 冷/热中位数为 27.17/26.91 秒，单卡冻结基线为 20.76/10.37 秒；性能门槛失败但每卡显存峰值 9,467/9,449 MiB，GPU0 相对单卡下降 31.9%，commit 仅增加 6.9%，页面文件 used delta 为 0。I2V、REF2VA、Director 3 秒、Director 5 秒和 3 秒×5 段均完成；五段复用同一对 worker，双 rank 采样为 68.11、71.57、72.30、72.30、71.67 秒，稳定段显存无阶梯泄漏。五组视频逐帧 hash 全部唯一，blackdetect 为 0，H.264/AAC 可解码；固定 seed 单卡/TP2 联系表未见明显质量退化。Gate E 通过，可以进入 Task 10；Task 10 必须因 encoder-only 性能失败定级为实验性容量模式，不得设为推荐默认值。
 
 ## 23. Task 10：性能定级与失败路线决策
 
