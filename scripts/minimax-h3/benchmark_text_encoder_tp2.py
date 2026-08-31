@@ -30,6 +30,15 @@ PYTHON = Path(os.environ.get("RAYLIGHT_PYTHON", ENV_ROOT / "Python310" / "python
 DEFAULT_WORKFLOW = COMFY_ROOT / "user" / "default" / "workflows" / "MMH3Director.json"
 DEFAULT_RESULT_ROOT = REPO_ROOT / ".local" / "artifacts" / "o10" / "text-encoder-baseline"
 HELPERS_PATH = SCRIPT_ROOT / "benchmark_cold_warm.py"
+TP2_STAGE_NAMES = (
+    "preprocessor_load",
+    "preprocess_and_vision",
+    "preprocessor_cleanup",
+    "backbone_load",
+    "language_backbone",
+    "backbone_cleanup",
+    "conditioning_finalize",
+)
 
 
 class BaselineSpec(NamedTuple):
@@ -194,6 +203,20 @@ def parse_event_pair(events: list[dict]) -> dict:
     return {**complete, "begin_time_ns": int(begin["time_ns"])}
 
 
+def summarize_stage_events(events: list[dict]) -> dict[str, float]:
+    rows = [event for event in events if event.get("event") == "text_encoder_stage"]
+    by_name = {str(event.get("stage")): event for event in rows}
+    if set(by_name) != set(TP2_STAGE_NAMES) or len(rows) != len(TP2_STAGE_NAMES):
+        raise ValueError(
+            "TP2 stage events must contain each expected stage exactly once; "
+            f"found={sorted(by_name)}"
+        )
+    if any(bool(event.get("failed")) for event in rows):
+        failed = [event["stage"] for event in rows if event.get("failed")]
+        raise ValueError(f"TP2 stage timing reported failed stages: {failed}")
+    return {name: float(by_name[name]["elapsed_s"]) for name in TP2_STAGE_NAMES}
+
+
 def summarize_records(records: list[BaselineRecord]) -> dict:
     summary = {}
     for mode in ("cold", "warm"):
@@ -354,6 +377,7 @@ def run_benchmark(
                         raise RuntimeError(f"resource monitor failed: {monitor_errors[0]}")
                     new_events = _read_events(event_path)[before_events:]
                     event = parse_event_pair(new_events)
+                    stages = summarize_stage_events(new_events) if engine == "tp2" else {}
                     interval_samples = _samples_for_interval(
                         samples, int(event["begin_time_ns"]), int(event["time_ns"])
                     )
@@ -372,6 +396,8 @@ def run_benchmark(
                         }
                     )
                     records.append(record)
+                    time.sleep(1)
+                    post_encode_gpus = helpers.gpu_metrics()
                     report["records"].append(
                         {
                             **record.to_mapping(),
@@ -379,6 +405,8 @@ def run_benchmark(
                             "prompt_id": response["prompt_id"],
                             "prompt_sha256": hashlib.sha256(prompt_text.encode("utf-8")).hexdigest(),
                             "resources": resources,
+                            "stages": stages,
+                            "post_encode_gpus": post_encode_gpus,
                             "history_status": history.get("status", {}),
                         }
                     )

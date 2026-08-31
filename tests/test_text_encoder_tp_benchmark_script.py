@@ -153,6 +153,27 @@ def test_event_pair_requires_one_begin_and_one_complete() -> None:
         module.parse_event_pair(events[:1])
 
 
+def test_summarizes_exact_tp2_stage_set_and_rejects_failures() -> None:
+    module = _load_script()
+    events = [
+        {
+            "event": "text_encoder_stage",
+            "stage": stage,
+            "elapsed_s": index / 10,
+            "failed": False,
+        }
+        for index, stage in enumerate(module.TP2_STAGE_NAMES, start=1)
+    ]
+
+    summary = module.summarize_stage_events(events)
+
+    assert list(summary) == list(module.TP2_STAGE_NAMES)
+    assert summary["language_backbone"] > 0
+    events[-1]["failed"] = True
+    with pytest.raises(ValueError, match="failed"):
+        module.summarize_stage_events(events)
+
+
 def test_summary_reports_cold_and_warm_medians() -> None:
     module = _load_script()
     records = []
