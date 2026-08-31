@@ -174,6 +174,27 @@ def test_summarizes_exact_tp2_stage_set_and_rejects_failures() -> None:
         module.summarize_stage_events(events)
 
 
+def test_summarizes_exactly_one_tp2_runtime_profile() -> None:
+    module = _load_script()
+    events = [
+        {
+            "event": "text_encoder_tp2_profile",
+            "profile": {
+                "layers": 50,
+                "linear_pair_operations": 350,
+                "collective": {"calls": 100},
+            },
+        }
+    ]
+
+    profile = module.summarize_tp2_profile_events(events)
+
+    assert profile["layers"] == 50
+    assert profile["collective"]["calls"] == 100
+    with pytest.raises(ValueError, match="exactly one"):
+        module.summarize_tp2_profile_events(events * 2)
+
+
 def test_summary_reports_cold_and_warm_medians() -> None:
     module = _load_script()
     records = []

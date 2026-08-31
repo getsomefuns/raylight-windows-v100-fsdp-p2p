@@ -217,6 +217,16 @@ def summarize_stage_events(events: list[dict]) -> dict[str, float]:
     return {name: float(by_name[name]["elapsed_s"]) for name in TP2_STAGE_NAMES}
 
 
+def summarize_tp2_profile_events(events: list[dict]) -> dict:
+    rows = [event for event in events if event.get("event") == "text_encoder_tp2_profile"]
+    if len(rows) != 1:
+        raise ValueError(f"expected exactly one TP2 runtime profile, found {len(rows)}")
+    profile = rows[0].get("profile")
+    if not isinstance(profile, dict):
+        raise ValueError("TP2 runtime profile must contain an object")
+    return profile
+
+
 def summarize_records(records: list[BaselineRecord]) -> dict:
     summary = {}
     for mode in ("cold", "warm"):
@@ -378,6 +388,9 @@ def run_benchmark(
                     new_events = _read_events(event_path)[before_events:]
                     event = parse_event_pair(new_events)
                     stages = summarize_stage_events(new_events) if engine == "tp2" else {}
+                    tp2_profile = (
+                        summarize_tp2_profile_events(new_events) if engine == "tp2" else {}
+                    )
                     interval_samples = _samples_for_interval(
                         samples, int(event["begin_time_ns"]), int(event["time_ns"])
                     )
@@ -406,6 +419,7 @@ def run_benchmark(
                             "prompt_sha256": hashlib.sha256(prompt_text.encode("utf-8")).hexdigest(),
                             "resources": resources,
                             "stages": stages,
+                            "tp2_profile": tp2_profile,
                             "post_encode_gpus": post_encode_gpus,
                             "history_status": history.get("status", {}),
                         }

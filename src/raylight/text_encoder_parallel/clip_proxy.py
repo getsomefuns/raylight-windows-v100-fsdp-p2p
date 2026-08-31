@@ -18,11 +18,12 @@ import numbers
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Sequence
+import statistics
 
 import torch
 
 from .collectives import CudaPeerGroup2
-from .baseline import timed_stage
+from .baseline import record_tp2_profile, stage_timing_enabled, timed_stage
 from .linear import ColumnParallelLinear, RowParallelLinear, TorchDualCudaLinearExecutor
 from .nvfp4_sharding import shard_nvfp4_linear
 from .qwen3vl_tp import MINIMAX_H3_QWEN3VL_CONFIG, TP2Qwen3VLBlock
@@ -470,6 +471,74 @@ class TP2Qwen3VLBackbone:
             raise RuntimeError(f"MiniMax H3 TP2 ranks diverged (max_abs={max_abs})")
         return rank0
 
+    def profile_snapshot(self) -> dict[str, Any]:
+        """Aggregate already-recorded two-device timings after one encode."""
+
+        linear_names = (
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        )
+        linear_stats = []
+        paired_stats = []
+        layer_ratios = []
+        for layer, block in enumerate(self.blocks):
+            current = []
+            for name in linear_names:
+                stats = getattr(getattr(block, name), "last_execution", None)
+                if stats is None:
+                    raise RuntimeError(
+                        f"TP2 layer {layer} {name} has no execution profile"
+                    )
+                current.append(stats)
+            linear_stats.extend(current)
+            paired_stats.extend(current)
+            paired_stats.extend(stats for _, stats in block.execution_profiles)
+            denominator = sum(min(stats.rank0_ms, stats.rank1_ms) for stats in current)
+            layer_ratios.append(
+                sum(stats.overlap_ms for stats in current) / denominator
+                if denominator > 0
+                else 0.0
+            )
+
+        def weighted_overlap(values) -> float:
+            denominator = sum(min(stats.rank0_ms, stats.rank1_ms) for stats in values)
+            return (
+                sum(stats.overlap_ms for stats in values) / denominator
+                if denominator > 0
+                else 0.0
+            )
+
+        collective = getattr(self.blocks[0], "collective", None)
+        if collective is None or not hasattr(collective, "profile_snapshot"):
+            raise RuntimeError("TP2 backbone has no shared collective profile")
+        return {
+            "layers": len(self.blocks),
+            "linear_pair_operations": len(linear_stats),
+            "paired_operations": len(paired_stats),
+            "linear_overlap_weighted": weighted_overlap(linear_stats),
+            "linear_overlap_median": statistics.median(
+                stats.overlap_ratio for stats in linear_stats
+            ),
+            "linear_overlap_min": min(stats.overlap_ratio for stats in linear_stats),
+            "linear_overlap_ge_80_percent": 100.0
+            * sum(stats.overlap_ratio >= 0.8 for stats in linear_stats)
+            / len(linear_stats),
+            "layers_with_linear_overlap_percent": 100.0
+            * sum(ratio > 0.0 for ratio in layer_ratios)
+            / len(layer_ratios),
+            "layers_with_linear_overlap_ge_80_percent": 100.0
+            * sum(ratio >= 0.8 for ratio in layer_ratios)
+            / len(layer_ratios),
+            "layer_linear_overlap_ratios": layer_ratios,
+            "paired_overlap_weighted": weighted_overlap(paired_stats),
+            "collective": collective.profile_snapshot(),
+        }
+
     def close(self) -> None:
         if self._closed:
             return
@@ -702,6 +771,8 @@ class MiniMaxH3TP2ClipProxy:
             try:
                 with timed_stage("language_backbone"):
                     encoded = backbone.encode(prepared)
+                if stage_timing_enabled():
+                    record_tp2_profile(backbone.profile_snapshot())
             finally:
                 with timed_stage("backbone_cleanup"):
                     backbone.close()

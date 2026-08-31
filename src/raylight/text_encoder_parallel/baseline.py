@@ -147,6 +147,19 @@ def append_event(path: Path, event: Mapping[str, Any]) -> None:
         handle.write(json.dumps(dict(event), ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def record_tp2_profile(profile: Mapping[str, Any]) -> bool:
+    """Append one opt-in aggregate TP2 runtime profile."""
+
+    event_path = os.environ.get(BASELINE_EVENT_PATH_ENV, "").strip()
+    if not stage_timing_enabled() or not event_path:
+        return False
+    append_event(
+        Path(event_path),
+        {"event": "text_encoder_tp2_profile", "profile": dict(profile)},
+    )
+    return True
+
+
 @contextmanager
 def timed_stage(stage: str):
     """Record one opt-in TP2 stage without changing normal execution behavior."""

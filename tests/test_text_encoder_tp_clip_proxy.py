@@ -3,9 +3,12 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import json
+from types import SimpleNamespace
 
 import pytest
 import torch
+
+from raylight.text_encoder_parallel.linear import LinearExecutionStats
 
 from raylight.text_encoder_parallel.clip_proxy import (
     MiniMaxH3TP2ClipProxy,
@@ -161,6 +164,9 @@ class _Backbone:
             raise RuntimeError("injected TP2 failure")
         return prepared.embeddings + 0.5
 
+    def profile_snapshot(self):
+        return {"layers": 50, "linear_pair_operations": 350}
+
     def close(self):
         self.state.backbone_active -= 1
         self.state.backbone_closed += 1
@@ -252,7 +258,7 @@ def test_proxy_records_detailed_benchmark_stages(
     _proxy(state).encode_from_tokens(_proxy(state).tokenize("prompt"), return_dict=True)
 
     events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
-    assert [event["stage"] for event in events] == [
+    assert [event["stage"] for event in events if event["event"] == "text_encoder_stage"] == [
         "preprocessor_load",
         "preprocess_and_vision",
         "preprocessor_cleanup",
@@ -261,6 +267,47 @@ def test_proxy_records_detailed_benchmark_stages(
         "backbone_cleanup",
         "conditioning_finalize",
     ]
+    profiles = [event for event in events if event["event"] == "text_encoder_tp2_profile"]
+    assert profiles == [
+        {
+            "event": "text_encoder_tp2_profile",
+            "profile": {"layers": 50, "linear_pair_operations": 350},
+        }
+    ]
+
+
+def test_backbone_profile_aggregates_linear_overlap_and_collectives() -> None:
+    stats = [
+        LinearExecutionStats(2.0, 2.0, 2.2, 1.8, 0.9),
+        LinearExecutionStats(2.0, 2.0, 3.0, 1.0, 0.5),
+    ]
+
+    class Collective:
+        def profile_snapshot(self):
+            return {"calls": 4, "total_bytes_sent": 1024, "total_elapsed_ms": 1.5}
+
+    class Block:
+        def __init__(self, offset):
+            names = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+            for index, name in enumerate(names):
+                setattr(self, name, SimpleNamespace(last_execution=stats[(index + offset) % 2]))
+            self.execution_profiles = [("attention", stats[offset % 2])]
+            self.collective = collective
+
+    collective = Collective()
+    backbone = TP2Qwen3VLBackbone(
+        [Block(0), Block(1)],
+        devices=(torch.device("cpu"), torch.device("cpu")),
+    )
+
+    profile = backbone.profile_snapshot()
+
+    assert profile["layers"] == 2
+    assert profile["linear_pair_operations"] == 14
+    assert profile["paired_operations"] == 16
+    assert profile["linear_overlap_ge_80_percent"] == pytest.approx(50.0)
+    assert profile["layers_with_linear_overlap_percent"] == 100.0
+    assert profile["collective"]["calls"] == 4
 
 
 class _TPBlock:
