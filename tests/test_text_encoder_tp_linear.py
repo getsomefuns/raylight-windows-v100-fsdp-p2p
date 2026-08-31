@@ -97,6 +97,25 @@ def test_dense_row_parallel_matches_full_linear_and_uses_p2p_sum() -> None:
     assert layer.last_collective == {"operation_id": 17}
 
 
+def test_row_parallel_applies_sharded_pre_quant_scale_before_local_linear() -> None:
+    torch.manual_seed(25)
+    x = torch.randn((3, 12), dtype=torch.float32)
+    weight = torch.randn((8, 12), dtype=torch.float32)
+    scale = torch.linspace(0.5, 1.75, 12, dtype=torch.float32)
+    scale_parts = tuple(part.contiguous() for part in scale.chunk(2))
+    layer = RowParallelLinear(
+        _dense_shards(weight, "column"),
+        pre_quant_scale=scale_parts,
+        executor=CpuPairExecutor(),
+        collective=CpuPeerGroup(),
+    )
+
+    actual = layer.forward(tuple(part.contiguous() for part in x.chunk(2, dim=-1)), operation_id=1)[0]
+    expected = F.linear(x * scale, weight)
+
+    assert torch.max(torch.abs(actual - expected)).item() <= 1e-4
+
+
 def test_nvfp4_column_parallel_meets_cosine_and_finite_gate() -> None:
     torch.manual_seed(30)
     source = torch.randn((256, 128), dtype=torch.float16)

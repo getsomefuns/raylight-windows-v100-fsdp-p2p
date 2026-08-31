@@ -79,13 +79,23 @@ class TorchDualCudaLinearExecutor:
                     raise ValueError(f"rank {rank} bias must be on cuda:{rank}")
 
     def run(self, inputs, weights, biases):
-        if self._closed:
-            raise RuntimeError("TorchDualCudaLinearExecutor is closed")
-        torch = self.torch
         inputs = _pair(inputs, name="inputs")
         weights = _pair(weights, name="weights")
         biases = _pair(biases, name="biases")
         self._validate(inputs, weights, biases)
+        functions = tuple(
+            (lambda rank=rank: self.torch.nn.functional.linear(inputs[rank], weights[rank], biases[rank]))
+            for rank in (0, 1)
+        )
+        return self.run_functions(functions)
+
+    def run_functions(self, functions):
+        """Run one callable per CUDA device on the executor's persistent streams."""
+
+        if self._closed:
+            raise RuntimeError("TorchDualCudaLinearExecutor is closed")
+        functions = _pair(functions, name="functions")
+        torch = self.torch
 
         ready_events = (torch.cuda.Event(blocking=False), torch.cuda.Event(blocking=False))
         start_events = (
@@ -104,7 +114,7 @@ class TorchDualCudaLinearExecutor:
             with torch.cuda.device(rank), torch.cuda.stream(self.streams[rank]):
                 self.streams[rank].wait_event(ready_events[rank])
                 start_events[rank].record(self.streams[rank])
-                output = torch.nn.functional.linear(inputs[rank], weights[rank], biases[rank])
+                output = functions[rank]()
                 end_events[rank].record(self.streams[rank])
                 return output
 
@@ -141,9 +151,10 @@ class TorchDualCudaLinearExecutor:
 class ColumnParallelLinear:
     """Output-channel-sharded Linear; each rank receives replicated hidden state."""
 
-    def __init__(self, shards, *, bias=None, executor=None) -> None:
+    def __init__(self, shards, *, bias=None, pre_quant_scale=None, executor=None) -> None:
         self.shards = _validate_shards(shards, expected_axis="row")
         self.bias = _normalize_bias(bias)
+        self.pre_quant_scale = _normalize_bias(pre_quant_scale)
         self.executor = executor if executor is not None else TorchDualCudaLinearExecutor()
         self.last_execution: LinearExecutionStats | None = None
         in_features = self.shards[0].logical_shape[1]
@@ -152,6 +163,9 @@ class ColumnParallelLinear:
         for rank, rank_bias in enumerate(self.bias):
             if rank_bias is not None and tuple(rank_bias.shape) != (self.shards[rank].logical_shape[0],):
                 raise ValueError(f"rank {rank} bias shape does not match local output width")
+        for rank, rank_scale in enumerate(self.pre_quant_scale):
+            if rank_scale is not None and tuple(rank_scale.shape) != (in_features,):
+                raise ValueError(f"rank {rank} pre_quant_scale shape does not match local input width")
 
     def forward(self, inputs):
         inputs = _pair(inputs, name="inputs")
@@ -161,6 +175,10 @@ class ColumnParallelLinear:
             expected = self.shards[rank].logical_shape[1]
             if input_tensor.shape[-1] != expected:
                 raise ValueError(f"rank {rank} input width must be {expected}, got {input_tensor.shape[-1]}")
+        inputs = tuple(
+            input_tensor if self.pre_quant_scale[rank] is None else input_tensor * self.pre_quant_scale[rank]
+            for rank, input_tensor in enumerate(inputs)
+        )
         outputs, stats = self.executor.run(
             inputs,
             tuple(shard.qweight for shard in self.shards),
@@ -175,9 +193,10 @@ class ColumnParallelLinear:
 class RowParallelLinear:
     """Input-channel-sharded Linear followed by the strict CUDA P2P SUM."""
 
-    def __init__(self, shards, *, bias=None, executor=None, collective=None) -> None:
+    def __init__(self, shards, *, bias=None, pre_quant_scale=None, executor=None, collective=None) -> None:
         self.shards = _validate_shards(shards, expected_axis="column")
         self.bias = _normalize_bias(bias)
+        self.pre_quant_scale = _normalize_bias(pre_quant_scale)
         self.executor = executor if executor is not None else TorchDualCudaLinearExecutor()
         self.collective = collective if collective is not None else CudaPeerGroup2()
         self.last_execution: LinearExecutionStats | None = None
@@ -188,6 +207,10 @@ class RowParallelLinear:
         for rank, rank_bias in enumerate(self.bias):
             if rank_bias is not None and tuple(rank_bias.shape) != (out_features,):
                 raise ValueError(f"rank {rank} bias shape does not match full output width")
+        for rank, rank_scale in enumerate(self.pre_quant_scale):
+            expected = self.shards[rank].logical_shape[1]
+            if rank_scale is not None and tuple(rank_scale.shape) != (expected,):
+                raise ValueError(f"rank {rank} pre_quant_scale shape does not match local input width")
 
     def forward(self, inputs, *, operation_id: int):
         inputs = _pair(inputs, name="inputs")
@@ -197,6 +220,11 @@ class RowParallelLinear:
             expected = self.shards[rank].logical_shape[1]
             if input_tensor.shape[-1] != expected:
                 raise ValueError(f"rank {rank} input width must be {expected}, got {input_tensor.shape[-1]}")
+
+        inputs = tuple(
+            input_tensor if self.pre_quant_scale[rank] is None else input_tensor * self.pre_quant_scale[rank]
+            for rank, input_tensor in enumerate(inputs)
+        )
 
         partials, stats = self.executor.run(
             inputs,
