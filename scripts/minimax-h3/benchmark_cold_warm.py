@@ -11,7 +11,7 @@ import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import subprocess
 import threading
@@ -158,6 +158,35 @@ def normalize_lora_selector(lora_name: str) -> str:
     if selector.is_absolute() or selector.drive or any(part in {".", ".."} for part in selector.parts):
         raise ValueError("lora_name must be a relative path inside the ComfyUI loras directory")
     return str(selector)
+
+
+def normalize_prompt_file_selectors(prompt: dict, object_info: dict) -> dict:
+    for node_id, node in prompt.items():
+        class_type = node.get("class_type")
+        inputs = node.get("inputs", {})
+        schema = object_info.get(class_type, {}).get("input", {})
+        for section_name in ("required", "optional"):
+            for input_name, config in schema.get(section_name, {}).items():
+                current = inputs.get(input_name)
+                if not isinstance(current, str) or not isinstance(config, (list, tuple)) or not config:
+                    continue
+                choices = config[0]
+                if not isinstance(choices, (list, tuple)) or current in choices:
+                    continue
+                current_basename = PureWindowsPath(current).name
+                matches = [
+                    candidate
+                    for candidate in choices
+                    if isinstance(candidate, str)
+                    and PureWindowsPath(candidate).name == current_basename
+                ]
+                if len(matches) > 1:
+                    raise ValueError(
+                        f"ambiguous {class_type}.{input_name} selector on node {node_id}: {current}"
+                    )
+                if len(matches) == 1:
+                    inputs[input_name] = matches[0]
+    return prompt
 
 
 def validate_prompt(prompt: dict) -> None:
@@ -1048,7 +1077,9 @@ def build_api_prompt(
         compute_dtype=compute_dtype,
         turbo_variant=turbo_variant,
     )
-    prompt = converter.workflow_to_prompt(workflow, request_json(f"{base_url}/object_info", timeout=120))
+    object_info = request_json(f"{base_url}/object_info", timeout=120)
+    prompt = converter.workflow_to_prompt(workflow, object_info)
+    normalize_prompt_file_selectors(prompt, object_info)
     _, initializer = _one_node(prompt, "RayInitializer")
     initializer["inputs"]["FSDP_CPU_OFFLOAD"] = bool(cpu_offload)
     initializer["inputs"]["skip_comm_test"] = True

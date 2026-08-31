@@ -75,6 +75,51 @@ def test_validate_prompt_requires_dual_gpu_fsdp_and_one_sampler():
         raise AssertionError("single-GPU prompt was accepted")
 
 
+def test_normalize_prompt_file_selectors_uses_unique_nested_candidate():
+    prompt = {
+        "121": {
+            "class_type": "VAELoader",
+            "inputs": {"vae_name": "minimax_h3_video_vae_fp16.safetensors"},
+        }
+    }
+    object_info = {
+        "VAELoader": {
+            "input": {
+                "required": {
+                    "vae_name": (["MMH3\\minimax_h3_video_vae_fp16.safetensors"], {})
+                }
+            }
+        }
+    }
+
+    benchmark.normalize_prompt_file_selectors(prompt, object_info)
+
+    assert prompt["121"]["inputs"]["vae_name"] == (
+        "MMH3\\minimax_h3_video_vae_fp16.safetensors"
+    )
+
+
+def test_normalize_prompt_file_selectors_rejects_ambiguous_basename():
+    prompt = {
+        "121": {
+            "class_type": "VAELoader",
+            "inputs": {"vae_name": "model.safetensors"},
+        }
+    }
+    object_info = {
+        "VAELoader": {
+            "input": {
+                "required": {
+                    "vae_name": (["A\\model.safetensors", "B\\model.safetensors"], {})
+                }
+            }
+        }
+    }
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        benchmark.normalize_prompt_file_selectors(prompt, object_info)
+
+
 def test_phase_summary_uses_slowest_rank_and_reports_tail():
     events = []
     for rank, offset in ((0, 0), (1, 1_000_000_000)):
