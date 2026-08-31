@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a UI MiniMax H3 Director workflow through ComfyUI with full O9 telemetry."""
+"""Run a UI MiniMax H3 Director workflow through ComfyUI with full telemetry."""
 
 from __future__ import annotations
 
@@ -274,12 +274,15 @@ def run_workflow(
     port: int,
     timeout: int,
     p2p_capacity_mib: int,
+    reserve_vram_gib: float,
     runs: int,
 ) -> Path:
     if p2p_capacity_mib <= 0:
         raise ValueError("p2p_capacity_mib must be positive")
     if runs <= 0:
         raise ValueError("runs must be positive")
+    if reserve_vram_gib <= 0:
+        raise ValueError("reserve_vram_gib must be positive")
     workflow_path = workflow_path.resolve()
     result_root = result_root.resolve()
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -308,13 +311,14 @@ def run_workflow(
         str(port),
         "--disable-cuda-malloc",
         "--reserve-vram",
-        "3",
+        str(reserve_vram_gib),
     ]
     report = {
         "workflow": str(workflow_path),
         "workflow_sha256": base.sha256_file(workflow_path),
         "runtime_identity": identity,
         "p2p_capacity_bytes": p2p_capacity_bytes,
+        "reserve_vram_gib": reserve_vram_gib,
         "started_ns": time.time_ns(),
         "runs": [],
     }
@@ -340,9 +344,6 @@ def run_workflow(
             director_id = _nodes(prompt, "MiniMaxH3Director")[0][0]
             for _, node in _nodes(prompt, "RayInitializer"):
                 node["inputs"]["skip_comm_test"] = True
-            for _, node in _nodes(prompt, "SaveVideo"):
-                prefix = str(node.get("inputs", {}).get("filename_prefix", "video/MMH3Director"))
-                node["inputs"]["filename_prefix"] = f"{prefix}_O9Adaptive128"
             report["api_prompt_template_sha256"] = base.write_prompt_artifact(
                 result_dir / "api-prompt-template.json", prompt
             )
@@ -467,14 +468,21 @@ def run_workflow(
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workflow", type=Path)
-    parser.add_argument("--result-root", type=Path, default=REPO_ROOT / ".local" / "artifacts" / "o9" / "mmh3director")
+    parser.add_argument(
+        "--result-root",
+        type=Path,
+        default=REPO_ROOT / ".local" / "artifacts" / "o10" / "mmh3director",
+    )
     parser.add_argument("--port", type=int, default=8188)
     parser.add_argument("--timeout", type=int, default=7200)
     parser.add_argument("--p2p-capacity-mib", type=int, default=128)
+    parser.add_argument("--reserve-vram-gib", type=float, default=4.0)
     parser.add_argument("--runs", type=int, default=2)
     args = parser.parse_args(argv)
     if args.runs <= 0:
         raise ValueError("runs must be positive")
+    if args.reserve_vram_gib <= 0:
+        raise ValueError("reserve-vram-gib must be positive")
     return args
 
 
@@ -487,6 +495,7 @@ def main() -> int:
             port=args.port,
             timeout=args.timeout,
             p2p_capacity_mib=args.p2p_capacity_mib,
+            reserve_vram_gib=args.reserve_vram_gib,
             runs=args.runs,
         )
     )

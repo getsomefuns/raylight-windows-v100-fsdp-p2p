@@ -108,11 +108,25 @@ def test_parse_args_defaults_to_cold_and_warm_runs():
     args = benchmark.parse_args(["workflow.json"])
 
     assert args.runs == 2
+    assert args.reserve_vram_gib == 4.0
+
+
+def test_parse_args_accepts_explicit_vram_reserve():
+    args = benchmark.parse_args(
+        ["workflow.json", "--reserve-vram-gib", "5.5"]
+    )
+
+    assert args.reserve_vram_gib == 5.5
 
 
 def test_parse_args_rejects_non_positive_runs():
     with pytest.raises(ValueError, match="runs must be positive"):
         benchmark.parse_args(["workflow.json", "--runs", "0"])
+
+
+def test_parse_args_rejects_non_positive_vram_reserve():
+    with pytest.raises(ValueError, match="reserve-vram-gib must be positive"):
+        benchmark.parse_args(["workflow.json", "--reserve-vram-gib", "0"])
 
 
 def test_prepare_director_prompt_changes_seed_and_output_prefix_per_run():
