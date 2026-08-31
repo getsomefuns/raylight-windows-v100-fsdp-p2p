@@ -1067,15 +1067,17 @@ def build_api_prompt(
     compute_dtype: str = "default",
     turbo_variant: str | None = None,
     geometry: dict | None = None,
+    workflow_path: Path | None = None,
 ) -> dict:
     builder = _load_script("minimax_h3_build_workflows", SCRIPT_ROOT / "build_workflows.py")
     converter = _load_script("minimax_h3_workflow_to_api", SCRIPT_ROOT / "workflow_to_api.py")
-    workflow = builder.build_workflow(
-        builder.SOURCE_WORKFLOWS[mode],
+    workflow = load_benchmark_workflow(
+        builder,
         mode=mode,
         profile=profile,
         compute_dtype=compute_dtype,
         turbo_variant=turbo_variant,
+        workflow_path=workflow_path,
     )
     object_info = request_json(f"{base_url}/object_info", timeout=120)
     prompt = converter.workflow_to_prompt(workflow, object_info)
@@ -1087,6 +1089,26 @@ def build_api_prompt(
         configure_prompt_geometry(prompt, **geometry)
     validate_prompt(prompt)
     return prompt
+
+
+def load_benchmark_workflow(
+    builder,
+    *,
+    mode: str,
+    profile: str,
+    compute_dtype: str,
+    turbo_variant: str | None,
+    workflow_path: Path | None,
+) -> dict:
+    if workflow_path is not None:
+        return json.loads(Path(workflow_path).read_text(encoding="utf-8-sig"))
+    return builder.build_workflow(
+        builder.SOURCE_WORKFLOWS[mode],
+        mode=mode,
+        profile=profile,
+        compute_dtype=compute_dtype,
+        turbo_variant=turbo_variant,
+    )
 
 
 def write_monitor_csv(path: Path, samples: list[dict]) -> None:
@@ -1123,6 +1145,7 @@ def run_benchmark(
     fps: int | None = None,
     expected_frames: int | None = None,
     p2p_capacity_mib: int = P2P_CAPACITY_BYTES // 2**20,
+    workflow_path: Path | None = None,
 ) -> Path:
     if compute_dtype == "fp16_h3_safe" and turbo_variant is None:
         raise ValueError("fp16_h3_safe requires a pinned MiniMax H3 Turbo variant")
@@ -1211,6 +1234,7 @@ def run_benchmark(
             if geometry
             else None
         ),
+        "workflow": str(Path(workflow_path).resolve()) if workflow_path else None,
         "benchmark_input_hashes": hash_input_files(benchmark_input_paths(mode)),
         "started_ns": time.time_ns(),
         "runs": [],
@@ -1237,6 +1261,7 @@ def run_benchmark(
                 compute_dtype=compute_dtype,
                 turbo_variant=turbo_variant,
                 geometry=geometry,
+                workflow_path=workflow_path,
             )
             configure_prompt_variant(template, lora_name=lora_name, steps=steps)
             report["api_prompt_template_sha256"] = write_prompt_artifact(
@@ -1368,6 +1393,7 @@ def run_benchmark(
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("i2v", "ref2va"), required=True)
+    parser.add_argument("--workflow", type=Path)
     parser.add_argument("--profile", choices=("smoke", "full"), default="smoke")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--port", type=int, default=8188)
@@ -1433,6 +1459,7 @@ def main() -> int:
             fps=args.fps,
             expected_frames=args.expected_frames,
             p2p_capacity_mib=args.p2p_capacity_mib,
+            workflow_path=args.workflow,
         )
     )
     return 0

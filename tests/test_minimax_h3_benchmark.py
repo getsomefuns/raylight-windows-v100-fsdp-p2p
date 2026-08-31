@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import threading
 
@@ -375,3 +376,38 @@ def test_parse_args_accepts_exact_baseline_geometry():
     assert args.fps == 24
     assert args.expected_frames == 124
     assert args.p2p_capacity_mib == 256
+
+
+def test_parse_args_accepts_explicit_ui_workflow_path(tmp_path):
+    workflow = tmp_path / "tp2.json"
+    workflow.write_text('{"nodes": []}', encoding="utf-8")
+
+    args = benchmark.parse_args(
+        ["--mode", "ref2va", "--workflow", str(workflow), "--runs", "1"]
+    )
+
+    assert args.workflow == workflow
+
+
+def test_explicit_ui_workflow_is_loaded_without_rebuilding(tmp_path):
+    workflow = tmp_path / "tp2.json"
+    payload = {"nodes": [{"id": 1, "type": "RayMiniMaxH3DualGPUCLIPLoader"}]}
+    workflow.write_text(json.dumps(payload), encoding="utf-8")
+
+    class BuilderMustNotRun:
+        SOURCE_WORKFLOWS = {"i2v": "unused"}
+
+        @staticmethod
+        def build_workflow(*args, **kwargs):
+            raise AssertionError("explicit workflow must not be rebuilt")
+
+    loaded = benchmark.load_benchmark_workflow(
+        BuilderMustNotRun,
+        mode="i2v",
+        profile="full",
+        compute_dtype="default",
+        turbo_variant=None,
+        workflow_path=workflow,
+    )
+
+    assert loaded == payload
