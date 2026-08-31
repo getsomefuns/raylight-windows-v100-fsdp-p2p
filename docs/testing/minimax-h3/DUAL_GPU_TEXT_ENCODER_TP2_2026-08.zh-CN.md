@@ -3,8 +3,8 @@
 ## 文档状态
 
 - 阶段：O10。
-- 当前任务：Task 1，冻结单卡 Text Encoder 冷/热基线。
-- 状态：完成；实机冷 3 次、热 3 次均通过。
+- 当前任务：Task 3，MiniMax H3 NVFP4 row/column 分片。
+- 状态：完成；Gate A、Gate B 均通过，准备进入并行 Linear。
 
 ## 测试验证目标
 
@@ -78,3 +78,22 @@ Task 1 已关闭。O10 后续验收的本机对照值为：冷中位数 20.76 �
 每种组合先执行 1 次不计时预热，表中均为后续 100 次结果。1 MiB 由固定的 Python/CUDA event 提交成本主导；16/64 MiB 更接近 Text Encoder 层内 partial 的有效数据面性能。负的“增长”表示前一个更大测试缓冲在后续采样期间释放，不是测量错误。
 
 Task 2 的 19 项定向测试与当时全仓库 522 项测试均通过。Gate A 通过，可以进入 NVFP4 row/column 分片；该结果只证明 SUM 原语可用，尚不代表完整 Text Encoder TP2 已通过 Gate B–F。
+
+## Task 3：真实 NVFP4 row/column 分片 / Gate B
+
+测试附件：`.local/artifacts/o10/text-encoder-tp2/nvfp4-shard-probe-20260831.json`。
+
+测试 checkpoint 为 `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors`。测试只读取 layer 0 四种代表性矩阵；先从 packed qdata、FP8 block-scale 与全局 scale 构造量化权重，再分别创建 rank 0/1 分片。分片构造完成后才执行完整反量化作为验收基线，因此基线本身不属于正式分片路径。
+
+| 线性层 | 分片方式 | 源逻辑 shape | 每 rank shape | 两分片 qdata 总量 | 两分片 scale 总量 | 分片构造时间 | 数值结果 |
+|---|---|---:|---:|---:|---:|---:|---|
+| q_proj | 输出行 row | 8192×5120 | 4096×5120 | 20,971,520 B | 2,621,440 B | 22.3 ms | 逐元素一致、finite |
+| o_proj | 输入列 column | 5120×8192 | 5120×4096 | 20,971,520 B | 2,621,440 B | 14.2 ms | 逐元素一致、finite |
+| up_proj | 输出行 row | 25600×5120 | 12800×5120 | 65,536,000 B | 8,192,000 B | 15.3 ms | 逐元素一致、finite |
+| down_proj | 输入列 column | 5120×25600 | 5120×12800 | 65,536,000 B | 8,192,000 B | 35.5 ms | 逐元素一致、finite |
+
+四种矩阵中，两分片 packed qdata 总字节数均严格等于源 qdata；两分片 block-scale 总字节数也严格等于源 block-scale。因此 row/column 分片没有丢失数据，也没有为了分片保留第二份完整量化权重。
+
+NVFP4 block-scale 采用 cuBLAS tiled/swizzled 排列，不能按表面二维 shape 直接切。实现仅把这张体积约为 qdata 八分之一的 FP8 缩放表还原布局、切片、重新排列；packed 4-bit qdata 直接切片，全局 `weight_scale_2` 只读复用。单元测试通过 monkeypatch 禁止调用 `QuantizedTensor.dequantize()`，证明分片构造过程不会生成完整 FP16/FP32 权重临时副本。
+
+Gate B 结论：通过。该结论证明真实 checkpoint 的量化权重可以无损拆为两个 TP rank，但尚未证明 Linear 数学、完整 Qwen3-VL block、GPU 显存或端到端速度；这些分别属于 Gate C–F。

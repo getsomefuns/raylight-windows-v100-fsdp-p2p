@@ -431,13 +431,15 @@ Task 2 / Gate A 结果：六种组合全部逐元素一致且 finite；100 次�
 - Consumes: comfy_kitchen TensorCoreNVFP4Layout。
 - Produces: QuantizedLinearShard 和 shard_nvfp4_linear(weight, axis, rank, world_size=2)。
 
-- [ ] 用真实 checkpoint 中三种代表 shape 写失败测试：QKV row shard、o_proj column shard、MLP up/down shard。
-- [ ] 运行测试，确认失败。
-- [ ] 实现 qdata、weight_scale、weight_scale_2 的一致切分和对齐校验。
-- [ ] 验证构造分片期间没有完整 FP16/FP32 临时张量。
-- [ ] 解量化两个分片并重建逻辑权重，逐元素比较完整解量化基线。
-- [ ] 加入不对齐 shape 的明确错误消息测试。
-- [ ] 提交：feat: shard MiniMax H3 NVFP4 text encoder weights。
+- [x] 用真实 checkpoint 中四种代表 shape 写失败测试：QKV row shard、o_proj column shard、MLP up/down shard。
+- [x] 运行测试，确认因分片模块不存在而失败。
+- [x] 实现 qdata、weight_scale、weight_scale_2 的一致切分和对齐校验。
+- [x] 验证构造分片期间没有完整 FP16/FP32 临时张量。
+- [x] 解量化两个分片并重建逻辑权重，逐元素比较完整解量化基线。
+- [x] 加入不对齐 shape 的明确错误消息测试。
+- [x] 提交：feat: shard MiniMax H3 NVFP4 text encoder weights（`9aeb65c`）。
+
+Task 3 / Gate B 结果：真实 `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` 的 layer 0 `q_proj`、`o_proj`、`up_proj`、`down_proj` 均通过。两个 rank 的反量化结果分别与完整权重对应切片逐元素一致且 finite；两分片 qdata 与 block-scale 的总字节数严格等于源权重，不存在数据复制膨胀。分片器只解开和重排小型 FP8 block-scale 表，构造期间不会调用完整权重反量化。Gate B 通过，Task 4 可以开始。
 
 ## 17. Task 4：并行 Linear 与单层数学正确性
 
