@@ -245,7 +245,9 @@ def prepare_prompt(
     _, sampler = _one_node(prompt, "XFuserSamplerCustomAdvanced")
     sampler["inputs"]["noise_seed"] = int(sampler["inputs"]["noise_seed"]) + run_index * SEED_STRIDE
     _, save_video = _one_node(prompt, "SaveVideo")
-    if output_tag and output_tag.startswith("o6-"):
+    if output_tag and output_tag.startswith("o10-"):
+        output_group = "raylight_o10"
+    elif output_tag and output_tag.startswith("o6-"):
         output_group = "raylight_o6"
     elif output_tag:
         output_group = "raylight_o3"

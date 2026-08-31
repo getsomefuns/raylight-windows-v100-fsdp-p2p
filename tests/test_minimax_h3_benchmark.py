@@ -411,3 +411,16 @@ def test_explicit_ui_workflow_is_loaded_without_rebuilding(tmp_path):
     )
 
     assert loaded == payload
+
+
+def test_o10_output_tag_keeps_video_in_o10_group():
+    prompt = {
+        "1": {"class_type": "RayInitializer", "inputs": {"GPU": 2, "FSDP": True}},
+        "2": {"class_type": "RayUNETLoader", "inputs": {}},
+        "3": {"class_type": "XFuserSamplerCustomAdvanced", "inputs": {"noise_seed": 42}},
+        "4": {"class_type": "SaveVideo", "inputs": {"filename_prefix": "old"}},
+    }
+
+    prepared = benchmark.prepare_prompt(prompt, "i2v", 0, output_tag="o10-tp2")
+
+    assert prepared["4"]["inputs"]["filename_prefix"].startswith("video/raylight_o10/")
