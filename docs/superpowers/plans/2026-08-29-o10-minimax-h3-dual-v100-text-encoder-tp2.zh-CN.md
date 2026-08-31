@@ -542,12 +542,14 @@ Task 7 结果：新增同步 Worker GPU 生命周期状态机和双 rank 全有�
 
 - Produces: RayMiniMaxH3DualGPUCLIPLoader 节点和 CLIP/RAY_ACTORS_INIT 输出。
 
-- [ ] 写节点 schema、默认值、显示名和旧节点冻结测试。
-- [ ] 实现显式 tp2/single_gpu_fallback，不允许自动回退。
-- [ ] 建立普通 I2V/REF2VA 和 MMH3Director 的最少改线工作流。
-- [ ] 验证 Director 的 seed、steps、FPS、duration、resolution、prompt groups 等仍由 Director 控制。
-- [ ] 验证 Text Encoder 只运行一次，Director 不会再次本地编码或采样。
-- [ ] 提交：feat: expose MiniMax H3 dual-GPU text encoder node。
+- [x] 写节点 schema、默认值、显示名和旧节点冻结测试。
+- [x] 实现显式 tp2/single_gpu_fallback，不允许自动回退。
+- [x] 建立普通 I2V/REF2VA 和 MMH3Director 的最少改线工作流。
+- [x] 验证 Director 的 seed、steps、FPS、duration、resolution、prompt groups 等仍由 Director 控制。
+- [x] 验证每个 conditioning 请求只有一个 Text Encoder 路径，Director 不会增加本地 MODEL 或本地采样器旁路。
+- [x] 提交：feat: expose MiniMax H3 dual-GPU text encoder node（`f1ddbda`）。
+
+Task 8 结果：新增 `RayMiniMaxH3DualGPUCLIPLoader`，输出 `CLIP` 与原 `RAY_ACTORS_INIT`，`tp2` 和 `single_gpu_fallback` 必须由用户显式选择。TP2 只接受 `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` 和恰好两个 live RayWorker；每次 encode 使用唯一 operation ID 取得 Task 7 的双卡租约，异常时由上下文归还，不会自动切回单卡。新增 I2V Turbo8、REF2VA Turbo4 和 MMH3Director 三个可复现工作流；旧工作流未修改。真实 ComfyUI `/object_info` 注册通过，三个 UI 工作流分别转换为 21、21、13 个 API 节点；Director 图只有一个 TP2 Loader、一个 Ray MODEL Adapter、零普通 CLIPLoader、零本地采样器，原 seed/steps/FPS/duration/resolution/timeline/prompt group 控制面保持不变。完成时全仓库 595 项测试、35 个子测试通过。Task 8 只关闭节点与图结构接入，真实视频质量、显存与多段稳定性属于 Task 9。
 
 ## 22. Task 9：真实显存、数值和多段稳定性
 

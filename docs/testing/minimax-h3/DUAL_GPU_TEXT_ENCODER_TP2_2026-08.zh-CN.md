@@ -3,8 +3,8 @@
 ## 文档状态
 
 - 阶段：O10。
-- 当前任务：Task 7，Worker 双 GPU 显存租约。
-- 状态：完成；Gate A–D 及 Gate D 生命周期补充验收通过，准备进入节点、工作流与 Director 接入。
+- 当前任务：Task 8，节点、工作流与 Director 接入。
+- 状态：完成；Gate A–D、Worker 生命周期和图结构接入通过，准备进入真实显存、数值、视频与多段稳定性验收。
 
 ## 测试验证目标
 
@@ -204,3 +204,30 @@ Gate D conditioning 结论：通过。真实 50 层 checkpoint、GPU0 视觉塔�
 Task 7 定向生命周期回归为 `29 passed`；完成时全仓库为 `573 passed`、`35 subtests passed`。全量测试的 warning 仍来自 Windows pytest 临时目录清理和 PyTorch nested tensor 原型提示，不是租约失败。
 
 Task 7 结论：通过。显存租约解决的是 RayWorker 与主进程 TP2 Text Encoder 争用同两张卡的问题，不把两卡显存合并成统一 32 GiB 地址空间，也不改变现有 Diffusion FSDP/Ulysses 的模型缓存格式。下一步是 Task 8 的显式节点和工作流接入。
+
+## Task 8：节点、工作流与 Director 接入
+
+测试附件：`.local/artifacts/o10/text-encoder-tp2/task8/`，包含由真实 ComfyUI `/object_info` 转换得到的 `i2v-api.json`、`ref2va-api.json` 和 `director-api.json`。
+
+新增节点 `RayMiniMaxH3DualGPUCLIPLoader` 的真实服务端注册结果：
+
+- 显示名：`Load MiniMax H3 Text Encoder (Dual V100 TP2)`。
+- 分类：`Raylight/text_encoder`。
+- 必需输入：`clip_name`、`execution_mode`、`ray_actors_init`。
+- 输出：`CLIP`、`RAY_ACTORS_INIT`。
+- 模式：`tp2` 或 `single_gpu_fallback`；不存在 `auto`，TP2 错误不会被单卡执行掩盖。
+- 首个支持 checkpoint：`qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors`；其他文件名在节点入口明确拒绝。
+
+三个新工作流均由冻结的已验收工作流机械生成，构建脚本为 `scripts/minimax-h3/build_tp2_workflows.py`，测试要求提交后的 JSON 与重新构建逐项相等：
+
+| 路径 | 来源 | API 节点数 | Text Encoder / 采样旁路检查 |
+|---|---|---:|---|
+| `Minimax_H3_I2V_DualGPU_Text_Encoder_TP2_Raylight.json` | I2V FSDP Turbo8 | 21 | 1 个 TP2 Loader；0 个普通 CLIPLoader |
+| `Minimax_H3_REF2VA_DualGPU_Text_Encoder_TP2_Raylight.json` | REF2VA FSDP Turbo4 | 21 | 1 个 TP2 Loader；0 个普通 CLIPLoader |
+| `Minimax_H3_DualGPU_Text_Encoder_TP2_Raylight.json` | MMH3Director FSDP | 13 | 1 个 TP2 Loader；1 个 Ray MODEL Adapter；0 个普通 CLIPLoader；0 个本地采样器 |
+
+普通 I2V/REF2VA 中原 conditioning → `RayInitializer.wait_for` 连接会与新 Loader 的 RayWorker 依赖形成环，因此新工作流明确移除该 wait link；运行期安全由双卡租约保证。Initializer 先输出到 TP2 Loader，Loader 的 `RAY_ACTORS_INIT` 再传给 RayUNETLoader。Director 原有 seed、steps、sampler、scheduler、shift、FPS、duration、resolution、timeline、prompt groups、VAE 和保存链均保持原值，只替换 CLIP 来源并串行化 actor 初始化。
+
+41 项 Task 8 定向测试通过；全仓库为 `595 passed`、`35 subtests passed`。部署到 `E:\ComfyUI-py310\ComfyUI\custom_nodes\raylight` 后真实启动无节点导入错误，验证结束已关闭 ComfyUI 和 Ray，双卡无残留进程。
+
+Task 8 结论：通过。这里证明的是节点注册、显式模式、工作流无环、Director 控制面和无重复本地采样旁路；尚未宣称三个工作流已完成真实视频质量/显存/多段验收，该证据必须由 Task 9 提供。
