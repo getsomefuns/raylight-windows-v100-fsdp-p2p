@@ -29,6 +29,7 @@ def test_cli_contract_exposes_backend_sequence_device_and_json_output() -> None:
     assert args.backend == "XFORMERS_GQA"
     assert args.sequence == 6992
     assert args.device == "cuda:0"
+    assert args.dtype == "float32"
     assert args.json_output == Path("result.json")
 
 
@@ -65,7 +66,7 @@ def test_probe_returns_stable_json_contract_and_real_finite_output() -> None:
     assert result["q_heads"] == 32
     assert result["kv_heads"] == 4
     assert result["head_dim"] == 128
-    assert result["dtype"] == "float16"
+    assert result["dtype"] == "float32"
     assert result["input_mib"] > 0
     assert result["peak_mib"] >= result["input_mib"]
     assert result["elapsed_seconds"] > 0

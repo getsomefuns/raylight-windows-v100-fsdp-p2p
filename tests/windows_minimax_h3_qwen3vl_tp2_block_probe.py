@@ -6,6 +6,7 @@ from dataclasses import replace
 import argparse
 import gc
 import json
+from functools import partial
 from pathlib import Path
 import sys
 
@@ -19,6 +20,7 @@ from comfy_kitchen.tensor import QuantizedTensor, TensorCoreNVFP4Layout
 from safetensors import safe_open
 
 from raylight.text_encoder_parallel.collectives import CudaPeerGroup2
+from raylight.text_encoder_parallel.attention_backends import resolve_attention_backend, run_text_encoder_attention
 from raylight.text_encoder_parallel.linear import ColumnParallelLinear, RowParallelLinear, TorchDualCudaLinearExecutor
 from raylight.text_encoder_parallel.nvfp4_sharding import shard_nvfp4_linear
 from raylight.text_encoder_parallel.qwen3vl_tp import (
@@ -66,7 +68,7 @@ def _rms(x, weight):
     return F.rms_norm(x, (x.shape[-1],), weight.to(device=x.device, dtype=x.dtype), MINIMAX_H3_QWEN3VL_CONFIG.rms_norm_eps)
 
 
-def _single_gpu_baseline(handle, weights, hidden, position_ids, mask, norms, scales):
+def _single_gpu_baseline(handle, weights, hidden, position_ids, norms, scales):
     config = MINIMAX_H3_QWEN3VL_CONFIG
 
     def linear(name, x, pre_scale=None):
@@ -89,7 +91,7 @@ def _single_gpu_baseline(handle, weights, hidden, position_ids, mask, norms, sca
     k = _rms(k, norms["k"])
     rope = build_qwen3vl_rope(config, position_ids, device=hidden.device)
     q, k = apply_qwen3vl_rope(q, k, rope)
-    attended = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=True)
+    attended = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)
     attended = attended.transpose(1, 2).reshape(batch, sequence, -1)
     x = residual + linear("o", attended, scales["o"])
     residual = x
@@ -139,9 +141,8 @@ def run_probe(checkpoint: Path, *, tokens: int) -> dict:
         hidden_cpu = torch.randn((1, tokens, config.hidden_size), dtype=torch.float16) * 0.05
         hidden0 = hidden_cpu.to("cuda:0")
         position_ids = torch.arange(tokens).unsqueeze(0)
-        mask0 = torch.full((tokens, tokens), torch.finfo(torch.float16).min / 4, device="cuda:0", dtype=torch.float16).triu_(1)
-        expected = _single_gpu_baseline(handle, weights, hidden0, position_ids, mask0, norms, scales).cpu()
-        del hidden0, mask0
+        expected = _single_gpu_baseline(handle, weights, hidden0, position_ids, norms, scales).cpu()
+        del hidden0
         torch.cuda.empty_cache()
 
         torch.cuda.reset_peak_memory_stats(0)
@@ -156,6 +157,7 @@ def run_probe(checkpoint: Path, *, tokens: int) -> dict:
             name: tuple(part.contiguous().to(f"cuda:{rank}") for rank, part in enumerate(value.chunk(2)))
             for name, value in scales.items()
         }
+        selected_attention = resolve_attention_backend("AUTO", probe_device="cuda:0")
         block = TP2Qwen3VLBlock(
             config,
             q_proj=ColumnParallelLinear(shards["q"], executor=executor),
@@ -173,12 +175,12 @@ def run_probe(checkpoint: Path, *, tokens: int) -> dict:
             post_attention_layernorm=norm_pairs["post"],
             q_norm=norm_pairs["q"],
             k_norm=norm_pairs["k"],
+            attention_forward=partial(run_text_encoder_attention, backend=selected_attention),
         )
         hidden = (hidden_cpu.to("cuda:0"), hidden_cpu.to("cuda:1"))
-        mask = torch.full((tokens, tokens), torch.finfo(torch.float16).min / 4, dtype=torch.float16).triu_(1)
-        block.forward(hidden[0], hidden[1], position_ids, attention_mask=mask, operation_id=1)
+        block.forward(hidden[0], hidden[1], position_ids, operation_id=1)
         calls_before = collective.profile_snapshot()["calls"]
-        actual = block.forward(hidden[0], hidden[1], position_ids, attention_mask=mask, operation_id=3)
+        actual = block.forward(hidden[0], hidden[1], position_ids, operation_id=3)
         calls_after = collective.profile_snapshot()["calls"]
         actual0, actual1 = actual[0].cpu(), actual[1].cpu()
 

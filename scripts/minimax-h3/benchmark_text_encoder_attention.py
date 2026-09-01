@@ -39,11 +39,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--sequence", required=True, type=int)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--dtype", choices=["float32", "float16"], default="float32")
     parser.add_argument("--json-output", type=Path)
     return parser
 
 
-def benchmark_attention(backend: str, sequence: int, *, device: str = "cuda:0") -> dict[str, object]:
+def benchmark_attention(
+    backend: str,
+    sequence: int,
+    *,
+    device: str = "cuda:0",
+    dtype: str = "float32",
+) -> dict[str, object]:
     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence <= 0:
         raise ValueError("sequence must be a positive integer")
     requested = TextEncoderAttentionBackend(str(backend).strip().upper())
@@ -56,14 +63,17 @@ def benchmark_attention(backend: str, sequence: int, *, device: str = "cuda:0") 
         raise RuntimeError("CUDA is unavailable")
 
     selected = resolve_attention_backend(requested, probe_device=cuda_device)
-    dtype = torch.float16
+    try:
+        torch_dtype = {"float32": torch.float32, "float16": torch.float16}[dtype]
+    except KeyError as exc:
+        raise ValueError("dtype must be float32 or float16") from exc
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats(cuda_device)
     query = key = value = output = None
     try:
-        query = torch.randn(1, Q_HEADS, sequence, HEAD_DIM, device=cuda_device, dtype=dtype)
-        key = torch.randn(1, KV_HEADS, sequence, HEAD_DIM, device=cuda_device, dtype=dtype)
-        value = torch.randn(1, KV_HEADS, sequence, HEAD_DIM, device=cuda_device, dtype=dtype)
+        query = torch.randn(1, Q_HEADS, sequence, HEAD_DIM, device=cuda_device, dtype=torch_dtype)
+        key = torch.randn(1, KV_HEADS, sequence, HEAD_DIM, device=cuda_device, dtype=torch_dtype)
+        value = torch.randn(1, KV_HEADS, sequence, HEAD_DIM, device=cuda_device, dtype=torch_dtype)
         input_bytes = sum(tensor.numel() * tensor.element_size() for tensor in (query, key, value))
         torch.cuda.synchronize(cuda_device)
         started = time.perf_counter()
@@ -79,7 +89,7 @@ def benchmark_attention(backend: str, sequence: int, *, device: str = "cuda:0") 
             "q_heads": Q_HEADS,
             "kv_heads": KV_HEADS,
             "head_dim": HEAD_DIM,
-            "dtype": str(dtype).removeprefix("torch."),
+            "dtype": str(torch_dtype).removeprefix("torch."),
             "input_mib": input_bytes / MIB,
             "peak_mib": peak_mib,
             "elapsed_seconds": elapsed,
@@ -97,7 +107,7 @@ def benchmark_attention(backend: str, sequence: int, *, device: str = "cuda:0") 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    result = benchmark_attention(args.backend, args.sequence, device=args.device)
+    result = benchmark_attention(args.backend, args.sequence, device=args.device, dtype=args.dtype)
     encoded = json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False)
     if args.json_output is not None:
         args.json_output.parent.mkdir(parents=True, exist_ok=True)

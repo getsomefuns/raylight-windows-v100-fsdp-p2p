@@ -143,7 +143,10 @@ def run_tp2(
     proxy = MiniMaxH3TP2ClipProxy(
         tokenizer=MiniMaxH3Tokenizer(embedding_directory=[]),
         preprocessor_factory=lambda: MiniMaxH3CheckpointPreprocessor(checkpoint),
-        backbone_factory=lambda: load_minimax_h3_tp2_backbone(checkpoint),
+        backbone_factory=lambda backend: load_minimax_h3_tp2_backbone(
+            checkpoint, attention_backend=backend
+        ),
+        attention_backend="AUTO",
     )
     started = time.perf_counter()
     tokens = proxy.tokenize(prompt, **tokenize_kwargs)
