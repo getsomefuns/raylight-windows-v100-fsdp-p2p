@@ -116,6 +116,14 @@ class BaselineRecord:
         return json.dumps(self.to_mapping(), ensure_ascii=False, sort_keys=True)
 
 
+@dataclass
+class StageMeasurement:
+    """Mutable timing result yielded by :func:`timed_stage`."""
+
+    elapsed_s: float = 0.0
+    failed: bool = False
+
+
 def stage_timing_enabled(environ: Mapping[str, str] | None = None) -> bool:
     value = (environ or os.environ).get(BASELINE_ENV, "")
     return value.strip().lower() in {"1", "true", "yes", "on"}
@@ -160,6 +168,19 @@ def record_tp2_profile(profile: Mapping[str, Any]) -> bool:
     return True
 
 
+def record_tp2_summary(summary: Mapping[str, Any]) -> bool:
+    """Append one opt-in aggregate Text Encoder record without prompt contents."""
+
+    event_path = os.environ.get(BASELINE_EVENT_PATH_ENV, "").strip()
+    if not stage_timing_enabled() or not event_path:
+        return False
+    append_event(
+        Path(event_path),
+        {"event": "text_encoder_tp2_summary", "summary": dict(summary)},
+    )
+    return True
+
+
 @contextmanager
 def timed_stage(stage: str):
     """Record one opt-in TP2 stage without changing normal execution behavior."""
@@ -168,23 +189,24 @@ def timed_stage(stage: str):
     enabled = stage_timing_enabled() and bool(event_path)
     started = time.perf_counter()
     begin_ns = time.time_ns()
-    failed = False
+    measurement = StageMeasurement()
     try:
-        yield
+        yield measurement
     except BaseException:
-        failed = True
+        measurement.failed = True
         raise
     finally:
+        measurement.elapsed_s = time.perf_counter() - started
         if enabled:
             append_event(
                 Path(event_path),
                 {
                     "event": "text_encoder_stage",
                     "stage": stage,
-                    "elapsed_s": time.perf_counter() - started,
+                    "elapsed_s": measurement.elapsed_s,
                     "begin_time_ns": begin_ns,
                     "time_ns": time.time_ns(),
-                    "failed": failed,
+                    "failed": measurement.failed,
                 },
             )
 

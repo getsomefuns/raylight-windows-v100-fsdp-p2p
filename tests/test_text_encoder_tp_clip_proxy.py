@@ -280,6 +280,27 @@ def test_proxy_records_detailed_benchmark_stages(
             "profile": {"layers": 50, "linear_pair_operations": 350},
         }
     ]
+    summaries = [event for event in events if event["event"] == "text_encoder_tp2_summary"]
+    assert len(summaries) == 1
+    summary = summaries[0]["summary"]
+    assert summary["attention_backend"] == "AUTO"
+    assert summary["tokens"] == {
+        "expanded_sequence": 2,
+        "attended_tokens": 2,
+        "text_positions": 2,
+        "visual_positions": 0,
+    }
+    assert set(summary["stages_s"]) == {
+        "preprocessor_load",
+        "preprocess_and_vision",
+        "preprocessor_cleanup",
+        "backbone_load",
+        "language_backbone",
+        "backbone_cleanup",
+        "conditioning_finalize",
+    }
+    assert set(summary["gpu_peak_allocated_mib"]) == {"0", "1"}
+    assert set(summary["gpu_cleanup_allocated_mib"]) == {"0", "1"}
 
 
 def test_backbone_profile_aggregates_linear_overlap_and_collectives() -> None:

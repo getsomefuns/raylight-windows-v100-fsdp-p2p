@@ -29,7 +29,7 @@ from .attention_backends import (
     run_text_encoder_attention,
 )
 from .collectives import CudaPeerGroup2
-from .baseline import record_tp2_profile, stage_timing_enabled, timed_stage
+from .baseline import record_tp2_profile, record_tp2_summary, stage_timing_enabled, timed_stage
 from .linear import ColumnParallelLinear, RowParallelLinear, TorchDualCudaLinearExecutor
 from .nvfp4_sharding import shard_nvfp4_linear
 from .qwen3vl_tp import MINIMAX_H3_QWEN3VL_CONFIG, TP2Qwen3VLBlock
@@ -774,31 +774,77 @@ class MiniMaxH3TP2ClipProxy:
         if any(weight != 1.0 for section in weights for weight in section):
             raise ValueError("weighted MiniMax prompts are not supported by the TP2 proxy")
 
-        with self._execution_context_factory():
-            with timed_stage("preprocessor_load"):
-                preprocessor = self._preprocessor_factory()
-            try:
-                with timed_stage("preprocess_and_vision"):
-                    prepared = preprocessor.prepare(sections)
-            finally:
-                with timed_stage("preprocessor_cleanup"):
-                    preprocessor.close()
+        diagnostics_enabled = stage_timing_enabled()
+        stage_seconds: dict[str, float] = {}
+        if diagnostics_enabled and torch.cuda.is_available():
+            for rank in (0, 1):
+                device = torch.device("cuda", rank)
+                # The Windows allocator has no stats object until that device's
+                # context has seen at least one allocation.
+                torch.empty(0, device=device)
+                torch.cuda.reset_peak_memory_stats(rank)
 
-            with timed_stage("backbone_load"):
-                backbone = self._backbone_factory(self.attention_backend)
+        with self._execution_context_factory():
+            with timed_stage("preprocessor_load") as measurement:
+                preprocessor = self._preprocessor_factory()
+            stage_seconds["preprocessor_load"] = measurement.elapsed_s
             try:
-                with timed_stage("language_backbone"):
+                with timed_stage("preprocess_and_vision") as measurement:
+                    prepared = preprocessor.prepare(sections)
+                stage_seconds["preprocess_and_vision"] = measurement.elapsed_s
+            finally:
+                with timed_stage("preprocessor_cleanup") as measurement:
+                    preprocessor.close()
+                stage_seconds["preprocessor_cleanup"] = measurement.elapsed_s
+
+            with timed_stage("backbone_load") as measurement:
+                backbone = self._backbone_factory(self.attention_backend)
+            stage_seconds["backbone_load"] = measurement.elapsed_s
+            selected_backend = getattr(backbone, "selected_attention_backend", self.attention_backend)
+            selected_backend = getattr(selected_backend, "value", str(selected_backend))
+            try:
+                with timed_stage("language_backbone") as measurement:
                     encoded = backbone.encode(prepared)
+                stage_seconds["language_backbone"] = measurement.elapsed_s
                 if stage_timing_enabled():
                     record_tp2_profile(backbone.profile_snapshot())
             finally:
-                with timed_stage("backbone_cleanup"):
+                with timed_stage("backbone_cleanup") as measurement:
                     backbone.close()
-        with timed_stage("conditioning_finalize"):
+                stage_seconds["backbone_cleanup"] = measurement.elapsed_s
+        with timed_stage("conditioning_finalize") as measurement:
             if encoded.ndim != 3 or encoded.shape[:2] != prepared.embeddings.shape[:2]:
                 raise RuntimeError("TP2 backbone returned an invalid conditioning shape")
             if not torch.isfinite(encoded).all().item():
                 raise RuntimeError("TP2 backbone returned NaN or Inf conditioning")
+        stage_seconds["conditioning_finalize"] = measurement.elapsed_s
+        if diagnostics_enabled:
+            gpu_peak_allocated_mib: dict[str, float] = {}
+            gpu_cleanup_allocated_mib: dict[str, float] = {}
+            for rank in (0, 1):
+                if torch.cuda.is_available():
+                    device = torch.device("cuda", rank)
+                    gpu_peak_allocated_mib[str(rank)] = torch.cuda.max_memory_allocated(device) / 1024**2
+                    gpu_cleanup_allocated_mib[str(rank)] = torch.cuda.memory_allocated(device) / 1024**2
+                else:
+                    gpu_peak_allocated_mib[str(rank)] = 0.0
+                    gpu_cleanup_allocated_mib[str(rank)] = 0.0
+            text_positions = int((prepared.token_tags == 1).sum().item())
+            visual_positions = int(prepared.token_tags.numel() - text_positions)
+            record_tp2_summary(
+                {
+                    "attention_backend": selected_backend,
+                    "tokens": {
+                        "expanded_sequence": int(prepared.embeddings.shape[1]),
+                        "attended_tokens": int(sum(prepared.num_tokens)),
+                        "text_positions": text_positions,
+                        "visual_positions": visual_positions,
+                    },
+                    "stages_s": stage_seconds,
+                    "gpu_peak_allocated_mib": gpu_peak_allocated_mib,
+                    "gpu_cleanup_allocated_mib": gpu_cleanup_allocated_mib,
+                }
+            )
         return encoded, None, {"minimax_token_tags": prepared.token_tags}
 
     def encode_token_weights(self, tokens: dict):
