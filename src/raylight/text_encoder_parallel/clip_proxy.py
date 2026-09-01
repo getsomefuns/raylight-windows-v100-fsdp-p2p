@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
+from functools import partial
 import gc
 import math
 import numbers
@@ -22,6 +23,11 @@ import statistics
 
 import torch
 
+from .attention_backends import (
+    TextEncoderAttentionBackend,
+    resolve_attention_backend,
+    run_text_encoder_attention,
+)
 from .collectives import CudaPeerGroup2
 from .baseline import record_tp2_profile, stage_timing_enabled, timed_stage
 from .linear import ColumnParallelLinear, RowParallelLinear, TorchDualCudaLinearExecutor
@@ -410,6 +416,7 @@ class TP2Qwen3VLBackbone:
         *,
         devices: tuple[torch.device, torch.device] = (torch.device("cuda", 0), torch.device("cuda", 1)),
         close_callbacks: Sequence[Callable[[], None]] = (),
+        selected_attention_backend: str | TextEncoderAttentionBackend = TextEncoderAttentionBackend.MATH_DEBUG,
     ) -> None:
         if not blocks:
             raise ValueError("TP2 language backbone requires at least one block")
@@ -417,14 +424,13 @@ class TP2Qwen3VLBackbone:
             raise ValueError("TP2 language backbone requires exactly two devices")
         self.blocks = list(blocks)
         self.devices = devices
+        self.selected_attention_backend = (
+            selected_attention_backend
+            if isinstance(selected_attention_backend, TextEncoderAttentionBackend)
+            else TextEncoderAttentionBackend(str(selected_attention_backend).strip().upper())
+        )
         self._close_callbacks = tuple(close_callbacks)
         self._closed = False
-
-    @staticmethod
-    def _causal_mask(sequence: int, dtype: torch.dtype) -> torch.Tensor:
-        return torch.full(
-            (sequence, sequence), torch.finfo(dtype).min / 4, dtype=dtype
-        ).triu_(1)
 
     def encode(self, prepared: PreparedMiniMaxConditioning) -> torch.Tensor:
         if self._closed:
@@ -435,14 +441,11 @@ class TP2Qwen3VLBackbone:
             prepared.embeddings.to(self.devices[0], dtype=torch.float32),
             prepared.embeddings.to(self.devices[1], dtype=torch.float32),
         )
-        sequence = int(prepared.embeddings.shape[1])
-        mask = self._causal_mask(sequence, torch.float32)
         for layer, block in enumerate(self.blocks):
             hidden = block.forward(
                 hidden[0],
                 hidden[1],
                 prepared.position_ids,
-                attention_mask=mask,
                 operation_id=layer * 2 + 1,
             )
             if prepared.deepstack_embeddings is not None and layer < len(prepared.deepstack_embeddings):
@@ -588,7 +591,11 @@ def _gpu_shards(weight, *, axis: str):
     return tuple(shards)
 
 
-def load_minimax_h3_tp2_backbone(checkpoint: str | Path) -> TP2Qwen3VLBackbone:
+def load_minimax_h3_tp2_backbone(
+    checkpoint: str | Path,
+    *,
+    attention_backend: str | TextEncoderAttentionBackend = TextEncoderAttentionBackend.AUTO,
+) -> TP2Qwen3VLBackbone:
     """Load 50 NVFP4 decoder layers directly into two V100-local shards."""
 
     import comfy_kitchen as ck
@@ -598,6 +605,8 @@ def load_minimax_h3_tp2_backbone(checkpoint: str | Path) -> TP2Qwen3VLBackbone:
     if not path.is_file():
         raise FileNotFoundError(path)
     validate_windows_v100_topology(torch_module=torch, devices=(0, 1))
+    selected_attention_backend = resolve_attention_backend(attention_backend, probe_device="cuda:0")
+    attention_forward = partial(run_text_encoder_attention, backend=selected_attention_backend)
     ck.registry.disable("cuda")
     ck.registry.disable("triton")
     executor = TorchDualCudaLinearExecutor()
@@ -655,11 +664,13 @@ def load_minimax_h3_tp2_backbone(checkpoint: str | Path) -> TP2Qwen3VLBackbone:
                         post_attention_layernorm=norm_pair("post_attention_layernorm.weight"),
                         q_norm=norm_pair("self_attn.q_norm.weight"),
                         k_norm=norm_pair("self_attn.k_norm.weight"),
+                        attention_forward=attention_forward,
                     )
                 )
         return TP2Qwen3VLBackbone(
             blocks,
             close_callbacks=(executor.close, collective.close),
+            selected_attention_backend=selected_attention_backend,
         )
     except BaseException:
         blocks.clear()
@@ -680,13 +691,19 @@ class MiniMaxH3TP2ClipProxy:
         *,
         tokenizer: Any,
         preprocessor_factory: Callable[[], Any],
-        backbone_factory: Callable[[], Any],
+        backbone_factory: Callable[[str], Any],
         execution_context_factory: Callable[[], Any] | None = None,
+        attention_backend: str | TextEncoderAttentionBackend = TextEncoderAttentionBackend.AUTO,
     ) -> None:
         self.tokenizer = tokenizer
         self._preprocessor_factory = preprocessor_factory
         self._backbone_factory = backbone_factory
         self._execution_context_factory = execution_context_factory or nullcontext
+        self.attention_backend = (
+            attention_backend.value
+            if isinstance(attention_backend, TextEncoderAttentionBackend)
+            else TextEncoderAttentionBackend(str(attention_backend).strip().upper()).value
+        )
         self.tokenizer_options: dict[str, Any] = {}
         self.layer_idx = None
         self.use_clip_schedule = False
@@ -700,6 +717,7 @@ class MiniMaxH3TP2ClipProxy:
             preprocessor_factory=self._preprocessor_factory,
             backbone_factory=self._backbone_factory,
             execution_context_factory=self._execution_context_factory,
+            attention_backend=self.attention_backend,
         )
         clone.tokenizer_options = self.tokenizer_options.copy()
         clone.layer_idx = self.layer_idx
@@ -767,7 +785,7 @@ class MiniMaxH3TP2ClipProxy:
                     preprocessor.close()
 
             with timed_stage("backbone_load"):
-                backbone = self._backbone_factory()
+                backbone = self._backbone_factory(self.attention_backend)
             try:
                 with timed_stage("language_backbone"):
                     encoded = backbone.encode(prepared)

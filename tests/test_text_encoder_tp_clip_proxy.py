@@ -8,12 +8,15 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+import raylight.text_encoder_parallel.clip_proxy as clip_proxy_module
 from raylight.text_encoder_parallel.linear import LinearExecutionStats
+from raylight.text_encoder_parallel.attention_backends import TextEncoderAttentionBackend
 
 from raylight.text_encoder_parallel.clip_proxy import (
     MiniMaxH3TP2ClipProxy,
     PreparedMiniMaxConditioning,
     TP2Qwen3VLBackbone,
+    load_minimax_h3_tp2_backbone,
     prepare_minimax_token_sections,
 )
 
@@ -154,9 +157,10 @@ class _Preprocessor:
 
 
 class _Backbone:
-    def __init__(self, state: _ResourceState, *, fail=False) -> None:
+    def __init__(self, state: _ResourceState, *, attention_backend, fail=False) -> None:
         self.state = state
         self.fail = fail
+        self.selected_attention_backend = TextEncoderAttentionBackend(attention_backend)
         state.backbone_active += 1
 
     def encode(self, prepared: PreparedMiniMaxConditioning):
@@ -172,11 +176,12 @@ class _Backbone:
         self.state.backbone_closed += 1
 
 
-def _proxy(state: _ResourceState, *, fail=False) -> MiniMaxH3TP2ClipProxy:
+def _proxy(state: _ResourceState, *, fail=False, attention_backend="AUTO") -> MiniMaxH3TP2ClipProxy:
     return MiniMaxH3TP2ClipProxy(
         tokenizer=_Tokenizer(),
         preprocessor_factory=lambda: _Preprocessor(state),
-        backbone_factory=lambda: _Backbone(state, fail=fail),
+        backbone_factory=lambda backend: _Backbone(state, attention_backend=backend, fail=fail),
+        attention_backend=attention_backend,
     )
 
 
@@ -205,6 +210,7 @@ def test_clip_proxy_clone_is_compatible_and_rejects_unsplit_lora() -> None:
     assert clone is not proxy
     assert clone.tokenizer is proxy.tokenizer
     assert clone.tokenize("x") == proxy.tokenize("x")
+    assert clone.attention_backend == proxy.attention_backend == "AUTO"
     assert proxy.add_patches({}) == []
     with pytest.raises(ValueError, match="Text Encoder LoRA"):
         proxy.add_patches({"model.layers.0.self_attn.q_proj.weight": object()})
@@ -314,10 +320,9 @@ class _TPBlock:
     def __init__(self) -> None:
         self.operation_ids = []
 
-    def forward(self, hidden0, hidden1, position_ids, *, attention_mask, operation_id):
+    def forward(self, hidden0, hidden1, position_ids, *, operation_id):
         self.operation_ids.append(operation_id)
         assert position_ids.shape == (1, 3)
-        assert attention_mask.shape == (3, 3)
         return hidden0 + 1, hidden1 + 1
 
 
@@ -338,6 +343,7 @@ def test_backbone_injects_deepstack_after_matching_decoder_layers() -> None:
         blocks,
         devices=(torch.device("cpu"), torch.device("cpu")),
         close_callbacks=(lambda: closed.append("executor"), lambda: closed.append("collective")),
+        selected_attention_backend="XFORMERS_GQA",
     )
 
     output = backbone.encode(prepared)
@@ -347,3 +353,48 @@ def test_backbone_injects_deepstack_after_matching_decoder_layers() -> None:
     assert output[:, 1].eq(33).all()
     assert [block.operation_ids for block in blocks] == [[1], [3], [5]]
     assert closed == ["executor", "collective"]
+    assert backbone.selected_attention_backend is TextEncoderAttentionBackend.XFORMERS_GQA
+    assert not hasattr(backbone, "_causal_mask")
+
+
+def test_proxy_propagates_forced_backend_to_backbone_factory() -> None:
+    state = _ResourceState()
+    seen = []
+
+    def backbone_factory(attention_backend):
+        seen.append(attention_backend)
+        return _Backbone(state, attention_backend=attention_backend)
+
+    proxy = MiniMaxH3TP2ClipProxy(
+        tokenizer=_Tokenizer(),
+        preprocessor_factory=lambda: _Preprocessor(state),
+        backbone_factory=backbone_factory,
+        attention_backend="TORCH_EFFICIENT",
+    )
+    proxy.encode_from_tokens(proxy.tokenize("prompt"))
+
+    assert seen == ["TORCH_EFFICIENT"]
+
+
+def test_backbone_loader_resolves_attention_before_allocating_model_resources(monkeypatch, tmp_path) -> None:
+    checkpoint = tmp_path / "checkpoint.safetensors"
+    checkpoint.touch()
+    events = []
+
+    monkeypatch.setattr(clip_proxy_module, "validate_windows_v100_topology", lambda **_kwargs: events.append("topology"))
+
+    def reject_backend(*_args, **_kwargs):
+        events.append("attention-probe")
+        raise RuntimeError("injected attention rejection")
+
+    monkeypatch.setattr(clip_proxy_module, "resolve_attention_backend", reject_backend)
+    monkeypatch.setattr(
+        clip_proxy_module,
+        "TorchDualCudaLinearExecutor",
+        lambda: pytest.fail("executor must not be allocated before attention selection"),
+    )
+
+    with pytest.raises(RuntimeError, match="injected attention rejection"):
+        load_minimax_h3_tp2_backbone(checkpoint, attention_backend="XFORMERS_GQA")
+
+    assert events == ["topology", "attention-probe"]
