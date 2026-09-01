@@ -118,6 +118,46 @@ def test_minimax_qk_norm_is_written_back_into_projection_storage(monkeypatch):
     torch.testing.assert_close(normalized_k, torch.arange(12, 24).reshape(2, 2, 3).half() - 1)
 
 
+def test_minimax_qk_norm_chunks_with_one_unshard_per_norm(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    monkeypatch.setattr(attention, "_ATTN_TYPE", "TORCH")
+    monkeypatch.setattr(attention, "_SYNC_ULYSSES", True)
+    monkeypatch.setattr(attention, "make_xfuser_attention", lambda *_args: None)
+    import raylight.diffusion_models.minimax.xdit_context_parallel as parallel
+
+    class FakeFSDPNorm:
+        def __init__(self, offset):
+            self.offset = offset
+            self.unshard_calls = 0
+            self.reshard_calls = 0
+            self.chunk_sizes = []
+
+        def unshard(self):
+            self.unshard_calls += 1
+
+        def reshard(self):
+            self.reshard_calls += 1
+
+        def forward(self, value):
+            self.chunk_sizes.append(value.shape[0])
+            return value.float().add(self.offset)
+
+    q_norm = FakeFSDPNorm(1)
+    k_norm = FakeFSDPNorm(-1)
+    q = torch.arange(21, dtype=torch.float16).reshape(7, 1, 3)
+    k = torch.arange(21, 42, dtype=torch.float16).reshape(7, 1, 3)
+
+    parallel._normalize_qk_in_place(q_norm, k_norm, q, k, chunk_tokens=3)
+
+    assert q_norm.chunk_sizes == [3, 3, 1]
+    assert k_norm.chunk_sizes == [3, 3, 1]
+    assert (q_norm.unshard_calls, q_norm.reshard_calls) == (1, 1)
+    assert (k_norm.unshard_calls, k_norm.reshard_calls) == (1, 1)
+    torch.testing.assert_close(q, torch.arange(21).reshape(7, 1, 3).half() + 1)
+    torch.testing.assert_close(k, torch.arange(21, 42).reshape(7, 1, 3).half() - 1)
+
+
 class _RecordingIdentity(torch.nn.Module):
     def __init__(self):
         super().__init__()

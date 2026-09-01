@@ -17,6 +17,7 @@ attn_type = xfuser_attn.get_attn_type()
 sync_ulysses = xfuser_attn.get_sync_ulysses()
 xfuser_optimized_attention = xfuser_attn.make_xfuser_attention(attn_type, sync_ulysses)
 FINAL_PROJECTION_CHUNK_TOKENS = 4096
+QK_NORM_CHUNK_TOKENS = 8192
 _TRACE_HIGH_WATER = {}
 
 
@@ -129,13 +130,36 @@ def _gather_projected_rows(local_rows, counts, group):
     return torch.cat(pieces, dim=0)
 
 
-def _normalize_qk_in_place(q_norm, k_norm, q, k):
-    normalized = q_norm(q)
-    q.copy_(normalized)
-    del normalized
-    normalized = k_norm(k)
-    k.copy_(normalized)
-    del normalized
+def _normalize_one_in_place(norm, value, *, chunk_tokens):
+    manual_fsdp = all(
+        callable(getattr(norm, method, None)) for method in ("unshard", "reshard")
+    )
+    if manual_fsdp:
+        norm.unshard()
+    try:
+        forward = norm.forward if manual_fsdp else norm
+        for start in range(0, value.shape[0], chunk_tokens):
+            stop = min(start + chunk_tokens, value.shape[0])
+            normalized = forward(value[start:stop])
+            value[start:stop].copy_(normalized)
+            del normalized
+    finally:
+        if manual_fsdp:
+            norm.reshard()
+
+
+def _normalize_qk_in_place(
+    q_norm,
+    k_norm,
+    q,
+    k,
+    *,
+    chunk_tokens=QK_NORM_CHUNK_TOKENS,
+):
+    if chunk_tokens <= 0:
+        raise ValueError("Q/K norm chunk_tokens must be positive")
+    _normalize_one_in_place(q_norm, q, chunk_tokens=chunk_tokens)
+    _normalize_one_in_place(k_norm, k, chunk_tokens=chunk_tokens)
     return q, k
 
 
