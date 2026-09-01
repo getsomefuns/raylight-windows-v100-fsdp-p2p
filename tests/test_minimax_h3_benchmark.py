@@ -63,6 +63,20 @@ def test_prepare_prompt_routes_o6_tag_to_o6_output_group():
     )
 
 
+def test_prepare_prompt_routes_o11_tag_to_o11_output_group():
+    prompt = benchmark.prepare_prompt(_prompt(), "ref2va", 0, output_tag="o11_gate_e")
+
+    assert prompt["92"]["inputs"]["filename_prefix"] == (
+        "video/raylight_o11/minimax_h3_ref2va_o11_gate_e_run0"
+    )
+
+
+def test_default_result_root_stays_inside_unique_worktree():
+    assert benchmark.RESULT_ROOT == (
+        benchmark.REPO_ROOT / ".local" / "artifacts" / "minimax-h3" / "benchmarks"
+    )
+
+
 def test_validate_prompt_requires_dual_gpu_fsdp_and_one_sampler():
     benchmark.validate_prompt(_prompt())
 

@@ -31,7 +31,10 @@ COMFY_ROOT = Path(os.environ.get("RAYLIGHT_COMFY_ROOT", REPO_ROOT.parent / "Comf
 ENV_ROOT = COMFY_ROOT.parent
 PYTHON = Path(os.environ.get("RAYLIGHT_PYTHON", ENV_ROOT / "Python310" / "python.exe"))
 RESULT_ROOT = Path(
-    os.environ.get("RAYLIGHT_MINIMAX_BENCHMARK_ROOT", ENV_ROOT / "logs" / "minimax-h3" / "o2")
+    os.environ.get(
+        "RAYLIGHT_MINIMAX_BENCHMARK_ROOT",
+        REPO_ROOT / ".local" / "artifacts" / "minimax-h3" / "benchmarks",
+    )
 )
 SEED_STRIDE = 1_000_003
 P2P_CAPACITY_BYTES = 128 * 1024 * 1024
@@ -245,7 +248,9 @@ def prepare_prompt(
     _, sampler = _one_node(prompt, "XFuserSamplerCustomAdvanced")
     sampler["inputs"]["noise_seed"] = int(sampler["inputs"]["noise_seed"]) + run_index * SEED_STRIDE
     _, save_video = _one_node(prompt, "SaveVideo")
-    if output_tag and output_tag.startswith("o10-"):
+    if output_tag and (output_tag.startswith("o11-") or output_tag.startswith("o11_")):
+        output_group = "raylight_o11"
+    elif output_tag and output_tag.startswith("o10-"):
         output_group = "raylight_o10"
     elif output_tag and output_tag.startswith("o6-"):
         output_group = "raylight_o6"
