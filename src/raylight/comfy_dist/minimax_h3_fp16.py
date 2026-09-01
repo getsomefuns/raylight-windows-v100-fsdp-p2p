@@ -163,6 +163,7 @@ def prepare_minimax_h3_safe_fp16_worker(
             "MiniMax H3 safe FP16 is currently validated only on Tesla V100 "
             f"(compute capability 7.0); received {device_name!r}, capability={compute_capability}."
         )
+    os.environ.setdefault(SAFE_FP16_CACHE_TRIM_ENV, "1")
     if install_fn is None:
         install_fn = install_minimax_h3_safe_fp16_patch
     installed = install_fn()

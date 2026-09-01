@@ -13,7 +13,7 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
-1.13.0（O11）修复长多模态 Text Encoder 中 SDPA 回退数学注意力和平方遮罩导致的 OOM。专用双卡 Loader 新增独立的 `AUTO`、`XFORMERS_GQA`、`TORCH_EFFICIENT`、`MATH_DEBUG` 路由；目标 V100 上 AUTO 选择 xFormers GQA。15 秒视频、7 张不同图片和 7000 字符提示词展开为 24,236 序列并完整通过，冷/热为 112.94/112.55 秒。用户真实 7图+1视频+1音频 Director 输入也通过 Text Encoder；但同一工作流的 15 秒 Diffusion 采样在 0.6 MP 和 0.4 MP 都会 OOM，不能理解为完整最大视频边界已经通过。详见 [O11 中文发布说明](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md)。
+1.13.0（O11）修复长多模态 Text Encoder 中 SDPA 回退数学注意力和平方遮罩导致的 OOM。专用双卡 Loader 新增独立的 `AUTO`、`XFORMERS_GQA`、`TORCH_EFFICIENT`、`MATH_DEBUG` 路由；目标 V100 上 AUTO 选择 xFormers GQA。15 秒视频、7 张不同图片和 7000 字符提示词展开为 24,236 序列并完整通过，冷/热为 112.94/112.55 秒。追加的 Diffusion 生命周期优化又让用户真实 15 秒、365 帧、0.4 MP、7图+1视频+1音频 REF2VA Turbo4 完整生成：采样由 1999.41 秒降至 1456.12 秒，采样期整卡峰值由 16215/16230 MiB 降至 13005/12873 MiB，输出365帧且可解码。0.6 MP 仍未验收通过。详见 [O11 中文发布说明](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md)。
 
 1.12.0（O10）新增显式可选的 MiniMax H3 Qwen3-VL-32B NVFP4 Text Encoder TP2 容量路径。GPU0 完成视觉塔预处理后，50 层语言主干的 7 个 Linear 在两张 V100 上按张量维度分片并同时计算，层内 partial 通过 CUDA P2P/NVLink SUM 合并。正式验证中每卡峰值为 9.25/9.23 GiB，相比单卡 GPU0 峰值下降 31.9%；普通 I2V、REF2VA、Director 3 秒/5 秒和五段视频均通过数值与媒体质量验收。但 Text Encoder 冷/热中位数 27.17/26.91 秒，慢于单卡 20.76/10.37 秒，因此该能力只定级为默认关闭的实验性容量模式，不是推荐性能模式。详见 [O10 中文发布说明](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/DUAL_GPU_TEXT_ENCODER_TP2_2026-08.zh-CN.md)。
 
@@ -613,6 +613,8 @@ Set-Location $RepoRoot
   -ReserveVramGiB 2
 ```
 
+`fp16_h3_safe` worker 会自动启用已验收的块边界 CUDA cache trim，不要求启动脚本额外设置环境变量。只有在诊断对照时才应在启动前显式设置 `$env:RAYLIGHT_H3_BLOCK_CACHE_TRIM = "0"` 关闭；关闭后15秒最大输入的物理显存会明显升高。
+
 浏览器打开 `http://127.0.0.1:8188`，载入：
 
 [example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json](example_workflows/Minimax_H3_REF2VA_Windows_V100_FSDP_Turbo4_FP16_Experimental.json)
@@ -889,7 +891,7 @@ FSDP 当前首先证明显存分片、双卡计算和输出正确性；LTX 性�
 | O8 Director MODEL 代理 | t2v/i2v/fl2v/r2v/v2v/rv2v、Refine、多段、媒体、复用与回收均通过；旧路径性能门槛通过 |
 | O9 自适应 P2P 分块 | 默认 128 MiB；历史大 payload、I2V、REF2VA、Director 多段/Refine 与 LTX 冷/热均通过 |
 | O10 Text Encoder TP2 | 1.12.0 已完成 Gate A–F：容量、数值、视频与双卡计算通过；性能失败，定级为默认关闭的实验性容量模式 |
-| O11 Text Encoder 高效注意力 | 1.13.0 已完成 Gate A–F：15 秒视频+7 图+7000 字符通过 Text Encoder；最大完整采样仍受 Diffusion 显存限制 |
+| O11 Text Encoder 与 Diffusion 生命周期优化 | 1.13.0 已完成 Gate A–F；15秒+7图+7000字符通过 Text Encoder，15秒/0.4MP/7图+视频+音频 Turbo4 完整采样与媒体质量通过；0.6MP 仍未通过 |
 
 O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒、采样 160.72 s/it；REF2VA Turbo4 端到端 932.03 秒、采样 185.20 s/it。初始 4× 门槛分别为不高于 40.1799 和 46.3008 s/it；当前结果尚未达到。11× 仅保留为后续研究目标，不是当前版本能力。O5 的旧规格记录不作为 O6 分母。
 
@@ -995,7 +997,7 @@ raylight/
 - 降低 FSDP 逐层 all-gather、LoRA sidecar、Python 控制面和同步开销。
 - 评估多 buffer/ring slot、批量控制、预取和通信/计算重叠。
 - 评估 FSDP + Ulysses 组合，但在正式验收前不声明支持。
-- O11 已解决长上下文注意力与 MLP 峰值；后续继续优化 TP2 的约 16.7 秒分片加载和 15 秒 Diffusion 显存边界。VAE 与 Upscaler 仍需分别评估，不能把独立 TP2 或未来能力误称为 FSDP 已覆盖。
+- O11 已解决长上下文注意力与 MLP 峰值，并通过15秒0.4MP最大输入的完整 Diffusion/媒体验收；后续继续优化 TP2 的约16.7秒分片加载、0.6MP边界和整卡物理显存。VAE 与 Upscaler 仍需分别评估，不能把独立 TP2 或未来能力误称为 FSDP 已覆盖。
 - 在获得真实硬件和视觉验证后扩展模型与 GPU 支持矩阵。
 
 ## 安全与可再分发内容

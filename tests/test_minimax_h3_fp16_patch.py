@@ -64,6 +64,36 @@ def test_worker_preparation_installs_only_on_v100():
         )
 
 
+def test_worker_preparation_enables_cache_trim_for_safe_fp16_by_default(monkeypatch):
+    monkeypatch.delenv(h3fp16.SAFE_FP16_CACHE_TRIM_ENV, raising=False)
+
+    prepare_minimax_h3_safe_fp16_worker(
+        ray_unet_model_options("fp16_h3_safe"),
+        compute_capability=70,
+        device_name="Tesla V100-SXM2-16GB",
+        rank=0,
+        install_fn=lambda: True,
+        emit_fn=lambda _message: None,
+    )
+
+    assert h3fp16.os.environ[h3fp16.SAFE_FP16_CACHE_TRIM_ENV] == "1"
+
+
+def test_worker_preparation_preserves_explicit_cache_trim_override(monkeypatch):
+    monkeypatch.setenv(h3fp16.SAFE_FP16_CACHE_TRIM_ENV, "0")
+
+    prepare_minimax_h3_safe_fp16_worker(
+        ray_unet_model_options("fp16_h3_safe"),
+        compute_capability=70,
+        device_name="Tesla V100-SXM2-16GB",
+        rank=0,
+        install_fn=lambda: True,
+        emit_fn=lambda _message: None,
+    )
+
+    assert h3fp16.os.environ[h3fp16.SAFE_FP16_CACHE_TRIM_ENV] == "0"
+
+
 def test_worker_preparation_rejects_inconsistent_safe_mode():
     with pytest.raises(ValueError, match="torch.float16"):
         prepare_minimax_h3_safe_fp16_worker(

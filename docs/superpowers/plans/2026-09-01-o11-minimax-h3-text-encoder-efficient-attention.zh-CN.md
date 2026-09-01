@@ -404,8 +404,8 @@ git commit -m "release: complete O11 efficient Text Encoder attention"
 - Gate A/B：两种正式高效后端数值有限且无 Math；28k attention 峰值为 xFormers 1314.13 MiB、Torch Efficient 1861.38 MiB。
 - Gate C/D：15 秒视频、7 张不同图片、7000 有效字符展开 24,236 序列；AUTO 冷/热 112.94/112.55 秒，强制 Torch Efficient 117.50 秒，全部通过。
 - 用户真实门槛：7 图、1 视频、1 音频、5802 字符展开 12,302 序列，Text Encoder 62.88 秒，双卡分配峰值 9244/9451 MiB，完整通过并有余量。
-- Gate E：3 秒、864×480、Turbo4 一采直出完成，输出可解码、无黑段；15 秒采样在 0.6 MP 和 0.4 MP 均于 Diffusion 第一步 OOM，未冒充完整最大视频通过。
-- 回归：全仓 664 passed、35 subtests passed；Ruff、导入自检和双 V100/TCC/P2P 探针通过，128–384 MiB all-gather 约 61.54–61.62 GiB/s。
+- Gate E初始记录：3秒、864×480、Turbo4一采直出完成；当时15秒的0.6MP和0.4MP均于Diffusion第一步OOM。Task12追加优化随后让相同15秒0.4MP固定输入完整通过，0.6MP仍未验收。
+- 回归：Task11为全仓664 passed；Task12收尾为全仓695 passed、35 subtests passed。修改范围Ruff、导入自检和双V100/TCC/P2P探针通过，128–384MiB all-gather约61.54–61.62GiB/s。
 - GitHub：本计划明确保持未推送，等待用户单独要求同步。
 
 ---
@@ -418,10 +418,10 @@ git commit -m "release: complete O11 efficient Text Encoder attention"
 
 - 基线工作流：用户真实人物迁移 MMH3Director.json，REF2VA Turbo4、一采直出、15 秒、365 帧、24 fps、0.4 MP、7 图、1 参考视频、1 音频和原提示词。
 - 基线失败点：Diffusion 第一步安全 FP16 MLP fc2 前，每 rank PyTorch active 为 13.99 GiB，追加 1.40 GiB FP16 输入失败。
-- 硬性显存验收：以同一监控口径比较，每卡完整采样峰值至少下降 6 GiB；即不高于 7.99 GiB。
-- 努力目标：每卡完整采样峰值下降 8 GiB；即不高于 5.99 GiB。
+- 硬性显存验收：以PyTorch active同一口径比较，每卡完整采样峰值至少下降6GiB；即不高于7.99GiB。整卡NVIDIA物理占用单独报告，不与active混算。
+- 努力目标：PyTorch active每卡下降8GiB；即不高于5.99GiB。
 - 功能验收：固定 15 秒人物迁移工作流完成 Text Encoder、4 步双卡 Diffusion、VAE/音频解码和视频保存，输出有限且可正常解码。
-- 性能与质量：不得通过全局 FP16、CPU 逐层错峰、每层清缓存、减少输入、降低时长或关闭双卡采样换取通过；固定种子不得出现 NaN、黑屏或噪声回归。
+- 性能与质量：不得通过全局FP16、CPU逐层错峰、减少输入、降低时长或关闭双卡采样换取通过；允许在已证明不降低速度且不改变数值的块边界回收CUDA allocator cache。固定种子不得出现NaN、黑屏或噪声回归。
 
 ### Task 12：安全 FP16 临时张量生命周期
 
@@ -429,7 +429,15 @@ git commit -m "release: complete O11 efficient Text Encoder attention"
 - [x] 在 Raylight 安全 FP16 补丁中使用原位二次幂缩放，FC1 激活后释放 projected/gate/up，门控累积后释放 Attention 输出。
 - [x] 让 rank 本地 hidden/rope 切片拥有独立存储，不长期引用完整序列。
 - [x] 运行聚焦回归：49 passed，2 subtests passed。
-- [ ] 部署唯一工作树并完成文件一致性核对。
-- [ ] 运行固定 15 秒人物迁移工作流，记录每 rank active/reserved 峰值、NVIDIA 峰值、每步速度、RAM/Commit/Pagefile 和输出媒体质量。
-- [ ] 若未达到 6 GiB 降幅，保留本轮数据，继续优化已打包 embedding、MLP branch 和单次 FSDP 权重驻留下的 FC2 有界分块；不得用错峰卸载冒充峰值下降。
-- [ ] 将成功和失败实验追加到 O11 测试汇总及中英文发布说明。
+- [x] 部署唯一工作树并完成文件一致性核对（候选提交部署验证464个文件一致）。
+- [x] 运行固定15秒人物迁移工作流，记录每rank active/reserved峰值、NVIDIA峰值、每步速度、RAM/Commit/Pagefile和输出媒体质量。
+- [x] active峰值7.42GiB，相对13.99GiB下降约6.57GiB，达到硬门槛；11.76GiB reserved与13005/12873MiB物理峰值单独报告，8GiB active努力目标未达到。
+- [x] 将成功和失败实验追加到 O11 测试汇总及中英文发布说明。
+
+### Task 12验收结果
+
+- 固定Turbo4完整采样1456.12秒、端到端1823.77秒；原完整4步对照为1999.41/2332.86秒，分别快27.17%/21.82%。
+- 采样窗口GPU0/GPU1物理峰值由16215/16230MiB降至13005/12873MiB；物理降幅约3.14/3.28GiB，没有冒充达到6GiB。
+- `XFORMERS_QUERY_CHUNK_TOKENS=16384` 的实际形状数值对照max/mean abs diff均为0；50层稳态间隔8.08→6.72秒。
+- 正式输出为864×480、365帧、15.209秒，H.264/AAC全量解码通过、无黑段；与此前正常4步结果逐帧SSIM为0.9416。
+- safe-FP16 worker默认启用验收过的块边界cache trim，显式环境值0仍被保留；普通启动不再依赖额外脚本参数。

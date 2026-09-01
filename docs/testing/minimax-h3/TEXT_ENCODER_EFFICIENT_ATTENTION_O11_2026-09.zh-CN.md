@@ -124,7 +124,7 @@ AUTO 两次均选择 `XFORMERS_GQA`。expanded sequence 为 24,236，其中文�
 
 同一工作流随后进入 1056×608、365 帧 Diffusion 第一轮时 OOM：每卡约 13.19 GiB 已分配，RMSNorm 还需 1.77 GiB，而 GPU0 仅余 1.59 GiB。该失败属于 Diffusion 最大采样边界，不属于 Text Encoder，未生成视频。完整日志保存在 `.local/artifacts/o11/director-max-input/20260901-150832-director/`。
 
-按用户要求，仅把输出从 0.6 MP 降为 0.4 MP（864×480），其余 15 秒、365 帧、7 图、1 视频、1 音频、5802 字符、REF2VA Turbo4、一采直出条件全部保持不变。该运行同样在 Diffusion 第一轮 OOM，但已从 RMSNorm 推进到 MLP `fc2` 投影：完成 1/4 步前后，`fc2` 还需 1.40 GiB，每卡约 13.99 GiB 已分配，GPU0 剩余约 0.79–0.92 GiB。端到端到报错为 240.93 秒，P2P profile 记录 32 次 collective、42 个子块和约 2.29 GiB 单向远端数据；未生成视频。证据位于 `.local/artifacts/o11/director-04mp/20260901-155246-director/`。这证明降分辨率有效减少激活，但 365 帧仍超过当前 Diffusion 安全边界。
+按用户要求，仅把输出从 0.6 MP 降为 0.4 MP（864×480），其余 15 秒、365 帧、7 图、1 视频、1 音频、5802 字符、REF2VA Turbo4、一采直出条件全部保持不变。追加优化前的该次运行同样在 Diffusion 第一轮 OOM，但已从 RMSNorm 推进到 MLP `fc2` 投影：完成 1/4 步前后，`fc2` 还需 1.40 GiB，每卡约 13.99 GiB 已分配，GPU0 剩余约 0.79–0.92 GiB。端到端到报错为 240.93 秒，P2P profile 记录 32 次 collective、42 个子块和约 2.29 GiB 单向远端数据；未生成视频。证据位于 `.local/artifacts/o11/director-04mp/20260901-155246-director/`。这是Task12之前的冻结失败基线；最终通过结果见第7节。
 
 ### 5.4 Gate E 集成采样
 
@@ -138,7 +138,7 @@ AUTO 两次均选择 `XFORMERS_GQA`。expanded sequence 为 24,236，其中文�
 
 ### 5.5 自动化回归
 
-- O11 最终全仓：`664 passed, 25 warnings, 35 subtests passed`，100.59 秒；
+- Task 11 当时的全仓回归：`664 passed, 25 warnings, 35 subtests passed`，100.59 秒；
 - Ruff：修改范围使用 `--no-cache`，全部通过；
 - 发布提交包含 463 个跟踪文件；部署脚本完成后必须返回 `DEPLOYMENT_OK files=463`，随后用 `-VerifyOnly` 再次核对；
 - 发布前导入自检和双 V100/TCC/P2P 探针通过；128–384 MiB all-gather 约 61.54–61.62 GiB/s；
@@ -148,4 +148,60 @@ AUTO 两次均选择 `XFORMERS_GQA`。expanded sequence 为 24,236，其中文�
 
 Gate A–F 的 Text Encoder 范围全部通过。O11 解决了原始 6992-token 数学注意力 OOM，并把可验证上限扩展到真实 15 秒视频、7 图和 7000 字符；用户的 7 图+视频+音频 Director 输入也通过且有明显余量。AUTO 在目标机器确定选择 xFormers GQA，Torch Efficient 是明确可用的正式回退，Math 只允许不超过 2048 token 的调试对照。
 
-能力边界必须保持准确：O11 不会把两张 16GB V100 变成透明 32GB，也没有让 15 秒/0.6 MP 或 0.4 MP 的 Diffusion Model 自动可采样。两种最大 Director 采样均已实测 OOM；当前可确认的是 Text Encoder 容量和短视频集成采样均正常。
+能力边界必须保持准确：O11 不会把两张16GB V100变成透明32GB。后续追加优化已让15秒/0.4MP固定 Director 工作流完整通过，但0.6MP仍未完成相同验收；Text Encoder、Diffusion与整卡物理显存必须分别报告。
+
+## 7. O11追加：15秒Diffusion生命周期优化
+
+### 7.1 固定对照
+
+固定 `MMH3Director.json`：REF2VA Turbo4、一采直出、15秒、365帧、24fps、864×480（0.4MP）、7图、1参考视频、1音频、原提示词和seed=42。基线、诊断和最终候选都使用相同输入；`diagnostic_steps=1`只用于显存定位，不属于画质结果。
+
+| 指标 | 原完整4步基线 | 最终候选 |
+|---|---:|---:|
+| 双卡采样 | 1999.41 s | 1456.12 s |
+| 采样平均 | 499.85 s/step | 364.03 s/step |
+| 端到端 | 2332.86 s | 1823.77 s |
+| 采样窗口GPU0峰值 | 16215 MiB | 13005 MiB |
+| 采样窗口GPU1峰值 | 16230 MiB | 12873 MiB |
+| PyTorch active峰值 | 约13.99 GiB失败点 | 7.42 GiB |
+| PyTorch reserved峰值 | 未冻结为同口径基线 | 11.76 GiB |
+| 输出 | 864×480、365帧 | 864×480、365帧 |
+
+最终采样快27.17%，端到端快21.82%。active下降约6.57GiB，通过“下降至少6GiB”的active验收；整卡物理峰值分别下降3210/3357MiB，未达到物理口径下降6GiB，因此两种口径没有混写。
+
+### 7.2 实装优化
+
+| 改动 | 证据与结果 | 状态 |
+|---|---|---|
+| safe-FP16原位二次幂缩放 | 避免额外 `x/scale` FP32副本，保持敏感投影有限 | 实装 |
+| Attention/MLP临时量提前释放 | projected/gate/up和Attention输出在最后使用后释放 | 实装 |
+| rank本地hidden/rope独立存储 | 不再由切片长期引用完整序列底层存储 | 实装 |
+| 打包输入提前释放 | `packed_hidden_built` active由约3.15GB降到2.06GB，约省1.09GB | 实装 |
+| Q/K Norm与RoPE有界分块 | 减少归一化和旋转临时峰值，聚焦测试通过 | 实装 |
+| xFormers Ulysses头分块=7 | V100可运行；头分块=3没有进一步收益 | 实装7，废弃3 |
+| Query序列分块=16384 | active不变；reserved约少0.19GB；50层稳态间隔8.08→6.72s，完整采样验证通过 | 实装 |
+| 块边界cache trim | 一步物理峰值约降3.5–4GiB；完整4步无跨层/跨步累计；safe-FP16 worker默认开启，显式0可关闭 | 实装 |
+
+实际形状 `69,828×21×128` 的xFormers探针中，未分块与16K分块输出 `max_abs_diff=0`、`mean_abs_diff=0`；耗时1.72→1.62秒。8K/4K最多再节省14–21MiB workspace，不能补足GiB级目标，因此没有继续缩小。
+
+### 7.3 未实装或仅诊断
+
+| 实验 | 结果 | 决策 |
+|---|---|---|
+| 1-step诊断输出 | 能完成链路但画质差；`...00004_.mp4`正是1步诊断，不代表4步质量 | 只作诊断，不作质量样本 |
+| head chunk=3 | active与物理峰值无改善 | 废弃，恢复7 |
+| allocator `garbage_collection_threshold:0.55` | 峰值无可测改善 | 废弃 |
+| 仅在Attention/MLP结束后清cache | 发生在峰值之后，不能降低全局峰值 | 单独方案废弃 |
+| Query 8K/4K | 微探针仅省14–21MiB；4K reserved反而略回升 | 不进入整工作流 |
+| P2P staging 64–96MiB | 只能再省几十MiB，可能增加通信分块 | 本轮未采用 |
+
+### 7.4 最终媒体与资源验收
+
+- 正式输出：`ComfyUI/output/video/raylight_o11/MMH3Director_O11_15s_7img_1video_1audio_0.4MP_run0_00006_.mp4`。
+- 媒体：H.264视频、AAC双声道、864×480、365帧、24fps、15.209秒；全量FFmpeg解码通过，无黑段。
+- 质量：与此前正常4步 `...00003_.mp4` 逐帧SSIM 0.9416、平均PSNR 27.93dB；未出现NaN、黑屏或全噪声。
+- 资源：采样期RAM使用峰值72884MiB、Commit峰值110360MiB、页面文件使用峰值约707MiB；GPU0/GPU1均达到100%利用率。
+- P2P：4步共2742次collective、4344个子块、约339.93GB单向远端数据，完整成功且无rank超时。
+- Task 12 收尾全仓回归：`695 passed, 29 warnings, 35 subtests passed`，96.81秒；修改范围Ruff与`git diff --check`通过。29条warning来自PyTorch nested tensor原型提示、pytest cache写入权限和Windows临时目录清理，不是测试失败。
+
+原始日志、监控CSV和报告保存在唯一工作树 `.local/artifacts/o11/diffusion-memory-opt/`；正文只保留可维护的摘要。
