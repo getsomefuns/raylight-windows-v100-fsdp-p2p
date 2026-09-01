@@ -150,7 +150,14 @@ class TP2Qwen3VLBlock:
         q_norm,
         k_norm,
         attention_forward: Callable[..., torch.Tensor],
+        mlp_chunk_tokens: int | None = None,
     ) -> None:
+        if mlp_chunk_tokens is not None and (
+            isinstance(mlp_chunk_tokens, bool)
+            or not isinstance(mlp_chunk_tokens, int)
+            or mlp_chunk_tokens <= 0
+        ):
+            raise ValueError("mlp_chunk_tokens must be a positive integer or None")
         self.config = config
         self.q_proj = q_proj
         self.k_proj = k_proj
@@ -166,6 +173,7 @@ class TP2Qwen3VLBlock:
         self.q_norm = _norm_pair(q_norm, name="q_norm", expected=config.head_dim)
         self.k_norm = _norm_pair(k_norm, name="k_norm", expected=config.head_dim)
         self.attention_forward = attention_forward
+        self.mlp_chunk_tokens = mlp_chunk_tokens
         self.executor = q_proj.executor
         all_linears = (k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj)
         if any(linear.executor is not self.executor for linear in all_linears):
@@ -175,6 +183,15 @@ class TP2Qwen3VLBlock:
         self.collective = o_proj.collective
         self.execution_profiles: list[tuple[str, Any]] = []
         self._validate_linear_shapes()
+
+    def collective_count(self, sequence: int) -> int:
+        """Return attention plus MLP collective calls for one sequence."""
+
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence <= 0:
+            raise ValueError("sequence must be a positive integer")
+        if self.mlp_chunk_tokens is None:
+            return 2
+        return 1 + (sequence + self.mlp_chunk_tokens - 1) // self.mlp_chunk_tokens
 
     def _validate_linear_shapes(self) -> None:
         config = self.config
@@ -245,37 +262,65 @@ class TP2Qwen3VLBlock:
             )
             return attended.transpose(1, 2).reshape(batch, sequence, -1).contiguous()
 
-        attended = self._run_pair("attention", tuple(lambda rank=rank: attend(rank) for rank in (0, 1)))
+        attended = self._run_pair(
+            "attention",
+            tuple(lambda rank=rank, attend=attend: attend(rank) for rank in (0, 1)),
+        )
         attention_output = self.o_proj.forward(attended, operation_id=operation_id)
+        residual = hidden
         hidden = self._run_pair(
             "attention_residual",
-            tuple(lambda rank=rank: residual[rank] + attention_output[rank] for rank in (0, 1)),
-        )
-
-        residual = hidden
-        normed = self._run_pair(
-            "post_attention_layernorm",
             tuple(
-                lambda rank=rank: F.rms_norm(
-                    hidden[rank],
-                    (self.config.hidden_size,),
-                    self.post_attention_layernorm[rank],
-                    self.config.rms_norm_eps,
+                lambda rank=rank, residual=residual, attention_output=attention_output: (
+                    residual[rank] + attention_output[rank]
                 )
                 for rank in (0, 1)
             ),
         )
-        gate = self.gate_proj.forward(normed)
-        up = self.up_proj.forward(normed)
-        activated = self._run_pair(
-            "mlp_activation",
-            tuple(lambda rank=rank: F.silu(gate[rank]) * up[rank] for rank in (0, 1)),
-        )
-        mlp_output = self.down_proj.forward(activated, operation_id=operation_id + 1)
-        return self._run_pair(
-            "mlp_residual",
-            tuple(lambda rank=rank: residual[rank] + mlp_output[rank] for rank in (0, 1)),
-        )
+        residual = normed = q = k = v = attended = attention_output = attend = None
+
+        chunk_tokens = self.mlp_chunk_tokens or sequence
+        for chunk_index, start in enumerate(range(0, sequence, chunk_tokens)):
+            end = min(start + chunk_tokens, sequence)
+            residual = tuple(hidden[rank][:, start:end, :] for rank in (0, 1))
+            normed = self._run_pair(
+                "post_attention_layernorm",
+                tuple(
+                    lambda rank=rank, residual=residual: F.rms_norm(
+                        residual[rank],
+                        (self.config.hidden_size,),
+                        self.post_attention_layernorm[rank],
+                        self.config.rms_norm_eps,
+                    )
+                    for rank in (0, 1)
+                ),
+            )
+            gate = self.gate_proj.forward(normed)
+            up = self.up_proj.forward(normed)
+            activated = self._run_pair(
+                "mlp_activation",
+                tuple(
+                    lambda rank=rank, gate=gate, up=up: F.silu(
+                        gate[rank], inplace=True
+                    ).mul_(up[rank])
+                    for rank in (0, 1)
+                ),
+            )
+            mlp_output = self.down_proj.forward(
+                activated,
+                operation_id=operation_id + 1 + chunk_index,
+            )
+            self._run_pair(
+                "mlp_residual",
+                tuple(
+                    lambda rank=rank, mlp_output=mlp_output: hidden[rank][
+                        :, start:end, :
+                    ].add_(mlp_output[rank])
+                    for rank in (0, 1)
+                ),
+            )
+            del residual, normed, gate, up, activated, mlp_output
+        return hidden
 
     __call__ = forward
 

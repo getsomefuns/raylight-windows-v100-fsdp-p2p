@@ -184,6 +184,43 @@ def _event_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def prompt_history_state(entry: dict[str, Any]) -> bool:
+    """Return completion, or raise as soon as ComfyUI records an execution error."""
+
+    status = entry.get("status", {})
+    status_str = str(status.get("status_str", ""))
+    messages = status.get("messages", [])
+    has_execution_error = any(
+        isinstance(message, (list, tuple)) and message and message[0] == "execution_error"
+        for message in messages
+    )
+    if status_str == "error" or has_execution_error:
+        raise RuntimeError(json.dumps(status, ensure_ascii=False))
+    if status.get("completed"):
+        if status_str != "success":
+            raise RuntimeError(json.dumps(status, ensure_ascii=False))
+        return True
+    return False
+
+
+def wait_o11_prompt(helpers, base_url: str, prompt_id: str, process, timeout: int) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"ComfyUI exited during prompt {prompt_id} with code {process.returncode}")
+        try:
+            history = helpers.request_json(f"{base_url}/history/{prompt_id}", timeout=10)
+        except (TimeoutError, OSError):
+            time.sleep(2)
+            continue
+        if prompt_id in history:
+            entry = history[prompt_id]
+            if prompt_history_state(entry):
+                return entry
+        time.sleep(2)
+    raise TimeoutError(f"prompt {prompt_id} exceeded {timeout} seconds")
+
+
 def run_benchmark(
     *,
     api_prompt_path: Path,
@@ -290,7 +327,8 @@ def run_benchmark(
                         {"prompt": prompt},
                         timeout=60,
                     )
-                    history = helpers.wait_prompt(
+                    history = wait_o11_prompt(
+                        helpers,
                         base_url,
                         response["prompt_id"],
                         process,

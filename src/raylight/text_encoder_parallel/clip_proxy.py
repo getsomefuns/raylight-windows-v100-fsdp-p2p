@@ -441,13 +441,16 @@ class TP2Qwen3VLBackbone:
             prepared.embeddings.to(self.devices[0], dtype=torch.float32),
             prepared.embeddings.to(self.devices[1], dtype=torch.float32),
         )
+        operation_id = 1
+        sequence = int(hidden[0].shape[1])
         for layer, block in enumerate(self.blocks):
             hidden = block.forward(
                 hidden[0],
                 hidden[1],
                 prepared.position_ids,
-                operation_id=layer * 2 + 1,
+                operation_id=operation_id,
             )
+            operation_id += block.collective_count(sequence)
             if prepared.deepstack_embeddings is not None and layer < len(prepared.deepstack_embeddings):
                 if prepared.visual_position_mask is None:
                     raise RuntimeError("DeepStack embeddings require a visual position mask")
@@ -665,6 +668,7 @@ def load_minimax_h3_tp2_backbone(
                         q_norm=norm_pair("self_attn.q_norm.weight"),
                         k_norm=norm_pair("self_attn.k_norm.weight"),
                         attention_forward=attention_forward,
+                        mlp_chunk_tokens=4096,
                     )
                 )
         return TP2Qwen3VLBackbone(

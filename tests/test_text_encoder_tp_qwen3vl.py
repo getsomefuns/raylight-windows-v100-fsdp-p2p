@@ -111,7 +111,17 @@ def _make_weights(config, *, quantized=False):
     return full, shards
 
 
-def _make_block(config, shards, executor, peer_group, norms, scales, attention_forward):
+def _make_block(
+    config,
+    shards,
+    executor,
+    peer_group,
+    norms,
+    scales,
+    attention_forward,
+    *,
+    mlp_chunk_tokens=None,
+):
     return TP2Qwen3VLBlock(
         config,
         q_proj=ColumnParallelLinear(shards["q"], executor=executor),
@@ -130,6 +140,7 @@ def _make_block(config, shards, executor, peer_group, norms, scales, attention_f
         q_norm=norms["q"],
         k_norm=norms["k"],
         attention_forward=attention_forward,
+        mlp_chunk_tokens=mlp_chunk_tokens,
     )
 
 
@@ -203,6 +214,49 @@ def test_fp32_tp2_block_matches_full_block_and_uses_exactly_two_sums() -> None:
     assert len(attention_forward.calls) == 2
     assert all(call["is_causal"] is True for call in attention_forward.calls)
     assert all(len(call["query_shape"]) == 4 for call in attention_forward.calls)
+
+
+def test_chunked_mlp_matches_full_block_and_assigns_one_collective_per_chunk() -> None:
+    config, weights, norms, scales, _block, peer_group, attention_forward = _case()
+    _full, shards = _make_weights(config)
+    block = _make_block(
+        config,
+        shards,
+        CpuPairExecutor(),
+        peer_group,
+        norms,
+        scales,
+        attention_forward,
+        mlp_chunk_tokens=4,
+    )
+    x = torch.randn((1, 10, config.hidden_size), dtype=torch.float32)
+    position_ids = torch.arange(x.shape[1]).unsqueeze(0)
+
+    actual = block.forward(x, x.clone(), position_ids, operation_id=11)
+    expected = _baseline_block(x, config, weights, norms, scales, position_ids)
+
+    assert torch.max(torch.abs(actual[0] - expected)).item() <= 1e-4
+    assert torch.equal(actual[0], actual[1])
+    assert peer_group.operation_ids == [11, 12, 13, 14]
+    assert block.collective_count(10) == 4
+
+
+@pytest.mark.parametrize("invalid", [True, 0, -1, 1.5])
+def test_mlp_chunk_tokens_must_be_a_positive_integer(invalid) -> None:
+    config, _weights, norms, scales, _block, peer_group, attention_forward = _case()
+    _full, shards = _make_weights(config)
+
+    with pytest.raises(ValueError, match="mlp_chunk_tokens"):
+        _make_block(
+            config,
+            shards,
+            CpuPairExecutor(),
+            peer_group,
+            norms,
+            scales,
+            attention_forward,
+            mlp_chunk_tokens=invalid,
+        )
 
 
 def test_nvfp4_tp2_block_meets_cosine_and_finite_gate() -> None:

@@ -118,3 +118,24 @@ def test_failure_report_is_written_before_reraising(tmp_path):
     saved = json.loads(report_path.read_text(encoding="utf-8"))
     assert saved["status"] == "failed"
     assert "boom" in saved["error"]
+
+
+def test_prompt_history_state_fails_immediately_on_comfy_execution_error():
+    module = _load_module()
+    entry = {
+        "status": {
+            "status_str": "error",
+            "completed": False,
+            "messages": [["execution_error", {"exception_message": "CUDA out of memory"}]],
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        module.prompt_history_state(entry)
+
+    assert module.prompt_history_state(
+        {"status": {"status_str": "success", "completed": True}}
+    )
+    assert not module.prompt_history_state(
+        {"status": {"status_str": "running", "completed": False}}
+    )

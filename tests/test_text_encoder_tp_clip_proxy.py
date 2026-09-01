@@ -338,8 +338,13 @@ def test_backbone_profile_aggregates_linear_overlap_and_collectives() -> None:
 
 
 class _TPBlock:
-    def __init__(self) -> None:
+    def __init__(self, *, collectives=2) -> None:
         self.operation_ids = []
+        self.collectives = collectives
+
+    def collective_count(self, sequence):
+        assert sequence == 3
+        return self.collectives
 
     def forward(self, hidden0, hidden1, position_ids, *, operation_id):
         self.operation_ids.append(operation_id)
@@ -376,6 +381,25 @@ def test_backbone_injects_deepstack_after_matching_decoder_layers() -> None:
     assert closed == ["executor", "collective"]
     assert backbone.selected_attention_backend is TextEncoderAttentionBackend.XFORMERS_GQA
     assert not hasattr(backbone, "_causal_mask")
+
+
+def test_backbone_allocates_non_overlapping_operation_ids_for_chunked_mlp() -> None:
+    blocks = [_TPBlock(collectives=4), _TPBlock(collectives=4), _TPBlock(collectives=4)]
+    prepared = PreparedMiniMaxConditioning(
+        embeddings=torch.zeros((1, 3, 4)),
+        attention_mask=torch.ones((1, 3), dtype=torch.long),
+        num_tokens=(3,),
+        embeds_info=(),
+        token_tags=torch.zeros(3, dtype=torch.long),
+        position_ids=torch.arange(3).unsqueeze(0),
+        visual_position_mask=None,
+        deepstack_embeddings=None,
+    )
+    backbone = TP2Qwen3VLBackbone(blocks, devices=(torch.device("cpu"), torch.device("cpu")))
+
+    backbone.encode(prepared)
+
+    assert [block.operation_ids for block in blocks] == [[1], [5], [9]]
 
 
 def test_proxy_propagates_forced_backend_to_backbone_factory() -> None:
