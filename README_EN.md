@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.13.0 (O11) fixes long multimodal Text Encoder OOMs caused by SDPA Math fallback and a dense square causal mask. The dedicated dual-GPU Loader now exposes independent `AUTO`, `XFORMERS_GQA`, `TORCH_EFFICIENT`, and `MATH_DEBUG` routing; AUTO selects xFormers GQA on the target V100 system. One 15-second video, seven distinct images, and a meaningful 7000-character prompt expand to 24,236 positions and pass in 112.94/112.55 seconds cold/warm. The user's seven-image, one-video, one-audio Director input also passes Text Encoder. Its later 15-second Diffusion sample OOMs at both 0.6 MP and 0.4 MP, so this is not a claim that the full maximum video boundary passes. See the [O11 English release note](docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md) and [Chinese test record](docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md).
+
 Version 1.12.0 (O10) adds an explicit MiniMax H3 Qwen3-VL-32B NVFP4 Text Encoder TP2 capacity path. GPU 0 performs vision preprocessing; the seven Linear operations in each of the 50 language layers are tensor-sharded and execute concurrently on both V100s, with CUDA P2P/NVLink SUM for partial results. Formal peaks are 9.25/9.23 GiB and GPU 0 falls 31.9% from the single-GPU peak. I2V, REF2VA, Director three/five-second, and five-segment outputs pass numerical and media quality gates. Text Encoder cold/warm medians are nevertheless 27.17/26.91 seconds versus 20.76/10.37 seconds for one V100, so this remains an explicit, default-off experimental capacity mode rather than a recommended performance mode. See the [O10 English release note](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md) and [test record](docs/testing/minimax-h3/DUAL_GPU_TEXT_ENCODER_TP2_2026-08.zh-CN.md).
 
 Version 1.11.0 (O9) turns the Windows CUDA P2P buffer from a logical-payload limit into a fixed VRAM budget. The default is now 128 MiB per rank; larger Ulysses/FSDP collectives are automatically split into CUDA P2P chunks without CPU/Gloo payload fallback. The historical 239,826,944-byte remote payload, MiniMax H3 I2V/REF2VA, five-segment Director + Refine, and LTX five-second cold/warm runs all pass. See the [O9 English release note](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md) and [acceptance record](docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md).
@@ -29,7 +31,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.12.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.13.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -42,6 +44,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - Single-source deployment and test-layout hardening 1.10.2: [English](docs/releases/2026-08-28-single-source-hardening.en.md) / [中文](docs/releases/2026-08-28-single-source-hardening.zh-CN.md)
 - O9 adaptive CUDA P2P chunking 1.11.0: [English](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md) / [中文](docs/releases/2026-08-o9-adaptive-p2p-chunking.zh-CN.md)
 - O10 dual-V100 Text Encoder TP2 1.12.0: [English](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md) / [中文](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md)
+- O11 efficient Text Encoder attention 1.13.0: [English](docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md) / [中文](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -85,6 +88,15 @@ This path supports only `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` and requi
 | `tp2` | vision tower on GPU 0; every Linear in the 50-layer language backbone is split across both V100s and merged with CUDA P2P SUM | explicit, default-off experimental capacity mode |
 | `single_gpu_fallback` | invokes ComfyUI's native MiniMax CLIP loader | recommended compatibility path; no silent fallback |
 
+`text_encoder_attention` controls only Text Encoder. `RayInitializer.XFuser_attention` continues to control only Diffusion sampling; they are independent settings.
+
+| Text Encoder Attention | Behavior |
+|---|---|
+| `AUTO` | recommended default; resolves to `XFORMERS_GQA` on the tested V100 and never selects Math |
+| `XFORMERS_GQA` | five-dimensional GQA with structured causal bias; bounds long-sequence KV-group workspace and reuses dead Q storage |
+| `TORCH_EFFICIENT` | explicitly expands K/V and forces PyTorch Efficient; fails explicitly when unavailable |
+| `MATH_DEBUG` | numerical reference only up to 2048 tokens; rejected for real long contexts |
+
 Before TP2 encoding, the main process unloads current ComfyUI GPU models and acquires a synchronized Text Encoder GPU lease from both Ray workers. The workers release resident Diffusion weights while retaining rebuildable checkpoint/mmap state, and reject sampling-model load during the lease. Success, exceptions, and interruption all return both leases in `finally`. This prevents vision/language and Diffusion weights from competing at the same instant; it does not create a transparent 32 GB pool.
 
 ### Capability, measurements, and limits
@@ -97,6 +109,9 @@ Before TP2 encoding, the main process unloads current ComfyUI GPU models and acq
 - Ordinary I2V/REF2VA, Director three/five-second, and 3-second x5-segment runs finish with decodable unique frames, no black interval, no NaN/Inf, and both GPUs returning to about 10 MiB after worker exit.
 - Other Qwen3-VL checkpoints, Text Encoder LoRA, batch>1, more GPUs, multi-node, training, and silent single-GPU fallback are unsupported.
 - The current bottleneck is about 16.4 seconds of NVFP4 shard loading per encode, not NVLink/P2P. Use ordinary `CLIPLoader` or `single_gpu_fallback` when speed is the priority.
+- O11's maximum Text Encoder acceptance is one 15-second video, seven images, 7000 characters, and 24,236 expanded positions. Cold/warm times are 112.94/112.55 seconds, internal dual-GPU peaks are about 10.70/11.06 GiB, and language weights are released afterward.
+- The user's seven-image, one-video, one-audio, 5802-character case expands to 12,302 positions and completes in 62.88 seconds at 9244/9451 MiB allocated peaks, leaving verified headroom.
+- This maximum guarantee ends at Text Encoder. Fifteen-second REF2VA Diffusion OOMs in the first step at both 1056×608 and 864×480; the completed integration smoke is three seconds, 864×480, Turbo4.
 
 ## MiniMaxH3Director adapter
 
@@ -627,6 +642,7 @@ These results prove sharding, dual-GPU computation, and correct output. LTX perf
 | O8 Director MODEL proxy | t2v/i2v/fl2v/r2v/v2v/rv2v, Refine, multi-segment, media, reuse, reclamation, and legacy performance gates pass |
 | O9 adaptive P2P chunking | 128 MiB default; historical large payload, I2V, REF2VA, Director multi-segment/Refine, and LTX cold/warm pass |
 | O10 Text Encoder TP2 | shipped in 1.12.0 after Gates A-F: capacity, numerical, video, and dual-compute gates pass; performance fails, so it remains default-off experimental capacity mode |
+| O11 efficient Text Encoder attention | shipped in 1.13.0 after Gates A-F: a 15-second video, seven images, and 7000 characters pass Text Encoder; maximum full sampling remains bounded by Diffusion VRAM |
 
 The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to end and 160.72 s/it; REF2VA Turbo4 takes 932.03 s and 185.20 s/it. The initial 4x limits are 40.1799 and 46.3008 s/it, and current results remain above them. The 11x value is a later research target, not a current capability. Older O5 geometry is not an O6 denominator.
 
@@ -639,6 +655,8 @@ The matched local FP32 baselines are locked. I2V Turbo8 takes 1463.67 s end to e
 - O8 implementation plan: [English](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.md) / [中文](docs/superpowers/plans/2026-08-22-mmh3director-model-adapter.zh-CN.md)
 - [O9 adaptive P2P acceptance](docs/testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md)
 - [O10 Text Encoder TP2 plan](docs/superpowers/plans/2026-08-29-o10-minimax-h3-dual-v100-text-encoder-tp2.zh-CN.md)
+- [O11 efficient-attention plan](docs/superpowers/plans/2026-09-01-o11-minimax-h3-text-encoder-efficient-attention.zh-CN.md)
+- [O11 test record](docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md)
 
 ## Important fixes retained in this branch
 

@@ -80,3 +80,30 @@ def test_cli_validates_all_local_media(tmp_path):
 
     module.validate_media(media)
 
+
+def test_builds_04mp_single_pass_profile_without_changing_input_strength():
+    module = _load_script()
+    base = json.loads(
+        (REPO_ROOT / "example_workflows" / "Minimax_H3_DualGPU_Text_Encoder_TP2_Raylight.json")
+        .read_text(encoding="utf-8")
+    )
+
+    workflow = module.build_workflow(
+        base,
+        "test prompt",
+        "动作迁移/宗主舞蹈",
+        megapixels=0.4,
+        width=864,
+        height=480,
+    )
+
+    director = _node(workflow, "MiniMaxH3Director")
+    timeline = json.loads(director["widgets_values"][11])
+    assert director["widgets_values"][6:11] == [24, 864, 480, 864, 365]
+    assert timeline["output"]["megapixels"] == 0.4
+    assert timeline["output"]["width"] == 864
+    assert timeline["output"]["height"] == 480
+    assert timeline["global"]["refVideos"]
+    assert len(timeline["global"]["refs"]) == 7
+    assert _node(workflow, "SaveVideo")["widgets_values"][0].endswith("_0.4MP")
+    assert all(node["type"] != "MiniMaxH3DirectorRefine" for node in workflow["nodes"])

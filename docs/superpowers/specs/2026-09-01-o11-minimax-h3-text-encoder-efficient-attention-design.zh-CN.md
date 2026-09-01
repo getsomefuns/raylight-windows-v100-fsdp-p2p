@@ -1,6 +1,6 @@
 # O11：MiniMax H3 双 V100 Text Encoder 高效注意力设计
 
-> 状态：架构方向已获用户批准；本文书面规格待用户复核；实现尚未开始。
+> 状态：实现与 Gate A–F 验收已完成；1.13.0 发布准备完成，尚未推送 GitHub。
 >
 > 日期：2026-09-01
 >
@@ -293,6 +293,11 @@ AUTO/XFORMERS_GQA 至少完成 1 次冷运行和 1 次热文件缓存运行；�
 - 若最大 conditioning 通过但采样 OOM，O11 仍可按“Text Encoder 容量通过、采样边界未通过”收口，但不能宣称完整最大工作流可生成视频。
 - 不允许通过提高页面文件、把正式 CUDA Attention 转到 CPU、关闭输入 reference 或截断 token 达成验收。
 
-## 13. 设计完成后的下一步
+## 13. 实施与验收结论
 
-用户审核本设计后，另行编写 O11 可执行实施计划。实施必须从失败回归测试开始，先实现后端抽象和无平方 mask，再依次通过 Gate A–F。本文在用户批准前不授权代码修改。
+- 冻结门槛完整通过：15 秒视频、7 张不同图片和 7000 个有效字符展开为 24,236 个位置；AUTO 冷/热 Text Encoder 为 112.94/112.55 秒。
+- AUTO 在目标 V100 环境选择 `XFORMERS_GQA`；强制 `TORCH_EFFICIENT` 同输入也通过，未发生 Math 回退。
+- 用户提供的 7 图、1 视频、1 音频、5802 字符 Director 输入展开为 12,302 个位置，Text Encoder 62.88 秒完成，双卡 PyTorch 分配峰值为 9244/9451 MiB。
+- 同一 Director 工作流随后在 1056×608、365 帧 Diffusion 第一步 OOM；降到 864×480 后从 RMSNorm 推进到 MLP `fc2`，但仍在第一步 OOM。因此 O11 的准确边界是“最大 Text Encoder 容量通过”，不是“最大完整视频工作流通过”。
+- 3 秒、864×480、Turbo4 的完整 REF2VA 采样、解码和媒体质量 smoke 已通过；所有 O11 视频固定输出到 `ComfyUI/output/video/raylight_o11`。
+- 详细成功、失败实验和资源数据见 `docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md`。

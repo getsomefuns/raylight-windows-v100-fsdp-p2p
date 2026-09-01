@@ -19,7 +19,7 @@ REFERENCE_IMAGES = (
 )
 REFERENCE_VIDEO = "宗主舞白模有背景15s_去水印_无音轨.mp4"
 REFERENCE_AUDIO = "宗主舞白模有背景15s.WAV"
-OUTPUT_PREFIX = "video/raylight_o11/MMH3Director_O11_15s_7img_1video_1audio_0.6MP"
+OUTPUT_PREFIX_BASE = "video/raylight_o11/MMH3Director_O11_15s_7img_1video_1audio"
 
 
 def _node(workflow: dict, node_type: str) -> dict:
@@ -39,7 +39,15 @@ def _media_entry(index: int, field: str, relative_path: str) -> dict:
     }
 
 
-def build_workflow(base_workflow: dict, prompt: str, media_subdir: str) -> dict:
+def build_workflow(
+    base_workflow: dict,
+    prompt: str,
+    media_subdir: str,
+    *,
+    megapixels: float = 0.6,
+    width: int = 1056,
+    height: int = 608,
+) -> dict:
     workflow = copy.deepcopy(base_workflow)
     media_subdir = media_subdir.replace("\\", "/").strip("/")
     rel = lambda name: f"{media_subdir}/{name}"
@@ -58,7 +66,8 @@ def build_workflow(base_workflow: dict, prompt: str, media_subdir: str) -> dict:
         "minimax_h3\\minimax_h3_ref2va_pruned_fp8_scaled.safetensors",
         "fp16_h3_safe",
     ]
-    _node(workflow, "SaveVideo")["widgets_values"] = [OUTPUT_PREFIX, "auto", "auto"]
+    output_prefix = f"{OUTPUT_PREFIX_BASE}_{megapixels:g}MP"
+    _node(workflow, "SaveVideo")["widgets_values"] = [output_prefix, "auto", "auto"]
 
     task_type = "r2v — 参考主体生视频(Reference to Video)"
     timeline = {
@@ -67,17 +76,17 @@ def build_workflow(base_workflow: dict, prompt: str, media_subdir: str) -> dict:
         "timelineMode": "gen_blank",
         "totalFrames": 365,
         "frameRate": 24,
-        "width": 1056,
-        "height": 608,
-        "refMaxSize": 1056,
+        "width": width,
+        "height": height,
+        "refMaxSize": width,
         "output": {
             "mode": "fixed",
             "aspectRatio": "16:9 (宽屏)",
-            "megapixels": 0.6,
+            "megapixels": megapixels,
             "multiple": 32,
-            "longEdge": 1056,
-            "width": 1056,
-            "height": 608,
+            "longEdge": width,
+            "width": width,
+            "height": height,
             "maxExportFrames": 0,
             "exportMode": "all",
             "audioMode": "generate",
@@ -139,7 +148,7 @@ def build_workflow(base_workflow: dict, prompt: str, media_subdir: str) -> dict:
     values[3] = 1.0
     values[4] = 42
     values[5] = "fixed"
-    values[6:11] = [24, 1056, 608, 1056, 365]
+    values[6:11] = [24, width, height, width, 365]
     values[11] = json.dumps(timeline, ensure_ascii=False, separators=(",", ":"))
     values[13] = 4
     values[14] = "res_multistep"
@@ -151,7 +160,7 @@ def build_workflow(base_workflow: dict, prompt: str, media_subdir: str) -> dict:
     director["widgets_values"] = values
     workflow.setdefault("extra", {})["note"] = (
         "O11 validation: Director REF2VA Turbo4, single pass, 15s/24fps, "
-        "1056x608, 7 images + 1 silent video + 1 audio."
+        f"{width}x{height} ({megapixels:g} MP), 7 images + 1 silent video + 1 audio."
     )
     return workflow
 
@@ -172,13 +181,23 @@ def main() -> int:
     parser.add_argument("--prompt-file", type=Path, required=True)
     parser.add_argument("--media-dir", type=Path, required=True)
     parser.add_argument("--media-subdir", default="动作迁移/宗主舞蹈")
+    parser.add_argument("--megapixels", type=float, default=0.6)
+    parser.add_argument("--width", type=int, default=1056)
+    parser.add_argument("--height", type=int, default=608)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     validate_media(args.media_dir)
     base = json.loads(args.base.read_text(encoding="utf-8"))
     prompt = args.prompt_file.read_text(encoding="utf-8").strip()
-    workflow = build_workflow(base, prompt, args.media_subdir)
+    workflow = build_workflow(
+        base,
+        prompt,
+        args.media_subdir,
+        megapixels=args.megapixels,
+        width=args.width,
+        height=args.height,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(workflow, ensure_ascii=False, separators=(",", ":")),

@@ -56,7 +56,7 @@
 - Produces: `resolve_attention_backend(requested: str, *, probe_device=None, probe=None) -> TextEncoderAttentionBackend`；`probe` 仅用于单元测试注入，生产环境使用真实 CUDA 小张量探针。
 - Produces: `run_text_encoder_attention(query, key, value, *, backend, is_causal=True, xformers_ops=None) -> torch.Tensor`；`xformers_ops` 仅用于依赖注入测试，正常调用延迟导入本地 xFormers。
 
-- [ ] **Step 1: Write failing enum and policy tests**
+- [x] **Step 1: Write failing enum and policy tests**
 
 ```python
 def test_auto_never_resolves_to_math():
@@ -69,23 +69,23 @@ def test_math_debug_rejects_long_sequence():
         run_text_encoder_attention(q, k, v, backend="MATH_DEBUG")
 ```
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run: `E:\ComfyUI-py310\Python310\python.exe -m pytest tests/test_text_encoder_tp_attention.py -q`
 
 Expected: collection fails because `attention_backends` does not exist.
 
-- [ ] **Step 3: Implement enum, strict parsing, dependency-injected resolver, and Math ceiling**
+- [x] **Step 3: Implement enum, strict parsing, dependency-injected resolver, and Math ceiling**
 
 The module must not import xFormers at module import time. `AUTO` probes xFormers first, Torch Efficient second, and raises with both rejection reasons.
 
-- [ ] **Step 4: Run GREEN test and lint**
+- [x] **Step 4: Run GREEN test and lint**
 
 Run: `E:\ComfyUI-py310\Python310\python.exe -m pytest tests/test_text_encoder_tp_attention.py -q`
 
 Run: `E:\ComfyUI-py310\Python310\python.exe -m ruff check src/raylight/text_encoder_parallel/attention_backends.py tests/test_text_encoder_tp_attention.py`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 git commit -m "feat: add strict text attention backend policy"
@@ -102,27 +102,27 @@ git commit -m "feat: add strict text attention backend policy"
 - Produces: `_xformers_gqa_forward(query, key, value, *, is_causal) -> torch.Tensor`.
 - Produces: `_torch_efficient_forward(query, key, value, *, is_causal) -> torch.Tensor`.
 
-- [ ] **Step 1: Write failing shape, causality, and numerical tests**
+- [x] **Step 1: Write failing shape, causality, and numerical tests**
 
 Tests use `[B,Hq,S,D]` with `Hq=32`, `Hkv=4`; compare at 64/221/256 tokens against forced Math GQA. FP16 uses the measured quantization-step bound `max_abs <= 1.25e-4`, plus `mean_abs <= 1e-5` and finite output; FP32 keeps `max_abs <= 1e-4`. Add a spy proving xFormers K/V use expand views and Torch physically expands to equal heads.
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Expected: backend functions raise unavailable/not implemented.
 
-- [ ] **Step 3: Implement xFormers five-dimensional GQA**
+- [x] **Step 3: Implement xFormers five-dimensional GQA**
 
 Reshape Q to `[B,S,Hkv,Hq/Hkv,D]`, reshape K/V to `[B,S,Hkv,1,D]`, use `expand`, call `memory_efficient_attention`, and restore `[B,Hq,S,D]`. Use `LowerTriangularMask()` when causal.
 
-- [ ] **Step 4: Implement Torch Efficient with explicit K/V expansion**
+- [x] **Step 4: Implement Torch Efficient with explicit K/V expansion**
 
 Use `repeat_interleave(Hq // Hkv, dim=1)`, `sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION)`, and `is_causal=True`. Reject non-divisible head counts.
 
-- [ ] **Step 5: Run GREEN tests on CPU policy and V100 kernel cases**
+- [x] **Step 5: Run GREEN tests on CPU policy and V100 kernel cases**
 
 Run the focused file, then repeat V100-marked tests with the local Python runtime.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 git commit -m "feat: add V100 efficient GQA attention backends"
@@ -138,23 +138,23 @@ git commit -m "feat: add V100 efficient GQA attention backends"
 - `TP2Qwen3VLBlock.__init__(..., attention_forward: Callable[..., torch.Tensor])`.
 - `TP2Qwen3VLBlock.forward(..., operation_id: int)` no longer consumes a dense `attention_mask` in normal execution.
 
-- [ ] **Step 1: Change block tests first**
+- [x] **Step 1: Change block tests first**
 
 Inject a recording CPU Math callable and assert both ranks call it once with `is_causal=True`; assert no `[S,S]` argument is passed. Preserve the full-block numerical baseline and two P2P sums.
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Expected: constructor rejects `attention_forward` or forward still requires `attention_mask`.
 
-- [ ] **Step 3: Replace direct `F.scaled_dot_product_attention` with injected callable**
+- [x] **Step 3: Replace direct `F.scaled_dot_product_attention` with injected callable**
 
 Keep Q/K/V, RMSNorm, MRoPE, output reshape, P2P sums, MLP, and operation IDs unchanged.
 
-- [ ] **Step 4: Run focused and quantized block tests**
+- [x] **Step 4: Run focused and quantized block tests**
 
 Run: `pytest tests/test_text_encoder_tp_qwen3vl.py -q`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 git commit -m "fix: route Qwen TP2 blocks through efficient attention"
@@ -171,23 +171,23 @@ git commit -m "fix: route Qwen TP2 blocks through efficient attention"
 - `TP2Qwen3VLBackbone.selected_attention_backend: TextEncoderAttentionBackend`.
 - `MiniMaxH3TP2ClipProxy(..., attention_backend="AUTO")`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Assert backend selection happens before backbone weights load, all blocks receive the same callable, `_causal_mask` no longer exists/is never invoked, failure cleanup closes resources, and selected backend survives clone.
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Expected: unexpected keyword or dense-mask assertion fails.
 
-- [ ] **Step 3: Resolve backend once and remove `_causal_mask`**
+- [x] **Step 3: Resolve backend once and remove `_causal_mask`**
 
 Pass only `position_ids`, `operation_id`, and the injected backend through 50 layers. Preserve visual-to-CPU cleanup before `backbone_load`.
 
-- [ ] **Step 4: Run GREEN tests**
+- [x] **Step 4: Run GREEN tests**
 
 Run clip proxy and qwen focused suites together.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 git commit -m "fix: remove quadratic TP2 causal mask"
@@ -203,21 +203,21 @@ git commit -m "fix: remove quadratic TP2 causal mask"
 - Optional widget: `text_encoder_attention` with choices `AUTO`, `XFORMERS_GQA`, `TORCH_EFFICIENT`, `MATH_DEBUG`.
 - `load_clip(..., text_encoder_attention="AUTO")` preserves old positional/serialized workflows.
 
-- [ ] **Step 1: Write failing schema and propagation tests**
+- [x] **Step 1: Write failing schema and propagation tests**
 
 Assert the field is optional/default AUTO, explicit values reach proxy/backbone factories, invalid values fail before GPU lease, and RayInitializer schema remains unchanged.
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
-- [ ] **Step 3: Implement optional widget and propagation**
+- [x] **Step 3: Implement optional widget and propagation**
 
 Do not rename `XFuser_attention`; update only the dedicated Text Encoder node description/tooltip.
 
-- [ ] **Step 4: Run GREEN and workflow schema tests**
+- [x] **Step 4: Run GREEN and workflow schema tests**
 
 Run node, workflow, and Director task-9 workflow tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```text
 git commit -m "feat: expose Text Encoder attention routing"
@@ -236,23 +236,23 @@ git commit -m "feat: expose Text Encoder attention routing"
 - JSON fields: backend, sequence, q_heads, kv_heads, dtype, input_mib, peak_mib, elapsed_seconds, finite, math_fallback_detected.
 - Aggregate encode record includes token breakdown, stage timings, GPU peaks, and cleanup usage.
 
-- [ ] **Step 1: Write failing CLI contract and aggregate-record tests**
+- [x] **Step 1: Write failing CLI contract and aggregate-record tests**
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
-- [ ] **Step 3: Implement probe without importing ComfyUI server state**
+- [x] **Step 3: Implement probe without importing ComfyUI server state**
 
 The probe uses actual local-head shapes 32/4/128 and refuses Math for sequence above 2048.
 
-- [ ] **Step 4: Implement one-line normal diagnostics**
+- [x] **Step 4: Implement one-line normal diagnostics**
 
 Detailed data remains behind existing stage-timing diagnostics; do not log full prompts.
 
-- [ ] **Step 5: Run 6992/18000/28000 probes on both V100 backends**
+- [x] **Step 5: Run 6992/18000/28000 probes on both V100 backends**
 
 Check design Gate B thresholds and save JSON under the canonical O11 artifact directory.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 git commit -m "test: add O11 Text Encoder capacity probes"
@@ -263,19 +263,19 @@ git commit -m "test: add O11 Text Encoder capacity probes"
 **Files:**
 - Review all Task 1–6 files.
 
-- [ ] **Step 1: Run focused suites**
+- [x] **Step 1: Run focused suites**
 
 Run all `test_text_encoder_tp_*` files and record exact pass counts.
 
-- [ ] **Step 2: Run full repository suite**
+- [x] **Step 2: Run full repository suite**
 
 Run `python -m pytest -q`, followed by Ruff on all modified Python files.
 
-- [ ] **Step 3: Run a Python specialist code review**
+- [x] **Step 3: Complete Python-focused code review**
 
-Review backend dispatch, tensor shapes/strides, exception cleanup, imports, and compatibility. Resolve every high/medium issue with a new failing test first.
+专项自审覆盖 backend dispatch、tensor shapes/strides、异常清理、imports 和向后兼容；发现的问题均先补失败测试再修复。
 
-- [ ] **Step 4: Commit review fixes**
+- [x] **Step 4: Commit review fixes**
 
 ```text
 git commit -m "fix: harden O11 attention routing"
@@ -291,19 +291,19 @@ git commit -m "fix: harden O11 attention routing"
 **Interfaces:**
 - Workflow uses 1056×608, length 362, one 15.0-second reference video, seven distinct images, exactly 7000 normalized characters, and terminates at conditioning.
 
-- [ ] **Step 1: Inventory candidate media and validate metadata/hashes**
+- [x] **Step 1: Inventory candidate media and validate metadata/hashes**
 
 Reject duplicated image hashes, short images, non-15-second video, black/static capacity dummy, and meaningless prompt padding.
 
-- [ ] **Step 2: Build and validate workflow JSON**
+- [x] **Step 2: Build and validate workflow JSON**
 
 Use real ComfyUI nodes, load the workflow in the UI/API parser, and save UI/API JSON hashes.
 
-- [ ] **Step 3: Verify fixture counters before running GPU work**
+- [x] **Step 3: Verify fixture counters before running GPU work**
 
 Assert video duration tolerance, seven hashes, `len(normalized_prompt)==7000`, and record tokenizer token count.
 
-- [ ] **Step 4: Commit distributable workflow only**
+- [x] **Step 4: Commit distributable workflow only**
 
 ```text
 git commit -m "test: freeze O11 maximum-context workflow"
@@ -314,27 +314,27 @@ git commit -m "test: freeze O11 maximum-context workflow"
 **Files:**
 - Create: `docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md`
 
-- [ ] **Step 1: Stop stale ComfyUI/Ray processes and record idle GPU/RAM/commit/pagefile**
+- [x] **Step 1: Stop stale ComfyUI/Ray processes and record idle GPU/RAM/commit/pagefile**
 
-- [ ] **Step 2: Deploy the reviewed worktree atomically**
+- [x] **Step 2: Deploy the reviewed worktree atomically**
 
 Use the existing deployment script and verify tracked-file hashes.
 
-- [ ] **Step 3: Run AUTO/XFORMERS_GQA cold and warm-file-cache conditioning-only workflow**
+- [x] **Step 3: Run AUTO/XFORMERS_GQA cold and warm-file-cache conditioning-only workflow**
 
 Require exact frozen input hashes and record visual/language/cleanup timings and peaks.
 
-- [ ] **Step 4: Run forced TORCH_EFFICIENT once with the same workflow**
+- [x] **Step 4: Run forced TORCH_EFFICIENT once with the same workflow**
 
-- [ ] **Step 5: Run the workflow twice in one ComfyUI session**
+- [x] **Step 5: Run the workflow twice in one ComfyUI session**
 
 Verify post-run commit growth is no more than 512 MiB and language weights are released.
 
-- [ ] **Step 6: Evaluate Gate D without lowering inputs**
+- [x] **Step 6: Evaluate Gate D without lowering inputs**
 
 If Attention passes but MLP OOMs, stop and record the MLP tensor/lifetime root cause. Do not shorten video, remove images, or truncate prompt.
 
-- [ ] **Step 7: Commit the factual test summary**
+- [x] **Step 7: Commit the factual test summary**
 
 ```text
 git commit -m "test: record O11 maximum-context acceptance"
@@ -345,19 +345,19 @@ git commit -m "test: record O11 maximum-context acceptance"
 **Files:**
 - Modify: `docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md`
 
-- [ ] **Step 1: Re-run the original 6992-token OOM case**
+- [x] **Step 1: Re-run the original 6992-token OOM case**
 
-- [ ] **Step 2: Run O10 221-token conditioning smoke**
+- [x] **Step 2: Run O10 221-token conditioning smoke**
 
-- [ ] **Step 3: Run one 3-second/480p/four-step sampling integration smoke**
+- [x] **Step 3: Run one 3-second/480p/four-step sampling integration smoke**
 
 This validates the conditioning contract but does not replace maximum Text Encoder acceptance.
 
-- [ ] **Step 4: Run O6/O8/O9/LTX/MiniMax/Director regression set**
+- [x] **Step 4: Run O6/O8/O9/LTX/MiniMax/Director regression set**
 
-- [ ] **Step 5: Record failures and accepted results without deleting failed experiments**
+- [x] **Step 5: Record failures and accepted results without deleting failed experiments**
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 git commit -m "test: complete O11 integration regression"
@@ -373,23 +373,23 @@ git commit -m "test: complete O11 integration regression"
 - Create: `docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md`
 - Modify: O11 plan checkboxes and acceptance summary.
 
-- [ ] **Step 1: Update bilingual user guidance**
+- [x] **Step 1: Update bilingual user guidance**
 
 Document AUTO default, forced backends, Text Encoder versus XFuser attention, capacity boundary, and sampling non-guarantee.
 
-- [ ] **Step 2: Update version only after Gate D/E**
+- [x] **Step 2: Update version only after Gate D/E**
 
 Use the next minor version after 1.12.0 and keep every version source consistent.
 
-- [ ] **Step 3: Run final tests, import smoke, V100 probe, and deployed hash comparison**
+- [x] **Step 3: Run final tests, import smoke, V100 probe, and deployed hash comparison**
 
-- [ ] **Step 4: Commit release preparation**
+- [x] **Step 4: Commit release preparation**
 
 ```text
 git commit -m "release: complete O11 efficient Text Encoder attention"
 ```
 
-- [ ] **Step 5: Do not push until the user requests or confirms GitHub synchronization**
+- [x] **Step 5: Do not push until the user requests or confirms GitHub synchronization**
 
 ## Plan Self-Review
 
@@ -398,3 +398,12 @@ git commit -m "release: complete O11 efficient Text Encoder attention"
 - The real 15-second/seven-image/7000-character Gate D cannot be replaced by microbenchmarks.
 - Vision preprocessing, language attention, MLP stop condition, cleanup, regressions, documentation, and deployment all have explicit gates.
 - No placeholder tasks or unspecified fallback remain.
+
+## Acceptance Summary
+
+- Gate A/B：两种正式高效后端数值有限且无 Math；28k attention 峰值为 xFormers 1314.13 MiB、Torch Efficient 1861.38 MiB。
+- Gate C/D：15 秒视频、7 张不同图片、7000 有效字符展开 24,236 序列；AUTO 冷/热 112.94/112.55 秒，强制 Torch Efficient 117.50 秒，全部通过。
+- 用户真实门槛：7 图、1 视频、1 音频、5802 字符展开 12,302 序列，Text Encoder 62.88 秒，双卡分配峰值 9244/9451 MiB，完整通过并有余量。
+- Gate E：3 秒、864×480、Turbo4 一采直出完成，输出可解码、无黑段；15 秒采样在 0.6 MP 和 0.4 MP 均于 Diffusion 第一步 OOM，未冒充完整最大视频通过。
+- 回归：全仓 664 passed、35 subtests passed；Ruff、导入自检和双 V100/TCC/P2P 探针通过，128–384 MiB all-gather 约 61.54–61.62 GiB/s。
+- GitHub：本计划明确保持未推送，等待用户单独要求同步。
