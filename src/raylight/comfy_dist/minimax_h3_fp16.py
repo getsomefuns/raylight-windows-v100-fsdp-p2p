@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import functools
 import inspect
+import json
+import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Callable
@@ -34,6 +36,25 @@ _SAFE_CONSTRUCTION_ACTIVE: ContextVar[bool] = ContextVar(
     "raylight_minimax_h3_safe_fp16_construction",
     default=False,
 )
+_SAFE_TRACE_HIGH_WATER: dict[int, int] = {}
+
+
+def _trace_safe_fp16_memory(event: str) -> None:
+    if os.environ.get("RAYLIGHT_H3_MEMORY_TRACE", "0") != "1" or not torch.cuda.is_available():
+        return
+    device = torch.cuda.current_device()
+    peak = torch.cuda.max_memory_allocated(device)
+    if peak <= _SAFE_TRACE_HIGH_WATER.get(device, -1):
+        return
+    _SAFE_TRACE_HIGH_WATER[device] = peak
+    payload = {
+        "event": event,
+        "pid": os.getpid(),
+        "device": device,
+        "allocated_bytes": torch.cuda.memory_allocated(device),
+        "peak_allocated_bytes": peak,
+    }
+    print("[RAYLIGHT_H3_MEMORY] " + json.dumps(payload, sort_keys=True))
 
 
 def safe_fp16_requested(model_options: dict[str, Any] | None) -> bool:
@@ -243,10 +264,15 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
         if not getattr(self, _MLP_PATCH_MARKER, False):
             return original_mlp_forward(self, x)
         projected = self.fc1(x)
+        _trace_safe_fp16_memory("mlp_fc1_projected")
         gate, up = projected.chunk(2, dim=-1)
         activated = torch.nn.functional.silu(gate.to(torch.float32)).mul_(up.to(torch.float32))
+        _trace_safe_fp16_memory("mlp_fp32_activated")
         del projected, gate, up
-        return safe_linear_projection(self.fc2, activated, K_FC2)
+        _trace_safe_fp16_memory("mlp_fc1_released")
+        result = safe_linear_projection(self.fc2, activated, K_FC2)
+        _trace_safe_fp16_memory("mlp_fc2_projected")
+        return result
 
     @functools.wraps(original_block_forward)
     def safe_block_forward(
@@ -260,20 +286,28 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
         if not getattr(self, _BLOCK_PATCH_MARKER, False):
             return original_block_forward(self, x, t_emb, mod_segments, rope_freqs, transformer_options)
         residual = x if x.dtype is torch.float32 else x.to(torch.float32)
+        _trace_safe_fp16_memory("block_residual_ready")
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaln_proj(t_emb)
         branch = mm_module._mod_scale_shift(
             self.norm1(residual), shift_msa, scale_msa, mod_segments
         ).to(torch.float16)
+        _trace_safe_fp16_memory("block_attention_branch_ready")
         attention = self.attn(
             branch, rope_freqs=rope_freqs, transformer_options=transformer_options
         ).to(torch.float32)
+        _trace_safe_fp16_memory("block_attention_ready")
         residual = mm_module._mod_gate(residual, gate_msa, attention, mod_segments)
         del attention
+        _trace_safe_fp16_memory("block_attention_merged")
         branch = mm_module._mod_scale_shift(
             self.norm2(residual), shift_mlp, scale_mlp, mod_segments
         ).to(torch.float16)
+        _trace_safe_fp16_memory("block_mlp_branch_ready")
         mlp = self.mlp(branch).to(torch.float32)
-        return mm_module._mod_gate(residual, gate_mlp, mlp, mod_segments)
+        _trace_safe_fp16_memory("block_mlp_ready")
+        result = mm_module._mod_gate(residual, gate_mlp, mlp, mod_segments)
+        _trace_safe_fp16_memory("block_mlp_merged")
+        return result
 
     mm_module.MiniMaxH3Model.__init__ = safe_model_init
     mm_module.MLP.forward = safe_mlp_forward

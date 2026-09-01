@@ -382,6 +382,32 @@ def test_safe_block_releases_attention_output_before_mlp():
     assert result.tolist() == [[3.0]]
 
 
+def test_safe_block_reports_internal_memory_phases(monkeypatch):
+    fake_module = _fake_minimax_module()
+    events = []
+    monkeypatch.setattr(h3fp16, "_trace_safe_fp16_memory", events.append)
+    install_minimax_h3_safe_fp16_patch(fake_module)
+    block = _FakeBlock()
+    block._raylight_h3_safe_fp16 = True
+    block.norm1 = _IdentityNorm()
+    block.norm2 = _IdentityNorm()
+    block.attn = _RecordingBranch(1.0)
+    block.mlp = _RecordingBranch(2.0)
+    block.adaln_proj = _Adaln()
+
+    block(torch.ones(1, 1), torch.ones(1, 1), [(0, 1, 0)], None)
+
+    assert events == [
+        "block_residual_ready",
+        "block_attention_branch_ready",
+        "block_attention_ready",
+        "block_attention_merged",
+        "block_mlp_branch_ready",
+        "block_mlp_ready",
+        "block_mlp_merged",
+    ]
+
+
 def test_class_patch_activates_only_inside_explicit_safe_construction_context():
     fake_module = _fake_minimax_module()
     install_minimax_h3_safe_fp16_patch(fake_module)
