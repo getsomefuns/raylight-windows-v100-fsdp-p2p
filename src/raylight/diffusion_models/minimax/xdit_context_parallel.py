@@ -82,12 +82,13 @@ def _project_local_final_segment(
     local_size = h.shape[0]
     counts = _segment_rank_counts(segment, local_size, world_size)
     count = counts[rank]
+    max_count = max(counts)
     output = torch.empty(
-        (count, projector.weight.shape[0]),
+        (max_count, projector.weight.shape[0]),
         dtype=torch.float32,
         device=h.device,
     )
-    if count == 0:
+    if max_count == 0:
         return output, counts
 
     segment_start, segment_stop, timestep_row = segment
@@ -96,17 +97,24 @@ def _project_local_final_segment(
     overlap_stop = min(segment_stop, rank_start + local_size)
     local_start = overlap_start - rank_start
     local_stop = overlap_stop - rank_start
-    rows = h[local_start:local_stop]
+    local_rows = h[local_start:local_stop]
+    if count == max_count:
+        rows = local_rows
+    else:
+        rows = h.new_zeros((max_count, h.shape[1]))
+        rows[:count].copy_(local_rows)
     segment_scale = 1.0 + scale[timestep_row]
     segment_shift = shift[timestep_row]
-    for start in range(0, count, chunk_tokens):
-        stop = min(start + chunk_tokens, count)
+    for start in range(0, max_count, chunk_tokens):
+        stop = min(start + chunk_tokens, max_count)
         normalized = final_layer.norm(rows[start:stop])
         normalized = (normalized * segment_scale + segment_shift).to(torch.float32)
         projected = projector(normalized)
         output[start:stop].copy_(projected)
         del normalized, projected
-    return output, counts
+    if count == max_count:
+        return output, counts
+    return output[:count].clone(), counts
 
 
 def _gather_projected_rows(local_rows, counts, group):

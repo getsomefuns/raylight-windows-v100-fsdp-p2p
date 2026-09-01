@@ -158,6 +158,41 @@ def test_minimax_final_projection_uses_only_rank_local_target_rows_in_chunks(mon
     torch.testing.assert_close(projected, expected_hidden[:, :2])
 
 
+def test_minimax_final_projection_pads_short_rank_to_collective_chunk_count(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    monkeypatch.setattr(attention, "_ATTN_TYPE", "TORCH")
+    monkeypatch.setattr(attention, "_SYNC_ULYSSES", True)
+    monkeypatch.setattr(attention, "make_xfuser_attention", lambda *_args: None)
+    import raylight.diffusion_models.minimax.xdit_context_parallel as parallel
+
+    norm = _RecordingIdentity()
+    projector = _RecordingLinear()
+    final_layer = type("FinalLayer", (), {"norm": norm})()
+    local_hidden = torch.arange(15, dtype=torch.float32).reshape(5, 3)
+    shift = torch.tensor([[3.0, 3.0, 3.0]])
+    scale = torch.tensor([[1.0, 1.0, 1.0]])
+
+    projected, counts = parallel._project_local_final_segment(
+        final_layer,
+        local_hidden,
+        shift,
+        scale,
+        (2, 9, 0),
+        projector,
+        rank=0,
+        world_size=2,
+        chunk_tokens=2,
+    )
+
+    expected_hidden = local_hidden[2:5] * 2.0 + 3.0
+    assert counts == [3, 4]
+    assert norm.chunk_sizes == [2, 2]
+    assert projector.chunk_sizes == [2, 2]
+    assert projected.shape == (3, 2)
+    torch.testing.assert_close(projected, expected_hidden[:, :2])
+
+
 def test_minimax_gathers_only_small_projected_rows_and_removes_rank_padding(monkeypatch):
     import raylight.distributed_modules.attention as attention
 
