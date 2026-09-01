@@ -97,7 +97,7 @@ def _project_local_final_segment(
     overlap_stop = min(segment_stop, rank_start + local_size)
     local_start = overlap_start - rank_start
     local_stop = overlap_stop - rank_start
-    local_rows = h[local_start:local_stop]
+    local_rows = h[local_start:local_stop] if count else h[:0]
     if count == max_count:
         rows = local_rows
     else:
