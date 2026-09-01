@@ -100,7 +100,14 @@ def workflow_to_prompt(workflow: dict[str, Any], object_info: dict[str, Any]) ->
                     continue
                 if widget_index >= len(widgets):
                     if name not in connected_names:
-                        raise ValueError(f"missing widget value for {node_type}.{name} ({node['id']})")
+                        options = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+                        if section == "optional":
+                            if "default" in options:
+                                node_inputs[name] = options["default"]
+                            continue
+                        raise ValueError(
+                            f"missing widget value for {node_type}.{name} ({node['id']})"
+                        )
                     continue
                 value = widgets[widget_index]
                 widget_index += 1

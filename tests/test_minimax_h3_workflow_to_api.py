@@ -234,6 +234,50 @@ def test_converter_skips_mmh3director_frontend_only_widget_slots():
     }
 
 
+def test_converter_uses_schema_default_for_new_optional_widget_missing_from_old_workflow():
+    converter = _load_converter()
+    workflow = {
+        "nodes": [
+            {
+                "id": 128,
+                "type": "RayMiniMaxH3DualGPUCLIPLoader",
+                "mode": 0,
+                "inputs": [],
+                "widgets_values": ["qwen.safetensors", "tp2"],
+            }
+        ],
+        "links": [],
+    }
+    object_info = {
+        "RayMiniMaxH3DualGPUCLIPLoader": {
+            "input": {
+                "required": {
+                    "clip_name": [["qwen.safetensors"], {}],
+                    "execution_mode": [["tp2", "single_gpu_fallback"], {}],
+                },
+                "optional": {
+                    "text_encoder_attention": [
+                        ["AUTO", "XFORMERS_GQA", "TORCH_EFFICIENT"],
+                        {"default": "AUTO"},
+                    ]
+                },
+            },
+            "input_order": {
+                "required": ["clip_name", "execution_mode"],
+                "optional": ["text_encoder_attention"],
+            },
+        }
+    }
+
+    prompt = converter.workflow_to_prompt(workflow, object_info)
+
+    assert prompt["128"]["inputs"] == {
+        "clip_name": "qwen.safetensors",
+        "execution_mode": "tp2",
+        "text_encoder_attention": "AUTO",
+    }
+
+
 def test_converter_omits_bypassed_source_and_its_optional_downstream_link():
     converter = _load_converter()
     workflow = {
