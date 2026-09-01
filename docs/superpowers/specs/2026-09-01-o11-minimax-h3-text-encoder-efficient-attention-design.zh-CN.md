@@ -224,7 +224,7 @@ MiniMax 对齐可能把 15 秒源视频裁到最近的 `17k+5` 帧边界。报�
 ### Gate A：后端单元正确性
 
 - `XFORMERS_GQA`、`TORCH_EFFICIENT`、`AUTO`、`MATH_DEBUG` 路由均有测试。
-- 64、221、256、2048 token 下，两种高效后端与 Math 对照 `max_abs <= 1e-4`、`mean_abs <= 1e-5`。
+- 64、221、256、2048 token 下，两种高效后端与 Math 对照：FP16 `max_abs <= 1.25e-4`（覆盖实测 `1.220703125e-4` 量化步长），FP32 `max_abs <= 1e-4`，两者均要求 `mean_abs <= 1e-5`。
 - 所有输出有限，无 NaN/Inf。
 - `MATH_DEBUG` 在 2049 token 明确拒绝。
 - 模拟 xFormers 不可用时 AUTO 选择 Torch Efficient；两者都不可用时明确失败。

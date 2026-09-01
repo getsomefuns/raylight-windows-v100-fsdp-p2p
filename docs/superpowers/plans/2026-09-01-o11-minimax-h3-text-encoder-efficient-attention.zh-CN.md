@@ -104,7 +104,7 @@ git commit -m "feat: add strict text attention backend policy"
 
 - [ ] **Step 1: Write failing shape, causality, and numerical tests**
 
-Tests use `[B,Hq,S,D]` with `Hq=32`, `Hkv=4`; compare at 64/221/256 tokens against forced Math GQA with `max_abs <= 1e-4`, `mean_abs <= 1e-5`, and finite output. Add a spy proving xFormers K/V use expand views and Torch physically expands to equal heads.
+Tests use `[B,Hq,S,D]` with `Hq=32`, `Hkv=4`; compare at 64/221/256 tokens against forced Math GQA. FP16 uses the measured quantization-step bound `max_abs <= 1.25e-4`, plus `mean_abs <= 1e-5` and finite output; FP32 keeps `max_abs <= 1e-4`. Add a spy proving xFormers K/V use expand views and Torch physically expands to equal heads.
 
 - [ ] **Step 2: Run RED test**
 

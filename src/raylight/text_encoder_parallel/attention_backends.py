@@ -8,6 +8,7 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
 class TextEncoderAttentionBackend(str, Enum):
@@ -105,6 +106,55 @@ def _validate_gqa_tensors(query: torch.Tensor, key: torch.Tensor, value: torch.T
         raise ValueError("query head count must be divisible by key/value head count")
 
 
+def _xformers_gqa_forward(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    *,
+    is_causal: bool,
+    xformers_ops: Any | None = None,
+) -> torch.Tensor:
+    if xformers_ops is None:
+        try:
+            import xformers.ops as xformers_ops
+        except ImportError as exc:
+            raise AttentionBackendUnavailable("xFormers is not installed") from exc
+
+    batch, query_heads, sequence, head_dim = query.shape
+    kv_heads = key.shape[1]
+    groups = query_heads // kv_heads
+    grouped_query = query.transpose(1, 2).reshape(batch, sequence, kv_heads, groups, head_dim)
+    grouped_key = key.transpose(1, 2).reshape(batch, sequence, kv_heads, 1, head_dim).expand(-1, -1, -1, groups, -1)
+    grouped_value = value.transpose(1, 2).reshape(batch, sequence, kv_heads, 1, head_dim).expand(-1, -1, -1, groups, -1)
+    attention_bias = xformers_ops.LowerTriangularMask() if is_causal else None
+    output = xformers_ops.memory_efficient_attention(
+        grouped_query,
+        grouped_key,
+        grouped_value,
+        attn_bias=attention_bias,
+    )
+    return output.reshape(batch, sequence, query_heads, head_dim).transpose(1, 2)
+
+
+def _torch_efficient_forward(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    *,
+    is_causal: bool,
+) -> torch.Tensor:
+    groups = query.shape[1] // key.shape[1]
+    expanded_key = key.repeat_interleave(groups, dim=1)
+    expanded_value = value.repeat_interleave(groups, dim=1)
+    with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+        return F.scaled_dot_product_attention(
+            query,
+            expanded_key,
+            expanded_value,
+            is_causal=is_causal,
+        )
+
+
 def run_text_encoder_attention(
     query: torch.Tensor,
     key: torch.Tensor,
@@ -116,7 +166,6 @@ def run_text_encoder_attention(
 ) -> torch.Tensor:
     """Run the selected backend using TP2-local GQA tensors."""
 
-    del xformers_ops  # reserved for the dependency-injected xFormers implementation
     selected = _parse_backend(backend)
     if selected is TextEncoderAttentionBackend.AUTO:
         selected = resolve_attention_backend(selected, probe_device=query.device)
@@ -134,7 +183,18 @@ def run_text_encoder_attention(
             enable_gqa=query.shape[1] != key.shape[1],
         )
 
-    raise AttentionBackendUnavailable(f"{selected.value} is not implemented yet")
+    if selected is TextEncoderAttentionBackend.XFORMERS_GQA:
+        return _xformers_gqa_forward(
+            query,
+            key,
+            value,
+            is_causal=is_causal,
+            xformers_ops=xformers_ops,
+        )
+    if selected is TextEncoderAttentionBackend.TORCH_EFFICIENT:
+        return _torch_efficient_forward(query, key, value, is_causal=is_causal)
+
+    raise AssertionError(f"Unhandled Text Encoder attention backend: {selected.value}")
 
 
 __all__ = [

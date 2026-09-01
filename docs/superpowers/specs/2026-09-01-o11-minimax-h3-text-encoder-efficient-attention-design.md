@@ -209,7 +209,7 @@ MiniMax may align the source to the closest `17k+5` frame boundary. Reports must
 ### Gate A: backend correctness
 
 - Test XFORMERS_GQA, TORCH_EFFICIENT, AUTO, and MATH_DEBUG routing.
-- At 64, 221, 256, and 2,048 tokens, both efficient backends match Math within `max_abs <= 1e-4` and `mean_abs <= 1e-5`.
+- At 64, 221, 256, and 2,048 tokens, both efficient backends match Math within `max_abs <= 1.25e-4` for FP16 (covering the measured `1.220703125e-4` quantization step), `max_abs <= 1e-4` for FP32, and `mean_abs <= 1e-5` for both.
 - All outputs are finite.
 - MATH_DEBUG rejects 2,049 tokens.
 - AUTO selects Torch when xFormers is simulated unavailable and fails explicitly when neither backend works.
