@@ -14,6 +14,7 @@ _ATTN_TYPE = None
 _SYNC_ULYSSES = None
 XFORMERS_MEMORY_EFFICIENT = "XFORMERS_MEMORY_EFFICIENT"
 XFORMERS_HEAD_CHUNK = 7
+XFORMERS_QUERY_CHUNK_TOKENS = 16384
 
 
 def xfuser_attention_choices():
@@ -51,6 +52,7 @@ def xformers_ulysses_attention_owned(
     scale=None,
     causal=False,
     chunk_heads=XFORMERS_HEAD_CHUNK,
+    chunk_query_tokens=XFORMERS_QUERY_CHUNK_TOKENS,
 ):
     """Consume Q/K/V references and return the rank-local Ulysses output."""
 
@@ -58,6 +60,8 @@ def xformers_ulysses_attention_owned(
         raise ValueError("owned Ulysses attention requires exactly Q, K, and V")
     if chunk_heads <= 0:
         raise ValueError("XFormers attention chunk_heads must be positive")
+    if chunk_query_tokens <= 0:
+        raise ValueError("XFormers attention chunk_query_tokens must be positive")
     ring_group = PROCESS_GROUP.RING_PG
     if ring_group is None or dist.get_world_size(ring_group) != 1:
         raise ValueError("XFORMERS_MEMORY_EFFICIENT requires ring degree 1")
@@ -76,18 +80,24 @@ def xformers_ulysses_attention_owned(
     del value
     attention_bias = xops.LowerTriangularMask() if causal else None
     context_layer = torch.empty_like(query_layer)
-    for start in range(0, query_layer.shape[2], chunk_heads):
-        stop = min(start + chunk_heads, query_layer.shape[2])
-        context_chunk = xops.memory_efficient_attention(
-            query_layer[:, :, start:stop],
-            key_layer[:, :, start:stop],
-            value_layer[:, :, start:stop],
-            attn_bias=attention_bias,
-            p=0.0,
-            scale=scale,
-        )
-        context_layer[:, :, start:stop].copy_(context_chunk)
-        del context_chunk
+    if causal and chunk_query_tokens < query_layer.shape[1]:
+        raise ValueError("query chunking does not support causal attention offsets")
+    for query_start in range(0, query_layer.shape[1], chunk_query_tokens):
+        query_stop = min(query_start + chunk_query_tokens, query_layer.shape[1])
+        for head_start in range(0, query_layer.shape[2], chunk_heads):
+            head_stop = min(head_start + chunk_heads, query_layer.shape[2])
+            context_chunk = xops.memory_efficient_attention(
+                query_layer[:, query_start:query_stop, head_start:head_stop],
+                key_layer[:, :, head_start:head_stop],
+                value_layer[:, :, head_start:head_stop],
+                attn_bias=attention_bias,
+                p=0.0,
+                scale=scale,
+            )
+            context_layer[
+                :, query_start:query_stop, head_start:head_stop
+            ].copy_(context_chunk)
+            del context_chunk
     del query_layer, key_layer, value_layer
     output = SeqAllToAll4D.apply(ulysses_group, context_layer, 1, 2, use_sync)
     del context_layer

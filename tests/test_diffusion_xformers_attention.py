@@ -146,3 +146,38 @@ def test_v100_xformers_default_uses_seven_head_chunks():
     import raylight.distributed_modules.attention as attention
 
     assert attention.XFORMERS_HEAD_CHUNK == 7
+
+
+def test_owned_xformers_ulysses_chunks_query_sequence(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    class FakeAllToAll:
+        @staticmethod
+        def apply(_group, value, _scatter_idx, _gather_idx, _use_sync):
+            return value.clone()
+
+    class FakeProcessGroups:
+        ULYSSES_PG = object()
+        RING_PG = object()
+
+    query_chunks = []
+
+    def fake_attention(query, _key, _value, **_kwargs):
+        query_chunks.append(query.shape[1])
+        return query.clone()
+
+    monkeypatch.setattr(attention, "SeqAllToAll4D", FakeAllToAll)
+    monkeypatch.setattr(attention, "PROCESS_GROUP", FakeProcessGroups)
+    monkeypatch.setattr(attention.dist, "get_world_size", lambda _group: 1)
+    monkeypatch.setattr(attention.xops, "memory_efficient_attention", fake_attention)
+    owned = [torch.ones(1, 5, 4, 3) for _ in range(3)]
+
+    output = attention.xformers_ulysses_attention_owned(
+        owned,
+        use_sync=True,
+        chunk_heads=10,
+        chunk_query_tokens=2,
+    )
+
+    assert query_chunks == [2, 2]
+    assert output.shape == (1, 4, 5, 3)
