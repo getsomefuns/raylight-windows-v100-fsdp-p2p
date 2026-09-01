@@ -21,10 +21,17 @@ def test_node_schema_registration_and_display_name_are_explicit() -> None:
     node = tp_nodes.RayMiniMaxH3DualGPUCLIPLoader
     schema = node.INPUT_TYPES()
 
-    assert list(schema) == ["required"]
+    assert list(schema) == ["required", "optional"]
     assert list(schema["required"]) == ["clip_name", "execution_mode", "ray_actors_init"]
     assert schema["required"]["execution_mode"][0] == ["tp2", "single_gpu_fallback"]
     assert schema["required"]["ray_actors_init"] == ("RAY_ACTORS_INIT",)
+    assert schema["optional"]["text_encoder_attention"][0] == [
+        "AUTO",
+        "XFORMERS_GQA",
+        "TORCH_EFFICIENT",
+        "MATH_DEBUG",
+    ]
+    assert schema["optional"]["text_encoder_attention"][1]["default"] == "AUTO"
     assert node.RETURN_TYPES == ("CLIP", "RAY_ACTORS_INIT")
     assert node.RETURN_NAMES == ("clip", "ray_actors_init")
     assert node.FUNCTION == "load_clip"
@@ -55,7 +62,33 @@ def test_tp2_mode_returns_proxy_and_preserves_original_actor_payload() -> None:
     assert isinstance(clip, MiniMaxH3TP2ClipProxy)
     assert clip.tokenizer is tokenizer
     assert returned is payload
+    assert clip.attention_backend == "AUTO"
     ensure.assert_called_once_with(payload)
+
+
+def test_tp2_mode_propagates_explicit_attention_backend_to_real_backbone_loader() -> None:
+    payload, ray_actors, workers = _payload()
+    checkpoint = "E:/models/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+
+    with (
+        mock.patch.object(
+            tp_nodes, "ensure_fresh_actors", return_value=(ray_actors, workers, {"global_world_size": 2})
+        ),
+        mock.patch.object(tp_nodes.folder_paths, "get_full_path_or_raise", return_value=checkpoint),
+        mock.patch.object(tp_nodes.folder_paths, "get_folder_paths", return_value=[]),
+        mock.patch.object(tp_nodes, "MiniMaxH3Tokenizer", return_value=object()),
+        mock.patch.object(tp_nodes, "load_minimax_h3_tp2_backbone", return_value=object()) as load_backbone,
+    ):
+        clip, _ = tp_nodes.RayMiniMaxH3DualGPUCLIPLoader().load_clip(
+            "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "tp2",
+            payload,
+            text_encoder_attention="TORCH_EFFICIENT",
+        )
+        clip._backbone_factory(clip.attention_backend)
+
+    assert clip.attention_backend == "TORCH_EFFICIENT"
+    load_backbone.assert_called_once_with(Path(checkpoint), attention_backend="TORCH_EFFICIENT")
 
 
 def test_tp2_proxy_lease_context_uses_same_workers_and_unique_operation_ids() -> None:
@@ -147,6 +180,20 @@ def test_invalid_mode_never_silently_falls_back() -> None:
     ):
         with pytest.raises(ValueError, match="unsupported MiniMax H3 text encoder mode"):
             tp_nodes.RayMiniMaxH3DualGPUCLIPLoader().load_clip("model.safetensors", "auto", payload)
+
+
+def test_invalid_attention_backend_fails_before_ray_workers_are_touched() -> None:
+    payload, _, _ = _payload()
+    with mock.patch.object(tp_nodes, "ensure_fresh_actors") as ensure:
+        with pytest.raises(ValueError, match="UNKNOWN"):
+            tp_nodes.RayMiniMaxH3DualGPUCLIPLoader().load_clip(
+                "model.safetensors",
+                "tp2",
+                payload,
+                text_encoder_attention="UNKNOWN",
+            )
+
+    ensure.assert_not_called()
 
 
 def test_loader_rejects_unsupported_checkpoint_before_constructing_proxy() -> None:

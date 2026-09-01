@@ -14,6 +14,7 @@ import folder_paths
 from raylight.distributed_worker.ray_worker import ensure_fresh_actors
 from raylight.distributed_worker.sampling_lifecycle import external_text_encoder_gpu_lease
 
+from .attention_backends import TextEncoderAttentionBackend
 from .clip_proxy import (
     MiniMaxH3CheckpointPreprocessor,
     MiniMaxH3TP2ClipProxy,
@@ -23,6 +24,7 @@ from .clip_proxy import (
 
 SUPPORTED_CHECKPOINT = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 EXECUTION_MODES = ["tp2", "single_gpu_fallback"]
+TEXT_ENCODER_ATTENTION_BACKENDS = [backend.value for backend in TextEncoderAttentionBackend]
 
 
 def _validate_checkpoint(path: str) -> Path:
@@ -43,7 +45,10 @@ class RayMiniMaxH3DualGPUCLIPLoader:
                 "clip_name": (folder_paths.get_filename_list("text_encoders"),),
                 "execution_mode": (EXECUTION_MODES,),
                 "ray_actors_init": ("RAY_ACTORS_INIT",),
-            }
+            },
+            "optional": {
+                "text_encoder_attention": (TEXT_ENCODER_ATTENTION_BACKENDS, {"default": "AUTO"}),
+            },
         }
 
     RETURN_TYPES = ("CLIP", "RAY_ACTORS_INIT")
@@ -53,10 +58,20 @@ class RayMiniMaxH3DualGPUCLIPLoader:
     DESCRIPTION = (
         "Loads the MiniMax H3 Qwen3-VL-32B NVFP4 text encoder as native-Windows "
         "tensor parallelism across exactly two V100 GPUs. TP2 is explicit and never "
-        "silently falls back to the stock single-GPU CLIP loader."
+        "silently falls back to the stock single-GPU CLIP loader. Text Encoder attention "
+        "is selected independently from XFuser sampling attention."
     )
 
-    def load_clip(self, clip_name, execution_mode, ray_actors_init):
+    def load_clip(self, clip_name, execution_mode, ray_actors_init, text_encoder_attention="AUTO"):
+        try:
+            text_encoder_attention = TextEncoderAttentionBackend(
+                str(text_encoder_attention).strip().upper()
+            ).value
+        except ValueError as exc:
+            raise ValueError(
+                f"unsupported Text Encoder attention backend {text_encoder_attention!r}; "
+                f"expected one of {TEXT_ENCODER_ATTENTION_BACKENDS}"
+            ) from exc
         if execution_mode not in EXECUTION_MODES:
             raise ValueError(f"unsupported MiniMax H3 text encoder mode: {execution_mode!r}")
 
@@ -100,8 +115,11 @@ class RayMiniMaxH3DualGPUCLIPLoader:
         clip = MiniMaxH3TP2ClipProxy(
             tokenizer=MiniMaxH3Tokenizer(embedding_directory=embedding_directory),
             preprocessor_factory=lambda: MiniMaxH3CheckpointPreprocessor(checkpoint),
-            backbone_factory=lambda: load_minimax_h3_tp2_backbone(checkpoint),
+            backbone_factory=lambda backend: load_minimax_h3_tp2_backbone(
+                checkpoint, attention_backend=backend
+            ),
             execution_context_factory=execution_context,
+            attention_backend=text_encoder_attention,
         )
         return clip, ray_actors_init
 
@@ -121,4 +139,5 @@ __all__ = [
     "NODE_DISPLAY_NAME_MAPPINGS",
     "RayMiniMaxH3DualGPUCLIPLoader",
     "SUPPORTED_CHECKPOINT",
+    "TEXT_ENCODER_ATTENTION_BACKENDS",
 ]
