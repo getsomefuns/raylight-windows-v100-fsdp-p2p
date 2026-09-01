@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
 from pathlib import Path
 import uuid
 
@@ -61,6 +62,21 @@ class RayMiniMaxH3DualGPUCLIPLoader:
         "silently falls back to the stock single-GPU CLIP loader. Text Encoder attention "
         "is selected independently from XFuser sampling attention."
     )
+
+    @classmethod
+    def IS_CHANGED(
+        cls,
+        clip_name=None,
+        execution_mode=None,
+        ray_actors_init=None,
+        text_encoder_attention="AUTO",
+    ):
+        """Bypass Comfy caching only while the explicit O11 benchmark is active."""
+
+        del cls, clip_name, execution_mode, ray_actors_init, text_encoder_attention
+        if os.environ.get("RAYLIGHT_TEXT_ENCODER_BENCHMARK") == "1":
+            return float("nan")
+        return False
 
     def load_clip(self, clip_name, execution_mode, ray_actors_init, text_encoder_attention="AUTO"):
         try:

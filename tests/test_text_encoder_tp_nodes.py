@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import math
 from pathlib import Path
 from unittest import mock
 
@@ -40,6 +41,16 @@ def test_node_schema_registration_and_display_name_are_explicit() -> None:
     assert tp_nodes.NODE_DISPLAY_NAME_MAPPINGS == {
         "RayMiniMaxH3DualGPUCLIPLoader": "Load MiniMax H3 Text Encoder (Dual V100 TP2)"
     }
+
+
+def test_loader_disables_comfy_cache_only_for_explicit_benchmark_mode(monkeypatch) -> None:
+    node = tp_nodes.RayMiniMaxH3DualGPUCLIPLoader
+
+    monkeypatch.delenv("RAYLIGHT_TEXT_ENCODER_BENCHMARK", raising=False)
+    assert node.IS_CHANGED() is False
+
+    monkeypatch.setenv("RAYLIGHT_TEXT_ENCODER_BENCHMARK", "1")
+    assert math.isnan(node.IS_CHANGED())
 
 
 def test_tp2_mode_returns_proxy_and_preserves_original_actor_payload() -> None:
