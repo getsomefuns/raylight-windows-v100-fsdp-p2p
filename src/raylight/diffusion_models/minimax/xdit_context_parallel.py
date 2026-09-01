@@ -8,7 +8,10 @@ from comfy.ldm.minimax.model import pack_audio, patchify_video, rope_rotation_ta
 from xfuser.core.distributed import get_sequence_parallel_rank, get_sequence_parallel_world_size, get_sp_group
 
 import raylight.distributed_modules.attention as xfuser_attn
-from raylight.comfy_dist.minimax_h3_fp16 import safe_attention_output_projection
+from raylight.comfy_dist.minimax_h3_fp16 import (
+    _trim_safe_fp16_cuda_cache,
+    safe_attention_output_projection,
+)
 from .director_continuity import prepare_director_continuity
 from ..utils import pad_to_world_size
 
@@ -236,6 +239,7 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     video_x, audio_x = x[0], x[1]
     video_dtype = video_x.dtype
     audio_dtype = audio_x.dtype
+    _trim_safe_fp16_cuda_cache()
     orig_t, orig_h, orig_w = video_x.shape[2], video_x.shape[3], video_x.shape[4]
     video_x = comfy.ldm.common_dit.pad_to_patch_size(video_x, self.patch_size)
     if video_x.shape[0] != 1:
@@ -334,6 +338,7 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     del video_rows, audio_rows, cond_video_rows, cond_audio_rows
     del all_video_rows, all_audio_rows, video_embed, audio_embed, text_states
     del img_update, audio_update
+    _trim_safe_fp16_cuda_cache()
     _trace_cuda_memory("packed_hidden_built")
 
     t_vals = torch.tensor(unique_t, dtype=torch.float32, device=device)
@@ -352,6 +357,7 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     h, _ = pad_to_world_size(h, dim=0)
     rope_freqs, _ = pad_to_world_size(rope_freqs, dim=1)
     h, rope_freqs, mod_segments = _split_packed_sequence(h, rope_freqs, mod_segments)
+    _trim_safe_fp16_cuda_cache()
     _trace_cuda_memory("sequence_split")
 
     # blocks

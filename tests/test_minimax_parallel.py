@@ -118,6 +118,19 @@ def test_minimax_packed_inputs_are_released_before_transformer_blocks():
     } <= deleted
 
 
+def test_minimax_forward_trims_optional_cache_before_attention_peak():
+    function = _function(RAYLIGHT, "usp_dit_forward")
+    trim_calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_trim_safe_fp16_cuda_cache"
+    ]
+
+    assert len(trim_calls) == 3
+
+
 def test_minimax_qk_norm_is_written_back_into_projection_storage(monkeypatch):
     import raylight.distributed_modules.attention as attention
 
