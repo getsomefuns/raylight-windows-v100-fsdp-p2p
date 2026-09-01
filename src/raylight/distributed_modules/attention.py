@@ -2,11 +2,20 @@ from xfuser.core.long_ctx_attention import (
     xFuserLongContextAttention,
 )
 
+import torch.distributed as dist
+import xformers.ops as xops
+from yunchang.comm.all_to_all import SeqAllToAll4D
+from yunchang.globals import PROCESS_GROUP
 from yunchang.kernels import AttnType
 from .sageattention_hf_patch import ensure_hf_fp8_cuda_kernel, ensure_hf_sm90_kernel
 
 _ATTN_TYPE = None
 _SYNC_ULYSSES = None
+XFORMERS_MEMORY_EFFICIENT = "XFORMERS_MEMORY_EFFICIENT"
+
+
+def xfuser_attention_choices():
+    return [member.name for member in AttnType] + [XFORMERS_MEMORY_EFFICIENT]
 
 
 def set_attn_type(attn):
@@ -35,13 +44,16 @@ def get_sync_ulysses():
 
 def make_xfuser_attention(attn_type, sync_ulysses):
     print(f"Using XFuser {attn_type} attention, Sync Ulysses: {sync_ulysses}")
-    attn = AttnType[attn_type]
+    use_xformers_ulysses = attn_type == XFORMERS_MEMORY_EFFICIENT
+    attn = AttnType.TORCH_EFFICIENT if use_xformers_ulysses else AttnType[attn_type]
     if attn_type == "SAGE_FP8_CUDA":
         ensure_hf_fp8_cuda_kernel()
     elif attn_type == "SAGE_FP8_SM90":
         ensure_hf_sm90_kernel
 
-    xfuser_attn = xFuserLongContextAttention(use_sync=sync_ulysses, attn_type=attn)
+    xfuser_attn = None
+    if not use_xformers_ulysses:
+        xfuser_attn = xFuserLongContextAttention(use_sync=sync_ulysses, attn_type=attn)
 
     def _attention_xfuser_unmask(
             q,
@@ -86,8 +98,49 @@ def make_xfuser_attention(attn_type, sync_ulysses):
         key = k.transpose(1, 2)
         value = v.transpose(1, 2)
 
+        if use_xformers_ulysses:
+            if join_q is not None or mask is not None:
+                raise ValueError(
+                    "XFORMERS_MEMORY_EFFICIENT supports unmasked non-joint attention only"
+                )
+            ring_group = PROCESS_GROUP.RING_PG
+            if ring_group is None or dist.get_world_size(ring_group) != 1:
+                raise ValueError("XFORMERS_MEMORY_EFFICIENT requires ring degree 1")
+            ulysses_group = PROCESS_GROUP.ULYSSES_PG
+            if ulysses_group is None:
+                raise ValueError("XFORMERS_MEMORY_EFFICIENT requires an Ulysses process group")
+
+            del q, k, v
+            query_layer = SeqAllToAll4D.apply(
+                ulysses_group, query, 2, 1, sync_ulysses
+            )
+            del query
+            key_layer = SeqAllToAll4D.apply(
+                ulysses_group, key, 2, 1, sync_ulysses
+            )
+            del key
+            value_layer = SeqAllToAll4D.apply(
+                ulysses_group, value, 2, 1, sync_ulysses
+            )
+            del value
+            attention_bias = xops.LowerTriangularMask() if kwargs.get("causal", False) else None
+            context_layer = xops.memory_efficient_attention(
+                query_layer,
+                key_layer,
+                value_layer,
+                attn_bias=attention_bias,
+                p=0.0,
+                scale=kwargs.get("scale", None),
+            )
+            del query_layer, key_layer, value_layer
+            output = SeqAllToAll4D.apply(
+                ulysses_group, context_layer, 1, 2, sync_ulysses
+            )
+            del context_layer
+            out = output.transpose(1, 2)
+
         # Check if using join attention, for MMDiT model
-        if join_q is not None:
+        elif join_q is not None:
             out = xfuser_attn(
                 None,
                 query,

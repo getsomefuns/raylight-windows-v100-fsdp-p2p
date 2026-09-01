@@ -164,3 +164,23 @@ def test_prepare_director_prompt_can_override_steps_for_memory_diagnostics():
 
     assert prompt["5"]["inputs"]["steps"] == 1
     assert template["5"]["inputs"]["steps"] == 4
+
+
+def test_prepare_director_prompt_can_override_diffusion_attention():
+    template = {
+        "5": {"class_type": "MiniMaxH3Director", "inputs": {"seed": 42}},
+        "13": {
+            "class_type": "RayInitializer",
+            "inputs": {"XFuser_attention": "TORCH_EFFICIENT"},
+        },
+        "7": {"class_type": "SaveVideo", "inputs": {}},
+    }
+
+    prompt = benchmark.prepare_director_prompt(
+        template,
+        0,
+        diffusion_attention="XFORMERS_MEMORY_EFFICIENT",
+    )
+
+    assert prompt["13"]["inputs"]["XFuser_attention"] == "XFORMERS_MEMORY_EFFICIENT"
+    assert template["13"]["inputs"]["XFuser_attention"] == "TORCH_EFFICIENT"

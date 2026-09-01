@@ -14,7 +14,6 @@ import comfy
 import comfy.sample
 import folder_paths
 from comfy.cli_args import args as comfy_args
-from yunchang.kernels import AttnType
 
 # For naming style with comfyui equivalent nodes use "[Name of Nodes] (Ray)"
 
@@ -32,6 +31,7 @@ from .distributed_worker.sampling_lifecycle import (
 )
 from .distributed_worker.ray_worker_vae import combine_dist_vae_partials, combine_seedvr2_vae_partials
 from .comfy_dist.minimax_h3_fp16 import SAFE_FP16_LOADER_VALUE, ray_unet_model_options
+from .distributed_modules.attention import xfuser_attention_choices
 
 
 class AnyType(str):
@@ -593,7 +593,7 @@ class RayInitializer:
                     {"default": False, "tooltip": "When FSDP is on, offload inactive model shards to CPU RAM."},
                 ),
                 "XFuser_attention": (
-                    [member.name for member in AttnType],
+                    xfuser_attention_choices(),
                     {"default": "TORCH_FLASH", "tooltip": "Attention backend used by xFuser-enabled execution."},
                 ),
                 "skip_comm_test": (
@@ -920,7 +920,7 @@ class RayInitializerAdvanced(RayInitializer):
                     {"default": False, "tooltip": "When FSDP is on, offload inactive model shards to CPU RAM."},
                 ),
                 "XFuser_attention": (
-                    [member.name for member in AttnType],
+                    xfuser_attention_choices(),
                     {"default": "TORCH_FLASH", "tooltip": "Attention backend used by xFuser-enabled execution."},
                 ),
                 "skip_comm_test": (

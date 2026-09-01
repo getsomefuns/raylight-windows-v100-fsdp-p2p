@@ -69,6 +69,7 @@ def prepare_director_prompt(
     run_index: int,
     *,
     diagnostic_steps: int | None = None,
+    diffusion_attention: str | None = None,
 ) -> dict:
     if run_index < 0:
         raise ValueError("run_index must be non-negative")
@@ -82,6 +83,13 @@ def prepare_director_prompt(
         if diagnostic_steps <= 0:
             raise ValueError("diagnostic_steps must be positive")
         director_inputs["steps"] = diagnostic_steps
+    if diffusion_attention is not None:
+        if not diffusion_attention.strip():
+            raise ValueError("diffusion_attention must not be empty")
+        initializers = _nodes(prompt, "RayInitializer")
+        if len(initializers) != 1:
+            raise ValueError(f"expected one RayInitializer, found {len(initializers)}")
+        initializers[0][1].setdefault("inputs", {})["XFuser_attention"] = diffusion_attention
     for _, node in _nodes(prompt, "SaveVideo"):
         inputs = node.setdefault("inputs", {})
         prefix = str(inputs.get("filename_prefix", "video/MMH3Director"))
@@ -286,6 +294,7 @@ def run_workflow(
     reserve_vram_gib: float,
     runs: int,
     diagnostic_steps: int | None = None,
+    diffusion_attention: str | None = None,
 ) -> Path:
     if p2p_capacity_mib <= 0:
         raise ValueError("p2p_capacity_mib must be positive")
@@ -332,6 +341,7 @@ def run_workflow(
         "p2p_capacity_bytes": p2p_capacity_bytes,
         "reserve_vram_gib": reserve_vram_gib,
         "diagnostic_steps": diagnostic_steps,
+        "diffusion_attention": diffusion_attention,
         "started_ns": time.time_ns(),
         "runs": [],
     }
@@ -366,6 +376,7 @@ def run_workflow(
                     prompt,
                     run_index,
                     diagnostic_steps=diagnostic_steps,
+                    diffusion_attention=diffusion_attention,
                 )
                 prompt_sha256 = base.write_prompt_artifact(
                     result_dir / f"run{run_index}-prompt.json", run_prompt
@@ -496,6 +507,7 @@ def parse_args(argv=None):
     parser.add_argument("--reserve-vram-gib", type=float, default=4.0)
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument("--diagnostic-steps", type=int)
+    parser.add_argument("--diffusion-attention")
     args = parser.parse_args(argv)
     if args.runs <= 0:
         raise ValueError("runs must be positive")
@@ -518,6 +530,7 @@ def main() -> int:
             reserve_vram_gib=args.reserve_vram_gib,
             runs=args.runs,
             diagnostic_steps=args.diagnostic_steps,
+            diffusion_attention=args.diffusion_attention,
         )
     )
     return 0
