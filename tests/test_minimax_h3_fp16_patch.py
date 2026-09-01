@@ -286,6 +286,24 @@ class _ProjectionCheckingSourceLifetime(torch.nn.Module):
         return x
 
 
+class _ManualFSDPLinear(torch.nn.Linear):
+    def __init__(self, in_features, out_features):
+        super().__init__(in_features, out_features, bias=False, dtype=torch.float16)
+        self.unshard_calls = 0
+        self.reshard_calls = 0
+        self.chunk_sizes = []
+
+    def unshard(self):
+        self.unshard_calls += 1
+
+    def reshard(self):
+        self.reshard_calls += 1
+
+    def forward(self, value):
+        self.chunk_sizes.append(value.shape[0])
+        return super().forward(value)
+
+
 class _AttentionWithWeakResult(torch.nn.Module):
     def __init__(self, state):
         super().__init__()
@@ -362,6 +380,32 @@ def test_safe_mlp_releases_fc1_projection_before_fc2():
 
     assert state.alive_at_consumer is False
     assert result.item() == pytest.approx(0.73095703125, abs=1e-6)
+
+
+def test_safe_mlp_chunks_activations_with_one_unshard_per_projection():
+    mlp = _FakeMLP()
+    mlp.fc1 = _ManualFSDPLinear(3, 8)
+    mlp.fc2 = _ManualFSDPLinear(4, 3)
+    with torch.no_grad():
+        mlp.fc1.weight.copy_(torch.arange(24).reshape(8, 3).mul(0.01))
+        mlp.fc2.weight.copy_(torch.arange(12).reshape(3, 4).mul(0.01))
+    source = torch.arange(21, dtype=torch.float16).reshape(7, 3).mul(0.1)
+    projected = mlp.fc1.forward(source)
+    gate, up = projected.chunk(2, dim=-1)
+    activated = torch.nn.functional.silu(gate.float()).mul(up.float())
+    expected = h3fp16.safe_linear_projection(mlp.fc2.forward, activated, K_FC2)
+    mlp.fc1.chunk_sizes.clear()
+    mlp.fc2.chunk_sizes.clear()
+
+    actual = h3fp16._fsdp_chunked_safe_mlp(mlp, source, chunk_tokens=3)
+
+    torch.testing.assert_close(actual, expected)
+    assert mlp.fc1.unshard_calls == 1
+    assert mlp.fc2.unshard_calls == 1
+    assert mlp.fc1.reshard_calls == 1
+    assert mlp.fc2.reshard_calls == 1
+    assert mlp.fc1.chunk_sizes == [3, 3, 1]
+    assert mlp.fc2.chunk_sizes == [3, 3, 1]
 
 
 def test_safe_block_releases_attention_output_before_mlp():

@@ -129,20 +129,47 @@ def _gather_projected_rows(local_rows, counts, group):
     return torch.cat(pieces, dim=0)
 
 
+def _normalize_qk_in_place(q_norm, k_norm, q, k):
+    normalized = q_norm(q)
+    q.copy_(normalized)
+    del normalized
+    normalized = k_norm(k)
+    k.copy_(normalized)
+    del normalized
+    return q, k
+
+
 def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
     sequence_length = x.shape[0]
-    q, k, v = self.qkv_proj(x).split(self.heads * self.head_dim, dim=-1)
-    q = self.q_norm(q.view(sequence_length, self.heads, self.head_dim))
-    k = self.k_norm(k.view(sequence_length, self.heads, self.head_dim))
+    projected = self.qkv_proj(x)
+    _trace_cuda_memory("attention_qkv_projected")
+    q, k, v = projected.split(self.heads * self.head_dim, dim=-1)
+    del projected
+    q = q.view(sequence_length, self.heads, self.head_dim)
+    k = k.view(sequence_length, self.heads, self.head_dim)
+    q, k = _normalize_qk_in_place(self.q_norm, self.k_norm, q, k)
+    _trace_cuda_memory("attention_qk_normalized_in_place")
     v = v.view(sequence_length, self.heads, self.head_dim)
     if rope_freqs is not None:
         rot = rope_freqs.shape[-3] * 2
         q[..., :rot], k[..., :rot] = comfy.quant_ops.ck.apply_rope_split_half(q[..., :rot], k[..., :rot], rope_freqs)
+        _trace_cuda_memory("attention_rope_applied")
     q = q.transpose(0, 1).unsqueeze(0)
     k = k.transpose(0, 1).unsqueeze(0)
     v = v.transpose(0, 1).unsqueeze(0)
-    out = xfuser_optimized_attention(q, k, v, self.heads, skip_reshape=True)
-    return safe_attention_output_projection(self.out_proj, out.squeeze(0))
+    if attn_type == xfuser_attn.XFORMERS_MEMORY_EFFICIENT:
+        owned = [q, k, v]
+        del q, k, v
+        out = xfuser_attn.xformers_ulysses_attention_owned(
+            owned,
+            use_sync=sync_ulysses,
+        ).reshape(1, sequence_length, self.heads * self.head_dim)
+    else:
+        out = xfuser_optimized_attention(q, k, v, self.heads, skip_reshape=True)
+    _trace_cuda_memory("attention_context_ready")
+    result = safe_attention_output_projection(self.out_proj, out.squeeze(0))
+    _trace_cuda_memory("attention_output_projected")
+    return result
 
 
 def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_payload=None, **kwargs):

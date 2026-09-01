@@ -92,6 +92,32 @@ def test_minimax_sequence_split_owns_only_local_storage(monkeypatch):
     assert local_rope.untyped_storage().data_ptr() != rope.untyped_storage().data_ptr()
 
 
+def test_minimax_qk_norm_is_written_back_into_projection_storage(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    monkeypatch.setattr(attention, "_ATTN_TYPE", "TORCH")
+    monkeypatch.setattr(attention, "_SYNC_ULYSSES", True)
+    monkeypatch.setattr(attention, "make_xfuser_attention", lambda *_args: None)
+    import raylight.diffusion_models.minimax.xdit_context_parallel as parallel
+
+    q = torch.arange(12, dtype=torch.float16).reshape(2, 2, 3)
+    k = torch.arange(12, 24, dtype=torch.float16).reshape(2, 2, 3)
+    q_ptr = q.untyped_storage().data_ptr()
+    k_ptr = k.untyped_storage().data_ptr()
+
+    normalized_q, normalized_k = parallel._normalize_qk_in_place(
+        lambda value: value.float().add(1),
+        lambda value: value.float().sub(1),
+        q,
+        k,
+    )
+
+    assert normalized_q.untyped_storage().data_ptr() == q_ptr
+    assert normalized_k.untyped_storage().data_ptr() == k_ptr
+    torch.testing.assert_close(normalized_q, torch.arange(12).reshape(2, 2, 3).half() + 1)
+    torch.testing.assert_close(normalized_k, torch.arange(12, 24).reshape(2, 2, 3).half() - 1)
+
+
 class _RecordingIdentity(torch.nn.Module):
     def __init__(self):
         super().__init__()

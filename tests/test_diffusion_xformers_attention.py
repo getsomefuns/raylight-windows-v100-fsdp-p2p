@@ -78,3 +78,31 @@ def test_xformers_ulysses_rejects_ring_parallelism(monkeypatch):
         assert "ring degree 1" in str(error)
     else:
         raise AssertionError("expected ring degree validation")
+
+
+def test_owned_xformers_ulysses_consumes_all_qkv_references(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    class FakeAllToAll:
+        @staticmethod
+        def apply(_group, value, _scatter_idx, _gather_idx, _use_sync):
+            return value.clone()
+
+    class FakeProcessGroups:
+        ULYSSES_PG = object()
+        RING_PG = object()
+
+    monkeypatch.setattr(attention, "SeqAllToAll4D", FakeAllToAll)
+    monkeypatch.setattr(attention, "PROCESS_GROUP", FakeProcessGroups)
+    monkeypatch.setattr(attention.dist, "get_world_size", lambda _group: 1)
+    monkeypatch.setattr(
+        attention.xops,
+        "memory_efficient_attention",
+        lambda query, _key, _value, **_kwargs: query.clone(),
+    )
+    owned = [torch.ones(1, 2, 4, 3) for _ in range(3)]
+
+    output = attention.xformers_ulysses_attention_owned(owned, use_sync=True)
+
+    assert owned == []
+    assert output.shape == (1, 4, 2, 3)

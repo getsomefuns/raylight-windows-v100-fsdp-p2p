@@ -26,6 +26,7 @@ SAFE_FP16_LOADER_VALUE = "fp16_h3_safe"
 
 K_OUT_PROJ = 64.0
 K_FC2 = 256.0
+SAFE_MLP_CHUNK_TOKENS = 8192
 
 _MODULE_PATCH_MARKER = "_raylight_h3_safe_fp16_installed"
 _MODEL_PATCH_MARKER = "_raylight_h3_safe_fp16_active"
@@ -186,6 +187,35 @@ def safe_attention_output_projection(projection: Any, x: torch.Tensor) -> torch.
     return safe_linear_projection(projection, x, K_OUT_PROJ)
 
 
+def _fsdp_chunked_safe_mlp(self, x: torch.Tensor, *, chunk_tokens: int) -> torch.Tensor:
+    if chunk_tokens <= 0:
+        raise ValueError("safe MLP chunk_tokens must be positive")
+    output = torch.empty(
+        (x.shape[0], self.fc2.weight.shape[0]),
+        dtype=torch.float32,
+        device=x.device,
+    )
+    self.fc1.unshard()
+    self.fc2.unshard()
+    try:
+        for start in range(0, x.shape[0], chunk_tokens):
+            stop = min(start + chunk_tokens, x.shape[0])
+            projected = self.fc1.forward(x[start:stop])
+            gate, up = projected.chunk(2, dim=-1)
+            activated = torch.nn.functional.silu(gate.to(torch.float32)).mul_(
+                up.to(torch.float32)
+            )
+            del projected, gate, up
+            _trace_safe_fp16_memory("mlp_chunk_activated")
+            projected = safe_linear_projection(self.fc2.forward, activated, K_FC2)
+            output[start:stop].copy_(projected)
+            del activated, projected
+    finally:
+        self.fc2.reshard()
+        self.fc1.reshard()
+    return output
+
+
 def activate_minimax_h3_safe_fp16_model(model: Any) -> bool:
     """Activate instance-level condition/out-projection protections once."""
 
@@ -263,6 +293,16 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
     def safe_mlp_forward(self, x: torch.Tensor):
         if not getattr(self, _MLP_PATCH_MARKER, False):
             return original_mlp_forward(self, x)
+        if all(
+            callable(getattr(layer, method, None))
+            for layer in (self.fc1, self.fc2)
+            for method in ("unshard", "reshard")
+        ):
+            return _fsdp_chunked_safe_mlp(
+                self,
+                x,
+                chunk_tokens=SAFE_MLP_CHUNK_TOKENS,
+            )
         projected = self.fc1(x)
         _trace_safe_fp16_memory("mlp_fc1_projected")
         gate, up = projected.chunk(2, dim=-1)

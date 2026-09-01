@@ -42,6 +42,48 @@ def get_sync_ulysses():
         return _SYNC_ULYSSES
 
 
+def xformers_ulysses_attention_owned(
+    qkv,
+    *,
+    use_sync,
+    scale=None,
+    causal=False,
+):
+    """Consume Q/K/V references and return the rank-local Ulysses output."""
+
+    if len(qkv) != 3:
+        raise ValueError("owned Ulysses attention requires exactly Q, K, and V")
+    ring_group = PROCESS_GROUP.RING_PG
+    if ring_group is None or dist.get_world_size(ring_group) != 1:
+        raise ValueError("XFORMERS_MEMORY_EFFICIENT requires ring degree 1")
+    ulysses_group = PROCESS_GROUP.ULYSSES_PG
+    if ulysses_group is None:
+        raise ValueError("XFORMERS_MEMORY_EFFICIENT requires an Ulysses process group")
+
+    query = qkv.pop(0).transpose(1, 2)
+    query_layer = SeqAllToAll4D.apply(ulysses_group, query, 2, 1, use_sync)
+    del query
+    key = qkv.pop(0).transpose(1, 2)
+    key_layer = SeqAllToAll4D.apply(ulysses_group, key, 2, 1, use_sync)
+    del key
+    value = qkv.pop(0).transpose(1, 2)
+    value_layer = SeqAllToAll4D.apply(ulysses_group, value, 2, 1, use_sync)
+    del value
+    attention_bias = xops.LowerTriangularMask() if causal else None
+    context_layer = xops.memory_efficient_attention(
+        query_layer,
+        key_layer,
+        value_layer,
+        attn_bias=attention_bias,
+        p=0.0,
+        scale=scale,
+    )
+    del query_layer, key_layer, value_layer
+    output = SeqAllToAll4D.apply(ulysses_group, context_layer, 1, 2, use_sync)
+    del context_layer
+    return output
+
+
 def make_xfuser_attention(attn_type, sync_ulysses):
     print(f"Using XFuser {attn_type} attention, Sync Ulysses: {sync_ulysses}")
     use_xformers_ulysses = attn_type == XFORMERS_MEMORY_EFFICIENT
@@ -94,53 +136,26 @@ def make_xfuser_attention(attn_type, sync_ulysses):
                 mask = mask.unsqueeze(0)
             if mask.ndim == 3:
                 mask = mask.unsqueeze(1)
-        query = q.transpose(1, 2)
-        key = k.transpose(1, 2)
-        value = v.transpose(1, 2)
-
         if use_xformers_ulysses:
             if join_q is not None or mask is not None:
                 raise ValueError(
                     "XFORMERS_MEMORY_EFFICIENT supports unmasked non-joint attention only"
                 )
-            ring_group = PROCESS_GROUP.RING_PG
-            if ring_group is None or dist.get_world_size(ring_group) != 1:
-                raise ValueError("XFORMERS_MEMORY_EFFICIENT requires ring degree 1")
-            ulysses_group = PROCESS_GROUP.ULYSSES_PG
-            if ulysses_group is None:
-                raise ValueError("XFORMERS_MEMORY_EFFICIENT requires an Ulysses process group")
-
+            owned = [q, k, v]
             del q, k, v
-            query_layer = SeqAllToAll4D.apply(
-                ulysses_group, query, 2, 1, sync_ulysses
-            )
-            del query
-            key_layer = SeqAllToAll4D.apply(
-                ulysses_group, key, 2, 1, sync_ulysses
-            )
-            del key
-            value_layer = SeqAllToAll4D.apply(
-                ulysses_group, value, 2, 1, sync_ulysses
-            )
-            del value
-            attention_bias = xops.LowerTriangularMask() if kwargs.get("causal", False) else None
-            context_layer = xops.memory_efficient_attention(
-                query_layer,
-                key_layer,
-                value_layer,
-                attn_bias=attention_bias,
-                p=0.0,
+            output = xformers_ulysses_attention_owned(
+                owned,
+                use_sync=sync_ulysses,
                 scale=kwargs.get("scale", None),
+                causal=kwargs.get("causal", False),
             )
-            del query_layer, key_layer, value_layer
-            output = SeqAllToAll4D.apply(
-                ulysses_group, context_layer, 1, 2, sync_ulysses
-            )
-            del context_layer
             out = output.transpose(1, 2)
 
         # Check if using join attention, for MMDiT model
         elif join_q is not None:
+            query = q.transpose(1, 2)
+            key = k.transpose(1, 2)
+            value = v.transpose(1, 2)
             out = xfuser_attn(
                 None,
                 query,
@@ -153,6 +168,9 @@ def make_xfuser_attention(attn_type, sync_ulysses):
                 softmax_scale=kwargs.get("scale", None),
             ).transpose(1, 2)
         else:
+            query = q.transpose(1, 2)
+            key = k.transpose(1, 2)
+            value = v.transpose(1, 2)
             out = xfuser_attn(
                 None,
                 query,
