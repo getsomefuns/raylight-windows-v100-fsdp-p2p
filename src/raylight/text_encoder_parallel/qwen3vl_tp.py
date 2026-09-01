@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -148,6 +149,7 @@ class TP2Qwen3VLBlock:
         post_attention_layernorm,
         q_norm,
         k_norm,
+        attention_forward: Callable[..., torch.Tensor],
     ) -> None:
         self.config = config
         self.q_proj = q_proj
@@ -163,6 +165,7 @@ class TP2Qwen3VLBlock:
         )
         self.q_norm = _norm_pair(q_norm, name="q_norm", expected=config.head_dim)
         self.k_norm = _norm_pair(k_norm, name="k_norm", expected=config.head_dim)
+        self.attention_forward = attention_forward
         self.executor = q_proj.executor
         all_linears = (k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj)
         if any(linear.executor is not self.executor for linear in all_linears):
@@ -200,7 +203,6 @@ class TP2Qwen3VLBlock:
         hidden_rank1: torch.Tensor,
         position_ids: torch.Tensor,
         *,
-        attention_mask: torch.Tensor | None = None,
         operation_id: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if isinstance(operation_id, bool) or not isinstance(operation_id, int) or operation_id <= 0:
@@ -235,15 +237,11 @@ class TP2Qwen3VLBlock:
             key = F.rms_norm(key, (self.config.head_dim,), self.k_norm[rank], self.config.rms_norm_eps)
             rope = build_qwen3vl_rope(self.config, position_ids, device=query.device)
             query, key = apply_qwen3vl_rope(query, key, rope)
-            mask = attention_mask.to(device=query.device) if attention_mask is not None else None
-            attended = F.scaled_dot_product_attention(
+            attended = self.attention_forward(
                 query,
                 key,
                 value,
-                attn_mask=mask,
-                dropout_p=0.0,
-                is_causal=False,
-                enable_gqa=self.config.local_attention_heads != self.config.local_key_value_heads,
+                is_causal=True,
             )
             return attended.transpose(1, 2).reshape(batch, sequence, -1).contiguous()
 

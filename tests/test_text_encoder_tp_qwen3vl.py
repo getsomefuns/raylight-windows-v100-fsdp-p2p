@@ -39,6 +39,28 @@ class CpuPeerGroup:
         return total, total.clone(), operation_id
 
 
+class RecordingMathAttention:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def __call__(self, query, key, value, *, is_causal):
+        self.calls.append(
+            {
+                "query_shape": tuple(query.shape),
+                "key_shape": tuple(key.shape),
+                "value_shape": tuple(value.shape),
+                "is_causal": is_causal,
+            }
+        )
+        return F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            is_causal=is_causal,
+            enable_gqa=query.shape[1] != key.shape[1],
+        )
+
+
 def _dense_shards(weight: torch.Tensor, axis: str):
     dim = 0 if axis == "row" else 1
     return tuple(
@@ -89,7 +111,7 @@ def _make_weights(config, *, quantized=False):
     return full, shards
 
 
-def _make_block(config, shards, executor, peer_group, norms, scales):
+def _make_block(config, shards, executor, peer_group, norms, scales, attention_forward):
     return TP2Qwen3VLBlock(
         config,
         q_proj=ColumnParallelLinear(shards["q"], executor=executor),
@@ -107,10 +129,11 @@ def _make_block(config, shards, executor, peer_group, norms, scales):
         post_attention_layernorm=norms["post"],
         q_norm=norms["q"],
         k_norm=norms["k"],
+        attention_forward=attention_forward,
     )
 
 
-def _baseline_block(x, config, weights, norms, scales, position_ids, attention_mask):
+def _baseline_block(x, config, weights, norms, scales, position_ids):
     residual = x
     hidden = F.rms_norm(x, (config.hidden_size,), norms["input"][0], config.rms_norm_eps)
     batch, seq, _ = hidden.shape
@@ -121,7 +144,7 @@ def _baseline_block(x, config, weights, norms, scales, position_ids, attention_m
     k = F.rms_norm(k, (config.head_dim,), norms["k"][0], config.rms_norm_eps)
     rope = build_qwen3vl_rope(config, position_ids, device=x.device)
     q, k = apply_qwen3vl_rope(q, k, rope)
-    attended = F.scaled_dot_product_attention(q, k, v, attn_mask=attention_mask, enable_gqa=True)
+    attended = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)
     attended = attended.transpose(1, 2).reshape(batch, seq, -1)
     hidden = residual + F.linear(attended * scales["o_full"], weights["o"])
     residual = hidden
@@ -151,8 +174,9 @@ def _case(*, quantized=False):
         "down": tuple(part.contiguous() for part in down_full.chunk(2)),
     }
     executor, peer_group = CpuPairExecutor(), CpuPeerGroup()
-    block = _make_block(config, shards, executor, peer_group, norms, scales)
-    return config, weights, norms, scales, block, peer_group
+    attention_forward = RecordingMathAttention()
+    block = _make_block(config, shards, executor, peer_group, norms, scales, attention_forward)
+    return config, weights, norms, scales, block, peer_group, attention_forward
 
 
 def test_freezes_minimax_h3_qwen3vl_32b_contract() -> None:
@@ -166,52 +190,52 @@ def test_freezes_minimax_h3_qwen3vl_32b_contract() -> None:
 
 
 def test_fp32_tp2_block_matches_full_block_and_uses_exactly_two_sums() -> None:
-    config, weights, norms, scales, block, peer_group = _case()
+    config, weights, norms, scales, block, peer_group, attention_forward = _case()
     x = torch.randn((1, 7, config.hidden_size), dtype=torch.float32)
     position_ids = torch.arange(x.shape[1]).unsqueeze(0)
-    mask = torch.full((x.shape[1], x.shape[1]), torch.finfo(x.dtype).min / 4, dtype=x.dtype).triu_(1)
 
-    actual = block.forward(x, x.clone(), position_ids, attention_mask=mask, operation_id=11)
-    expected = _baseline_block(x, config, weights, norms, scales, position_ids, mask)
+    actual = block.forward(x, x.clone(), position_ids, operation_id=11)
+    expected = _baseline_block(x, config, weights, norms, scales, position_ids)
 
     assert torch.max(torch.abs(actual[0] - expected)).item() <= 1e-4
     assert torch.equal(actual[0], actual[1])
     assert peer_group.operation_ids == [11, 12]
+    assert len(attention_forward.calls) == 2
+    assert all(call["is_causal"] is True for call in attention_forward.calls)
+    assert all(len(call["query_shape"]) == 4 for call in attention_forward.calls)
 
 
 def test_nvfp4_tp2_block_meets_cosine_and_finite_gate() -> None:
-    config, weights, norms, scales, block, peer_group = _case(quantized=True)
+    config, weights, norms, scales, block, peer_group, attention_forward = _case(quantized=True)
     x = torch.randn((1, 5, config.hidden_size), dtype=torch.float16)
     position_ids = torch.arange(x.shape[1]).unsqueeze(0)
-    mask = torch.full((x.shape[1], x.shape[1]), torch.finfo(x.dtype).min / 4, dtype=x.dtype).triu_(1)
 
-    actual = block.forward(x, x.clone(), position_ids, attention_mask=mask, operation_id=21)
-    expected = _baseline_block(x, config, weights, norms, scales, position_ids, mask)
+    actual = block.forward(x, x.clone(), position_ids, operation_id=21)
+    expected = _baseline_block(x, config, weights, norms, scales, position_ids)
     cosine = F.cosine_similarity(actual[0].float().flatten(), expected.float().flatten(), dim=0)
 
     assert torch.isfinite(actual[0]).all()
     assert torch.equal(actual[0], actual[1])
     assert cosine >= 0.9995
     assert peer_group.operation_ids == [21, 22]
+    assert len(attention_forward.calls) == 2
 
 
 @pytest.mark.parametrize("depth", [2, 8, 50])
 def test_fp32_synthetic_stack_keeps_ranks_order_and_error_bounded(depth: int) -> None:
-    config, weights, norms, scales, block, peer_group = _case()
+    config, weights, norms, scales, block, peer_group, attention_forward = _case()
     actual = torch.randn((1, 3, config.hidden_size), dtype=torch.float32) * 0.1
     expected = actual.clone()
     position_ids = torch.arange(actual.shape[1]).unsqueeze(0)
-    mask = torch.full((actual.shape[1], actual.shape[1]), torch.finfo(actual.dtype).min / 4).triu_(1)
 
     ranks = (actual, actual.clone())
     for layer_index in range(depth):
-        ranks = block.forward(
-            ranks[0], ranks[1], position_ids, attention_mask=mask, operation_id=layer_index * 2 + 1
-        )
-        expected = _baseline_block(expected, config, weights, norms, scales, position_ids, mask)
+        ranks = block.forward(ranks[0], ranks[1], position_ids, operation_id=layer_index * 2 + 1)
+        expected = _baseline_block(expected, config, weights, norms, scales, position_ids)
 
     max_error = torch.max(torch.abs(ranks[0] - expected)).item()
     assert torch.isfinite(ranks[0]).all()
     assert torch.equal(ranks[0], ranks[1])
     assert max_error <= 1e-3
     assert peer_group.operation_ids == list(range(1, depth * 2 + 1))
+    assert len(attention_forward.calls) == depth * 2
