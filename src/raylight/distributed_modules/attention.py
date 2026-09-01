@@ -13,7 +13,7 @@ from .sageattention_hf_patch import ensure_hf_fp8_cuda_kernel, ensure_hf_sm90_ke
 _ATTN_TYPE = None
 _SYNC_ULYSSES = None
 XFORMERS_MEMORY_EFFICIENT = "XFORMERS_MEMORY_EFFICIENT"
-XFORMERS_HEAD_CHUNK = 3
+XFORMERS_HEAD_CHUNK = 7
 
 
 def xfuser_attention_choices():

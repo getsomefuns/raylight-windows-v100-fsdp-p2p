@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import json
 import weakref
 
 import pytest
@@ -479,6 +480,48 @@ def test_safe_block_transfers_branch_ownership_to_compatible_attention():
 
     assert block.attn.received_list is True
     assert result.tolist() == [[4.0], [4.0]]
+
+
+def test_safe_block_trims_cuda_cache_at_branch_boundaries(monkeypatch):
+    fake_module = _fake_minimax_module()
+    trims = []
+    monkeypatch.setattr(
+        h3fp16,
+        "_trim_safe_fp16_cuda_cache",
+        lambda: trims.append("trim"),
+    )
+    install_minimax_h3_safe_fp16_patch(fake_module)
+    block = _FakeBlock()
+    block._raylight_h3_safe_fp16 = True
+    block.norm1 = _IdentityNorm()
+    block.norm2 = _IdentityNorm()
+    block.attn = _RecordingBranch(1.0)
+    block.mlp = _RecordingBranch(2.0)
+    block.adaln_proj = _Adaln()
+
+    block(torch.ones(2, 1), torch.ones(1, 1), [(0, 2, 0)], None)
+
+    assert trims == ["trim", "trim"]
+
+
+def test_safe_fp16_memory_trace_includes_reserved_high_water(monkeypatch, capsys):
+    monkeypatch.setenv("RAYLIGHT_H3_MEMORY_TRACE", "1")
+    monkeypatch.setattr(h3fp16.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(h3fp16.torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(h3fp16.torch.cuda, "memory_allocated", lambda _device: 50)
+    monkeypatch.setattr(h3fp16.torch.cuda, "max_memory_allocated", lambda _device: 100)
+    monkeypatch.setattr(h3fp16.torch.cuda, "memory_reserved", lambda _device: 150)
+    monkeypatch.setattr(h3fp16.torch.cuda, "max_memory_reserved", lambda _device: 200)
+    h3fp16._SAFE_TRACE_HIGH_WATER.clear()
+
+    h3fp16._trace_safe_fp16_memory("unit_phase")
+
+    line = capsys.readouterr().out.strip()
+    payload = json.loads(line.removeprefix("[RAYLIGHT_H3_MEMORY] "))
+    assert payload["allocated_bytes"] == 50
+    assert payload["peak_allocated_bytes"] == 100
+    assert payload["reserved_bytes"] == 150
+    assert payload["peak_reserved_bytes"] == 200
 
 
 def test_class_patch_activates_only_inside_explicit_safe_construction_context():

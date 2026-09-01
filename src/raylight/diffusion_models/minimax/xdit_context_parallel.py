@@ -26,16 +26,23 @@ def _trace_cuda_memory(event):
     if os.environ.get("RAYLIGHT_H3_MEMORY_TRACE", "0") != "1" or not torch.cuda.is_available():
         return
     device = torch.cuda.current_device()
-    peak = torch.cuda.max_memory_allocated(device)
-    if peak <= _TRACE_HIGH_WATER.get(device, -1):
+    peak_allocated = torch.cuda.max_memory_allocated(device)
+    peak_reserved = torch.cuda.max_memory_reserved(device)
+    previous_allocated, previous_reserved = _TRACE_HIGH_WATER.get(device, (-1, -1))
+    if peak_allocated <= previous_allocated and peak_reserved <= previous_reserved:
         return
-    _TRACE_HIGH_WATER[device] = peak
+    _TRACE_HIGH_WATER[device] = (
+        max(previous_allocated, peak_allocated),
+        max(previous_reserved, peak_reserved),
+    )
     payload = {
         "event": event,
         "pid": os.getpid(),
         "device": device,
         "allocated_bytes": torch.cuda.memory_allocated(device),
-        "peak_allocated_bytes": peak,
+        "peak_allocated_bytes": peak_allocated,
+        "reserved_bytes": torch.cuda.memory_reserved(device),
+        "peak_reserved_bytes": peak_reserved,
     }
     print("[RAYLIGHT_H3_MEMORY] " + json.dumps(payload, sort_keys=True))
 

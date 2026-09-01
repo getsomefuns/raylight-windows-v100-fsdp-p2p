@@ -27,6 +27,7 @@ SAFE_FP16_LOADER_VALUE = "fp16_h3_safe"
 K_OUT_PROJ = 64.0
 K_FC2 = 256.0
 SAFE_MLP_CHUNK_TOKENS = 8192
+SAFE_FP16_CACHE_TRIM_ENV = "RAYLIGHT_H3_BLOCK_CACHE_TRIM"
 
 _MODULE_PATCH_MARKER = "_raylight_h3_safe_fp16_installed"
 _MODEL_PATCH_MARKER = "_raylight_h3_safe_fp16_active"
@@ -37,25 +38,39 @@ _SAFE_CONSTRUCTION_ACTIVE: ContextVar[bool] = ContextVar(
     "raylight_minimax_h3_safe_fp16_construction",
     default=False,
 )
-_SAFE_TRACE_HIGH_WATER: dict[int, int] = {}
+_SAFE_TRACE_HIGH_WATER: dict[int, tuple[int, int]] = {}
 
 
 def _trace_safe_fp16_memory(event: str) -> None:
     if os.environ.get("RAYLIGHT_H3_MEMORY_TRACE", "0") != "1" or not torch.cuda.is_available():
         return
     device = torch.cuda.current_device()
-    peak = torch.cuda.max_memory_allocated(device)
-    if peak <= _SAFE_TRACE_HIGH_WATER.get(device, -1):
+    peak_allocated = torch.cuda.max_memory_allocated(device)
+    peak_reserved = torch.cuda.max_memory_reserved(device)
+    previous_allocated, previous_reserved = _SAFE_TRACE_HIGH_WATER.get(device, (-1, -1))
+    if peak_allocated <= previous_allocated and peak_reserved <= previous_reserved:
         return
-    _SAFE_TRACE_HIGH_WATER[device] = peak
+    _SAFE_TRACE_HIGH_WATER[device] = (
+        max(previous_allocated, peak_allocated),
+        max(previous_reserved, peak_reserved),
+    )
     payload = {
         "event": event,
         "pid": os.getpid(),
         "device": device,
         "allocated_bytes": torch.cuda.memory_allocated(device),
-        "peak_allocated_bytes": peak,
+        "peak_allocated_bytes": peak_allocated,
+        "reserved_bytes": torch.cuda.memory_reserved(device),
+        "peak_reserved_bytes": peak_reserved,
     }
     print("[RAYLIGHT_H3_MEMORY] " + json.dumps(payload, sort_keys=True))
+
+
+def _trim_safe_fp16_cuda_cache() -> bool:
+    if os.environ.get(SAFE_FP16_CACHE_TRIM_ENV, "0") != "1" or not torch.cuda.is_available():
+        return False
+    torch.cuda.empty_cache()
+    return True
 
 
 def safe_fp16_requested(model_options: dict[str, Any] | None) -> bool:
@@ -350,6 +365,7 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
         residual = mm_module._mod_gate(residual, gate_msa, attention, mod_segments)
         del attention
         _trace_safe_fp16_memory("block_attention_merged")
+        _trim_safe_fp16_cuda_cache()
         branch = mm_module._mod_scale_shift(
             self.norm2(residual), shift_mlp, scale_mlp, mod_segments
         ).to(torch.float16)
@@ -357,7 +373,9 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
         mlp = self.mlp(branch).to(torch.float32)
         _trace_safe_fp16_memory("block_mlp_ready")
         result = mm_module._mod_gate(residual, gate_mlp, mlp, mod_segments)
+        del branch, mlp
         _trace_safe_fp16_memory("block_mlp_merged")
+        _trim_safe_fp16_cuda_cache()
         return result
 
     mm_module.MiniMaxH3Model.__init__ = safe_model_init
