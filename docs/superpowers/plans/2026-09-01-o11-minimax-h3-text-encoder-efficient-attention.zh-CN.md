@@ -407,3 +407,29 @@ git commit -m "release: complete O11 efficient Text Encoder attention"
 - Gate E：3 秒、864×480、Turbo4 一采直出完成，输出可解码、无黑段；15 秒采样在 0.6 MP 和 0.4 MP 均于 Diffusion 第一步 OOM，未冒充完整最大视频通过。
 - 回归：全仓 664 passed、35 subtests passed；Ruff、导入自检和双 V100/TCC/P2P 探针通过，128–384 MiB all-gather 约 61.54–61.62 GiB/s。
 - GitHub：本计划明确保持未推送，等待用户单独要求同步。
+
+---
+
+## O11 追加优化：15 秒 Diffusion 安全 FP16 生命周期
+
+本项是 O11 的追加优化，不建立 O12 或其他新阶段。它只修改唯一 Raylight 工作树，不修改 ComfyUI 核心、MiniMaxH3Director、模型文件或工作流接口。
+
+### 固定基线与验收
+
+- 基线工作流：用户真实人物迁移 MMH3Director.json，REF2VA Turbo4、一采直出、15 秒、365 帧、24 fps、0.4 MP、7 图、1 参考视频、1 音频和原提示词。
+- 基线失败点：Diffusion 第一步安全 FP16 MLP fc2 前，每 rank PyTorch active 为 13.99 GiB，追加 1.40 GiB FP16 输入失败。
+- 硬性显存验收：以同一监控口径比较，每卡完整采样峰值至少下降 6 GiB；即不高于 7.99 GiB。
+- 努力目标：每卡完整采样峰值下降 8 GiB；即不高于 5.99 GiB。
+- 功能验收：固定 15 秒人物迁移工作流完成 Text Encoder、4 步双卡 Diffusion、VAE/音频解码和视频保存，输出有限且可正常解码。
+- 性能与质量：不得通过全局 FP16、CPU 逐层错峰、每层清缓存、减少输入、降低时长或关闭双卡采样换取通过；固定种子不得出现 NaN、黑屏或噪声回归。
+
+### Task 12：安全 FP16 临时张量生命周期
+
+- [x] 先用失败测试锁定 x / scale FP32 副本、FC1 投影存活、Attention 输出存活和 rank 切片共享完整底层存储。
+- [x] 在 Raylight 安全 FP16 补丁中使用原位二次幂缩放，FC1 激活后释放 projected/gate/up，门控累积后释放 Attention 输出。
+- [x] 让 rank 本地 hidden/rope 切片拥有独立存储，不长期引用完整序列。
+- [x] 运行聚焦回归：49 passed，2 subtests passed。
+- [ ] 部署唯一工作树并完成文件一致性核对。
+- [ ] 运行固定 15 秒人物迁移工作流，记录每 rank active/reserved 峰值、NVIDIA 峰值、每步速度、RAM/Commit/Pagefile 和输出媒体质量。
+- [ ] 若未达到 6 GiB 降幅，保留本轮数据，继续优化已打包 embedding、MLP branch 和单次 FSDP 权重驻留下的 FC2 有界分块；不得用错峰卸载冒充峰值下降。
+- [ ] 将成功和失败实验追加到 O11 测试汇总及中英文发布说明。

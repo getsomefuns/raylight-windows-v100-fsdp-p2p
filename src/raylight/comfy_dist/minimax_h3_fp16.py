@@ -152,7 +152,8 @@ def safe_linear_projection(
 
     if scale <= 0 or not float(scale).is_integer() or int(scale) & (int(scale) - 1):
         raise ValueError("safe FP16 projection scale must be a positive power of two")
-    result = projection((x / scale).to(torch.float16))
+    x.div_(scale)
+    result = projection(x.to(torch.float16))
     return result.to(torch.float32).mul_(scale)
 
 
@@ -244,6 +245,7 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
         projected = self.fc1(x)
         gate, up = projected.chunk(2, dim=-1)
         activated = torch.nn.functional.silu(gate.to(torch.float32)).mul_(up.to(torch.float32))
+        del projected, gate, up
         return safe_linear_projection(self.fc2, activated, K_FC2)
 
     @functools.wraps(original_block_forward)
@@ -266,6 +268,7 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
             branch, rope_freqs=rope_freqs, transformer_options=transformer_options
         ).to(torch.float32)
         residual = mm_module._mod_gate(residual, gate_msa, attention, mod_segments)
+        del attention
         branch = mm_module._mod_scale_shift(
             self.norm2(residual), shift_mlp, scale_mlp, mod_segments
         ).to(torch.float16)

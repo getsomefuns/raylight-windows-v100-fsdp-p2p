@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import weakref
 
 import pytest
 import torch
@@ -168,6 +169,16 @@ def test_scaled_linear_projection_preserves_values_above_fp16_range(scale):
     assert result.item() == pytest.approx(120_000.0, rel=2e-3)
 
 
+def test_scaled_linear_projection_consumes_ephemeral_fp32_input_in_place():
+    source = torch.tensor([[1024.0, -512.0]], dtype=torch.float32)
+
+    result = safe_linear_projection(lambda value: value, source, K_FC2)
+
+    assert source.tolist() == [[4.0, -2.0]]
+    assert result.dtype is torch.float32
+    assert result.tolist() == [[1024.0, -512.0]]
+
+
 class _RecordingProjection(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -249,6 +260,53 @@ class _FakeMLP(torch.nn.Module):
         return x
 
 
+class _WeakTensorState:
+    tensor_ref = None
+    alive_at_consumer = None
+
+
+class _RecordingFC1(torch.nn.Module):
+    def __init__(self, state):
+        super().__init__()
+        self.state = state
+
+    def forward(self, x):
+        projected = torch.cat((x, x), dim=-1)
+        self.state.tensor_ref = weakref.ref(projected)
+        return projected
+
+
+class _ProjectionCheckingSourceLifetime(torch.nn.Module):
+    def __init__(self, state):
+        super().__init__()
+        self.state = state
+
+    def forward(self, x):
+        self.state.alive_at_consumer = self.state.tensor_ref() is not None
+        return x
+
+
+class _AttentionWithWeakResult(torch.nn.Module):
+    def __init__(self, state):
+        super().__init__()
+        self.state = state
+
+    def forward(self, x, **_kwargs):
+        result = torch.ones_like(x, dtype=torch.float32)
+        self.state.tensor_ref = weakref.ref(result)
+        return result
+
+
+class _MLPCheckingAttentionLifetime(torch.nn.Module):
+    def __init__(self, state):
+        super().__init__()
+        self.state = state
+
+    def forward(self, x):
+        self.state.alive_at_consumer = self.state.tensor_ref() is not None
+        return torch.ones_like(x, dtype=torch.float32)
+
+
 class _FakeBlock(torch.nn.Module):
     def forward(self, x, t_emb, mod_segments, rope_freqs, transformer_options={}):
         return x
@@ -289,6 +347,39 @@ def test_safe_block_keeps_residual_fp32_and_branches_fp16():
     assert result.dtype is torch.float32
     assert torch.isfinite(result).all()
     assert result.item() == pytest.approx(100_003.0)
+
+
+def test_safe_mlp_releases_fc1_projection_before_fc2():
+    fake_module = _fake_minimax_module()
+    install_minimax_h3_safe_fp16_patch(fake_module)
+    state = _WeakTensorState()
+    mlp = _FakeMLP()
+    mlp._raylight_h3_safe_fp16 = True
+    mlp.fc1 = _RecordingFC1(state)
+    mlp.fc2 = _ProjectionCheckingSourceLifetime(state)
+
+    result = mlp(torch.ones(1, 1, dtype=torch.float16))
+
+    assert state.alive_at_consumer is False
+    assert result.item() == pytest.approx(0.73095703125, abs=1e-6)
+
+
+def test_safe_block_releases_attention_output_before_mlp():
+    fake_module = _fake_minimax_module()
+    install_minimax_h3_safe_fp16_patch(fake_module)
+    state = _WeakTensorState()
+    block = _FakeBlock()
+    block._raylight_h3_safe_fp16 = True
+    block.norm1 = _IdentityNorm()
+    block.norm2 = _IdentityNorm()
+    block.attn = _AttentionWithWeakResult(state)
+    block.mlp = _MLPCheckingAttentionLifetime(state)
+    block.adaln_proj = _Adaln()
+
+    result = block(torch.ones(1, 1), torch.ones(1, 1), [(0, 1, 0)], None)
+
+    assert state.alive_at_consumer is False
+    assert result.tolist() == [[3.0]]
 
 
 def test_class_patch_activates_only_inside_explicit_safe_construction_context():

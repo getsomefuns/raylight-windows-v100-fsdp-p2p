@@ -1,4 +1,5 @@
 import ast
+import torch
 from .path_helpers import comfy_root, repo_root
 
 
@@ -62,3 +63,29 @@ def test_minimax_usp_forward_signature_matches_core():
     assert _signature(_function(RAYLIGHT, "usp_dit_forward")) == _signature(
         _function(CORE, "_forward", "MiniMaxH3Model")
     )
+
+
+def test_minimax_sequence_split_owns_only_local_storage(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    monkeypatch.setattr(attention, "_ATTN_TYPE", "TORCH")
+    monkeypatch.setattr(attention, "_SYNC_ULYSSES", True)
+    monkeypatch.setattr(attention, "make_xfuser_attention", lambda *_args: None)
+    import raylight.diffusion_models.minimax.xdit_context_parallel as parallel
+
+    monkeypatch.setattr(parallel, "get_sequence_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(parallel, "get_sequence_parallel_rank", lambda: 1)
+    hidden = torch.arange(48, dtype=torch.float16).reshape(8, 6)
+    rope = torch.arange(32, dtype=torch.float16).reshape(1, 8, 2, 2)
+
+    local_hidden, local_rope, segments = parallel._split_packed_sequence(
+        hidden,
+        rope,
+        [(0, 3, 0), (3, 8, 1)],
+    )
+
+    assert torch.equal(local_hidden, hidden[4:8])
+    assert torch.equal(local_rope, rope[:, 4:8])
+    assert segments == [(0, 4, 1)]
+    assert local_hidden.untyped_storage().data_ptr() != hidden.untyped_storage().data_ptr()
+    assert local_rope.untyped_storage().data_ptr() != rope.untyped_storage().data_ptr()
