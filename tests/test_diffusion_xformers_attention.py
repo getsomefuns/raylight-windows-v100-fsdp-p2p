@@ -140,3 +140,9 @@ def test_owned_xformers_ulysses_chunks_attention_heads(monkeypatch):
 
     assert head_chunks == [2, 2, 1]
     assert output.shape == (1, 4, 5, 3)
+
+
+def test_v100_xformers_default_uses_three_head_chunks():
+    import raylight.distributed_modules.attention as attention
+
+    assert attention.XFORMERS_HEAD_CHUNK == 3
