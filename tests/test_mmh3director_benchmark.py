@@ -119,6 +119,18 @@ def test_parse_args_accepts_explicit_vram_reserve():
     assert args.reserve_vram_gib == 5.5
 
 
+def test_parse_args_accepts_cuda_allocator_experiment():
+    args = benchmark.parse_args(
+        [
+            "workflow.json",
+            "--cuda-alloc-conf",
+            "max_split_size_mb:128,garbage_collection_threshold:0.55",
+        ]
+    )
+
+    assert args.cuda_alloc_conf.endswith("garbage_collection_threshold:0.55")
+
+
 def test_parse_args_rejects_non_positive_runs():
     with pytest.raises(ValueError, match="runs must be positive"):
         benchmark.parse_args(["workflow.json", "--runs", "0"])

@@ -295,6 +295,7 @@ def run_workflow(
     runs: int,
     diagnostic_steps: int | None = None,
     diffusion_attention: str | None = None,
+    cuda_alloc_conf: str | None = None,
 ) -> Path:
     if p2p_capacity_mib <= 0:
         raise ValueError("p2p_capacity_mib must be positive")
@@ -304,6 +305,8 @@ def run_workflow(
         raise ValueError("reserve_vram_gib must be positive")
     if diagnostic_steps is not None and diagnostic_steps <= 0:
         raise ValueError("diagnostic_steps must be positive")
+    if cuda_alloc_conf is not None and not cuda_alloc_conf.strip():
+        raise ValueError("cuda_alloc_conf must not be empty")
     workflow_path = workflow_path.resolve()
     result_root = result_root.resolve()
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -342,14 +345,18 @@ def run_workflow(
         "reserve_vram_gib": reserve_vram_gib,
         "diagnostic_steps": diagnostic_steps,
         "diffusion_attention": diffusion_attention,
+        "cuda_alloc_conf": cuda_alloc_conf,
         "started_ns": time.time_ns(),
         "runs": [],
     }
+    server_env = base.server_environment(p2p_capacity_bytes=p2p_capacity_bytes)
+    if cuda_alloc_conf is not None:
+        server_env["PYTORCH_CUDA_ALLOC_CONF"] = cuda_alloc_conf
     with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
         process = subprocess.Popen(
             command,
             cwd=base.COMFY_ROOT,
-            env=base.server_environment(p2p_capacity_bytes=p2p_capacity_bytes),
+            env=server_env,
             stdout=stdout,
             stderr=stderr,
             creationflags=subprocess.CREATE_NO_WINDOW,
@@ -508,6 +515,7 @@ def parse_args(argv=None):
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument("--diagnostic-steps", type=int)
     parser.add_argument("--diffusion-attention")
+    parser.add_argument("--cuda-alloc-conf")
     args = parser.parse_args(argv)
     if args.runs <= 0:
         raise ValueError("runs must be positive")
@@ -531,6 +539,7 @@ def main() -> int:
             runs=args.runs,
             diagnostic_steps=args.diagnostic_steps,
             diffusion_attention=args.diffusion_attention,
+            cuda_alloc_conf=args.cuda_alloc_conf,
         )
     )
     return 0
