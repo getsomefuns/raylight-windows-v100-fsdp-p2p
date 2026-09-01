@@ -64,7 +64,12 @@ def validate_director_prompt(prompt: dict) -> None:
         raise ValueError("Director benchmark requires FSDP=true")
 
 
-def prepare_director_prompt(template: dict, run_index: int) -> dict:
+def prepare_director_prompt(
+    template: dict,
+    run_index: int,
+    *,
+    diagnostic_steps: int | None = None,
+) -> dict:
     if run_index < 0:
         raise ValueError("run_index must be non-negative")
     prompt = copy.deepcopy(template)
@@ -73,6 +78,10 @@ def prepare_director_prompt(template: dict, run_index: int) -> dict:
         raise ValueError(f"expected one MiniMaxH3Director, found {len(directors)}")
     director_inputs = directors[0][1].setdefault("inputs", {})
     director_inputs["seed"] = (int(director_inputs["seed"]) + run_index) % (2**64)
+    if diagnostic_steps is not None:
+        if diagnostic_steps <= 0:
+            raise ValueError("diagnostic_steps must be positive")
+        director_inputs["steps"] = diagnostic_steps
     for _, node in _nodes(prompt, "SaveVideo"):
         inputs = node.setdefault("inputs", {})
         prefix = str(inputs.get("filename_prefix", "video/MMH3Director"))
@@ -276,6 +285,7 @@ def run_workflow(
     p2p_capacity_mib: int,
     reserve_vram_gib: float,
     runs: int,
+    diagnostic_steps: int | None = None,
 ) -> Path:
     if p2p_capacity_mib <= 0:
         raise ValueError("p2p_capacity_mib must be positive")
@@ -283,6 +293,8 @@ def run_workflow(
         raise ValueError("runs must be positive")
     if reserve_vram_gib <= 0:
         raise ValueError("reserve_vram_gib must be positive")
+    if diagnostic_steps is not None and diagnostic_steps <= 0:
+        raise ValueError("diagnostic_steps must be positive")
     workflow_path = workflow_path.resolve()
     result_root = result_root.resolve()
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -319,6 +331,7 @@ def run_workflow(
         "runtime_identity": identity,
         "p2p_capacity_bytes": p2p_capacity_bytes,
         "reserve_vram_gib": reserve_vram_gib,
+        "diagnostic_steps": diagnostic_steps,
         "started_ns": time.time_ns(),
         "runs": [],
     }
@@ -349,7 +362,11 @@ def run_workflow(
             )
 
             for run_index in range(runs):
-                run_prompt = prepare_director_prompt(prompt, run_index)
+                run_prompt = prepare_director_prompt(
+                    prompt,
+                    run_index,
+                    diagnostic_steps=diagnostic_steps,
+                )
                 prompt_sha256 = base.write_prompt_artifact(
                     result_dir / f"run{run_index}-prompt.json", run_prompt
                 )
@@ -478,11 +495,14 @@ def parse_args(argv=None):
     parser.add_argument("--p2p-capacity-mib", type=int, default=128)
     parser.add_argument("--reserve-vram-gib", type=float, default=4.0)
     parser.add_argument("--runs", type=int, default=2)
+    parser.add_argument("--diagnostic-steps", type=int)
     args = parser.parse_args(argv)
     if args.runs <= 0:
         raise ValueError("runs must be positive")
     if args.reserve_vram_gib <= 0:
         raise ValueError("reserve-vram-gib must be positive")
+    if args.diagnostic_steps is not None and args.diagnostic_steps <= 0:
+        raise ValueError("diagnostic-steps must be positive")
     return args
 
 
@@ -497,6 +517,7 @@ def main() -> int:
             p2p_capacity_mib=args.p2p_capacity_mib,
             reserve_vram_gib=args.reserve_vram_gib,
             runs=args.runs,
+            diagnostic_steps=args.diagnostic_steps,
         )
     )
     return 0

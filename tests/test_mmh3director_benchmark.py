@@ -149,3 +149,18 @@ def test_prepare_director_prompt_changes_seed_and_output_prefix_per_run():
     assert cold["7"]["inputs"]["filename_prefix"].endswith("_run0")
     assert warm["7"]["inputs"]["filename_prefix"].endswith("_run1")
     assert template["5"]["inputs"]["seed"] == 42
+
+
+def test_prepare_director_prompt_can_override_steps_for_memory_diagnostics():
+    template = {
+        "5": {
+            "class_type": "MiniMaxH3Director",
+            "inputs": {"seed": 42, "steps": 4},
+        },
+        "7": {"class_type": "SaveVideo", "inputs": {}},
+    }
+
+    prompt = benchmark.prepare_director_prompt(template, 0, diagnostic_steps=1)
+
+    assert prompt["5"]["inputs"]["steps"] == 1
+    assert template["5"]["inputs"]["steps"] == 4
