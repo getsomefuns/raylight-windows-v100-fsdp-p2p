@@ -2,6 +2,7 @@ from xfuser.core.long_ctx_attention import (
     xFuserLongContextAttention,
 )
 
+import torch
 import torch.distributed as dist
 import xformers.ops as xops
 from yunchang.comm.all_to_all import SeqAllToAll4D
@@ -12,6 +13,7 @@ from .sageattention_hf_patch import ensure_hf_fp8_cuda_kernel, ensure_hf_sm90_ke
 _ATTN_TYPE = None
 _SYNC_ULYSSES = None
 XFORMERS_MEMORY_EFFICIENT = "XFORMERS_MEMORY_EFFICIENT"
+XFORMERS_HEAD_CHUNK = 7
 
 
 def xfuser_attention_choices():
@@ -48,11 +50,14 @@ def xformers_ulysses_attention_owned(
     use_sync,
     scale=None,
     causal=False,
+    chunk_heads=XFORMERS_HEAD_CHUNK,
 ):
     """Consume Q/K/V references and return the rank-local Ulysses output."""
 
     if len(qkv) != 3:
         raise ValueError("owned Ulysses attention requires exactly Q, K, and V")
+    if chunk_heads <= 0:
+        raise ValueError("XFormers attention chunk_heads must be positive")
     ring_group = PROCESS_GROUP.RING_PG
     if ring_group is None or dist.get_world_size(ring_group) != 1:
         raise ValueError("XFORMERS_MEMORY_EFFICIENT requires ring degree 1")
@@ -70,14 +75,19 @@ def xformers_ulysses_attention_owned(
     value_layer = SeqAllToAll4D.apply(ulysses_group, value, 2, 1, use_sync)
     del value
     attention_bias = xops.LowerTriangularMask() if causal else None
-    context_layer = xops.memory_efficient_attention(
-        query_layer,
-        key_layer,
-        value_layer,
-        attn_bias=attention_bias,
-        p=0.0,
-        scale=scale,
-    )
+    context_layer = torch.empty_like(query_layer)
+    for start in range(0, query_layer.shape[2], chunk_heads):
+        stop = min(start + chunk_heads, query_layer.shape[2])
+        context_chunk = xops.memory_efficient_attention(
+            query_layer[:, :, start:stop],
+            key_layer[:, :, start:stop],
+            value_layer[:, :, start:stop],
+            attn_bias=attention_bias,
+            p=0.0,
+            scale=scale,
+        )
+        context_layer[:, :, start:stop].copy_(context_chunk)
+        del context_chunk
     del query_layer, key_layer, value_layer
     output = SeqAllToAll4D.apply(ulysses_group, context_layer, 1, 2, use_sync)
     del context_layer

@@ -18,6 +18,7 @@ sync_ulysses = xfuser_attn.get_sync_ulysses()
 xfuser_optimized_attention = xfuser_attn.make_xfuser_attention(attn_type, sync_ulysses)
 FINAL_PROJECTION_CHUNK_TOKENS = 4096
 QK_NORM_CHUNK_TOKENS = 8192
+ROPE_CHUNK_TOKENS = 8192
 _TRACE_HIGH_WATER = {}
 
 
@@ -163,9 +164,37 @@ def _normalize_qk_in_place(
     return q, k
 
 
+def _apply_rope_in_place(
+    q,
+    k,
+    rope_freqs,
+    *,
+    rot,
+    chunk_tokens=ROPE_CHUNK_TOKENS,
+):
+    if chunk_tokens <= 0:
+        raise ValueError("RoPE chunk_tokens must be positive")
+    for start in range(0, q.shape[0], chunk_tokens):
+        stop = min(start + chunk_tokens, q.shape[0])
+        rotated_q, rotated_k = comfy.quant_ops.ck.apply_rope_split_half(
+            q[start:stop, ..., :rot],
+            k[start:stop, ..., :rot],
+            rope_freqs[:, start:stop],
+        )
+        q[start:stop, ..., :rot].copy_(rotated_q)
+        k[start:stop, ..., :rot].copy_(rotated_k)
+        del rotated_q, rotated_k
+    return q, k
+
+
 def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
+    if isinstance(x, list):
+        if len(x) != 1:
+            raise ValueError("owned MiniMax H3 attention input requires one tensor")
+        x = x.pop()
     sequence_length = x.shape[0]
     projected = self.qkv_proj(x)
+    del x
     _trace_cuda_memory("attention_qkv_projected")
     q, k, v = projected.split(self.heads * self.head_dim, dim=-1)
     del projected
@@ -176,7 +205,7 @@ def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
     v = v.view(sequence_length, self.heads, self.head_dim)
     if rope_freqs is not None:
         rot = rope_freqs.shape[-3] * 2
-        q[..., :rot], k[..., :rot] = comfy.quant_ops.ck.apply_rope_split_half(q[..., :rot], k[..., :rot], rope_freqs)
+        q, k = _apply_rope_in_place(q, k, rope_freqs, rot=rot)
         _trace_cuda_memory("attention_rope_applied")
     q = q.transpose(0, 1).unsqueeze(0)
     k = k.transpose(0, 1).unsqueeze(0)

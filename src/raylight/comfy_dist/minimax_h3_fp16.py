@@ -332,9 +332,20 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
             self.norm1(residual), shift_msa, scale_msa, mod_segments
         ).to(torch.float16)
         _trace_safe_fp16_memory("block_attention_branch_ready")
-        attention = self.attn(
-            branch, rope_freqs=rope_freqs, transformer_options=transformer_options
-        ).to(torch.float32)
+        if getattr(self.attn, "_raylight_accepts_owned_input", False):
+            owned_branch = [branch]
+            del branch
+            attention = self.attn(
+                owned_branch,
+                rope_freqs=rope_freqs,
+                transformer_options=transformer_options,
+            ).to(torch.float32)
+        else:
+            attention = self.attn(
+                branch,
+                rope_freqs=rope_freqs,
+                transformer_options=transformer_options,
+            ).to(torch.float32)
         _trace_safe_fp16_memory("block_attention_ready")
         residual = mm_module._mod_gate(residual, gate_msa, attention, mod_segments)
         del attention

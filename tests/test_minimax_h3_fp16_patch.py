@@ -452,6 +452,35 @@ def test_safe_block_reports_internal_memory_phases(monkeypatch):
     ]
 
 
+def test_safe_block_transfers_branch_ownership_to_compatible_attention():
+    class OwnedAttention(torch.nn.Module):
+        _raylight_accepts_owned_input = True
+
+        def __init__(self):
+            super().__init__()
+            self.received_list = False
+
+        def forward(self, owned, **_kwargs):
+            self.received_list = isinstance(owned, list)
+            value = owned.pop()
+            return torch.ones_like(value, dtype=torch.float32)
+
+    fake_module = _fake_minimax_module()
+    install_minimax_h3_safe_fp16_patch(fake_module)
+    block = _FakeBlock()
+    block._raylight_h3_safe_fp16 = True
+    block.norm1 = _IdentityNorm()
+    block.norm2 = _IdentityNorm()
+    block.attn = OwnedAttention()
+    block.mlp = _RecordingBranch(2.0)
+    block.adaln_proj = _Adaln()
+
+    result = block(torch.ones(2, 1), torch.ones(1, 1), [(0, 2, 0)], None)
+
+    assert block.attn.received_list is True
+    assert result.tolist() == [[4.0], [4.0]]
+
+
 def test_class_patch_activates_only_inside_explicit_safe_construction_context():
     fake_module = _fake_minimax_module()
     install_minimax_h3_safe_fp16_patch(fake_module)

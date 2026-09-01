@@ -404,6 +404,7 @@ if hasattr(model_base, "MiniMaxH3"):
         model = base_model.diffusion_model
         for block in model.blocks:
             block.attn.forward = types.MethodType(usp_attn_forward, block.attn)
+            block.attn._raylight_accepts_owned_input = True
         model._forward = types.MethodType(usp_dit_forward, model)
 
 

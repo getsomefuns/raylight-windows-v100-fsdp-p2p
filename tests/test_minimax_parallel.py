@@ -158,6 +158,40 @@ def test_minimax_qk_norm_chunks_with_one_unshard_per_norm(monkeypatch):
     torch.testing.assert_close(k, torch.arange(21, 42).reshape(7, 1, 3).half() - 1)
 
 
+def test_minimax_rope_is_written_back_in_sequence_chunks(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    monkeypatch.setattr(attention, "_ATTN_TYPE", "TORCH")
+    monkeypatch.setattr(attention, "_SYNC_ULYSSES", True)
+    monkeypatch.setattr(attention, "make_xfuser_attention", lambda *_args: None)
+    import raylight.diffusion_models.minimax.xdit_context_parallel as parallel
+
+    chunk_sizes = []
+
+    def fake_rope(query, key, rope_freqs):
+        chunk_sizes.append((query.shape[0], rope_freqs.shape[1]))
+        return query.float().add(1), key.float().sub(1)
+
+    monkeypatch.setattr(
+        parallel.comfy.quant_ops.ck,
+        "apply_rope_split_half",
+        fake_rope,
+    )
+    q = torch.arange(28, dtype=torch.float16).reshape(7, 1, 4)
+    k = torch.arange(28, 56, dtype=torch.float16).reshape(7, 1, 4)
+    rope = torch.zeros(1, 7, 1, 2, dtype=torch.float16)
+    q_ptr = q.untyped_storage().data_ptr()
+    k_ptr = k.untyped_storage().data_ptr()
+
+    parallel._apply_rope_in_place(q, k, rope, rot=4, chunk_tokens=3)
+
+    assert chunk_sizes == [(3, 3), (3, 3), (1, 1)]
+    assert q.untyped_storage().data_ptr() == q_ptr
+    assert k.untyped_storage().data_ptr() == k_ptr
+    torch.testing.assert_close(q, torch.arange(28).reshape(7, 1, 4).half() + 1)
+    torch.testing.assert_close(k, torch.arange(28, 56).reshape(7, 1, 4).half() - 1)
+
+
 class _RecordingIdentity(torch.nn.Module):
     def __init__(self):
         super().__init__()
