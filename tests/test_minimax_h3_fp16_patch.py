@@ -276,17 +276,6 @@ class _RecordingFC1(torch.nn.Module):
         return projected
 
 
-class _RecordingChunkProjection(torch.nn.Module):
-    def __init__(self, *, duplicate=False):
-        super().__init__()
-        self.duplicate = duplicate
-        self.chunk_sizes = []
-
-    def forward(self, x):
-        self.chunk_sizes.append(x.shape[0])
-        return torch.cat((x, x), dim=-1) if self.duplicate else x
-
-
 class _ProjectionCheckingSourceLifetime(torch.nn.Module):
     def __init__(self, state):
         super().__init__()
@@ -373,27 +362,6 @@ def test_safe_mlp_releases_fc1_projection_before_fc2():
 
     assert state.alive_at_consumer is False
     assert result.item() == pytest.approx(0.73095703125, abs=1e-6)
-
-
-def test_safe_mlp_chunks_long_packed_sequence_without_changing_result(monkeypatch):
-    fake_module = _fake_minimax_module()
-    install_minimax_h3_safe_fp16_patch(fake_module)
-    monkeypatch.setattr(h3fp16, "SAFE_MLP_CHUNK_TOKENS", 2)
-    fc1 = _RecordingChunkProjection(duplicate=True)
-    fc2 = _RecordingChunkProjection()
-    mlp = _FakeMLP()
-    mlp._raylight_h3_safe_fp16 = True
-    mlp.fc1 = fc1
-    mlp.fc2 = fc2
-    source = torch.arange(1, 11, dtype=torch.float16).reshape(5, 2)
-    expected = torch.nn.functional.silu(source.to(torch.float32)) * source.to(torch.float32)
-
-    result = mlp(source)
-
-    assert fc1.chunk_sizes == [2, 2, 1]
-    assert fc2.chunk_sizes == [2, 2, 1]
-    assert result.dtype is torch.float32
-    torch.testing.assert_close(result, expected, rtol=2e-3, atol=2e-3)
 
 
 def test_safe_block_releases_attention_output_before_mlp():

@@ -1,3 +1,6 @@
+import json
+import os
+
 import torch
 
 import comfy
@@ -13,6 +16,26 @@ from ..utils import pad_to_world_size
 attn_type = xfuser_attn.get_attn_type()
 sync_ulysses = xfuser_attn.get_sync_ulysses()
 xfuser_optimized_attention = xfuser_attn.make_xfuser_attention(attn_type, sync_ulysses)
+FINAL_PROJECTION_CHUNK_TOKENS = 4096
+_TRACE_HIGH_WATER = {}
+
+
+def _trace_cuda_memory(event):
+    if os.environ.get("RAYLIGHT_H3_MEMORY_TRACE", "0") != "1" or not torch.cuda.is_available():
+        return
+    device = torch.cuda.current_device()
+    peak = torch.cuda.max_memory_allocated(device)
+    if peak <= _TRACE_HIGH_WATER.get(device, -1):
+        return
+    _TRACE_HIGH_WATER[device] = peak
+    payload = {
+        "event": event,
+        "pid": os.getpid(),
+        "device": device,
+        "allocated_bytes": torch.cuda.memory_allocated(device),
+        "peak_allocated_bytes": peak,
+    }
+    print("[RAYLIGHT_H3_MEMORY] " + json.dumps(payload, sort_keys=True))
 
 
 def _split_packed_sequence(h, rope_freqs, mod_segments):
@@ -27,6 +50,75 @@ def _split_packed_sequence(h, rope_freqs, mod_segments):
         if segment_start < segment_end:
             local_segments.append((segment_start - start, segment_end - start, row))
     return h[start:end].clone(), rope_freqs[:, start:end].clone(), local_segments
+
+
+def _segment_rank_counts(segment, local_size, world_size):
+    start, stop, _ = segment
+    return [
+        max(0, min(stop, (rank + 1) * local_size) - max(start, rank * local_size))
+        for rank in range(world_size)
+    ]
+
+
+def _project_local_final_segment(
+    final_layer,
+    h,
+    shift,
+    scale,
+    segment,
+    projector,
+    *,
+    rank=None,
+    world_size=None,
+    chunk_tokens=FINAL_PROJECTION_CHUNK_TOKENS,
+):
+    if rank is None:
+        rank = get_sequence_parallel_rank()
+    if world_size is None:
+        world_size = get_sequence_parallel_world_size()
+    if chunk_tokens <= 0:
+        raise ValueError("final projection chunk_tokens must be positive")
+
+    local_size = h.shape[0]
+    counts = _segment_rank_counts(segment, local_size, world_size)
+    count = counts[rank]
+    output = torch.empty(
+        (count, projector.weight.shape[0]),
+        dtype=torch.float32,
+        device=h.device,
+    )
+    if count == 0:
+        return output, counts
+
+    segment_start, segment_stop, timestep_row = segment
+    rank_start = rank * local_size
+    overlap_start = max(segment_start, rank_start)
+    overlap_stop = min(segment_stop, rank_start + local_size)
+    local_start = overlap_start - rank_start
+    local_stop = overlap_stop - rank_start
+    rows = h[local_start:local_stop]
+    segment_scale = 1.0 + scale[timestep_row]
+    segment_shift = shift[timestep_row]
+    for start in range(0, count, chunk_tokens):
+        stop = min(start + chunk_tokens, count)
+        normalized = final_layer.norm(rows[start:stop])
+        normalized = (normalized * segment_scale + segment_shift).to(torch.float32)
+        projected = projector(normalized)
+        output[start:stop].copy_(projected)
+        del normalized, projected
+    return output, counts
+
+
+def _gather_projected_rows(local_rows, counts, group):
+    if len(counts) == 1:
+        return local_rows
+    max_rows = max(counts)
+    padded = local_rows.new_zeros((max_rows, *local_rows.shape[1:]))
+    padded[: local_rows.shape[0]].copy_(local_rows)
+    gathered = group.all_gather(padded.contiguous(), dim=0)
+    gathered = gathered.view(len(counts), max_rows, *local_rows.shape[1:])
+    pieces = [gathered[rank, :count] for rank, count in enumerate(counts) if count]
+    return torch.cat(pieces, dim=0)
 
 
 def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
@@ -141,6 +233,7 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
         else:  # ref_audio / audio
             h[a:b] = audio_embed[aoff:aoff + n]
             aoff += n
+    _trace_cuda_memory("packed_hidden_built")
 
     t_vals = torch.tensor(unique_t, dtype=torch.float32, device=device)
     if self.use_adaln_curves:
@@ -155,9 +248,10 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     # rotation table computed once per forward, consumed by the kitchen split-half rope
     rope_freqs = rope_rotation_table(self.rope_freqs(layout.position_ids, device), dtype)
     # ===================== SP SPLIT ====================== #
-    h, h_orig_size = pad_to_world_size(h, dim=0)
+    h, _ = pad_to_world_size(h, dim=0)
     rope_freqs, _ = pad_to_world_size(rope_freqs, dim=1)
     h, rope_freqs, mod_segments = _split_packed_sequence(h, rope_freqs, mod_segments)
+    _trace_cuda_memory("sequence_split")
 
     # blocks
     patches_replace = transformer_options.get("patches_replace", {})
@@ -175,16 +269,38 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
                 {"original_block": block_wrap})["img"]
         else:
             h = block(h, t_emb, mod_segments, rope_freqs, transformer_options=transformer_options)
+        _trace_cuda_memory(f"block_{i}_end")
     if prefetch_queue is not None:
         comfy.model_prefetch.prefetch_queue_pop(prefetch_queue, device, None)
 
-    # ===================== SP GATHER ===================== #
-    h = get_sp_group().all_gather(h.contiguous(), dim=0)
-    h = h[:h_orig_size]
-
     video_seg = next((a, b, t_row[seg_t["video"]]) for a, b, k in layout.segments if k == "video")
     audio_seg = next((a, b, t_row[seg_t["audio"]]) for a, b, k in layout.segments if k == "audio")
-    v, a = self.final_layer(h, t_emb, video_seg, audio_seg)
+    shift, scale = self.final_layer.adaln_proj(t_emb)
+    v_local, v_counts = _project_local_final_segment(
+        self.final_layer,
+        h,
+        shift,
+        scale,
+        video_seg,
+        self.final_layer.video_out,
+    )
+    _trace_cuda_memory("final_video_local")
+    a_local, a_counts = _project_local_final_segment(
+        self.final_layer,
+        h,
+        shift,
+        scale,
+        audio_seg,
+        self.final_layer.audio_out,
+    )
+    _trace_cuda_memory("final_audio_local")
+    del h, rope_freqs, mod_segments, shift, scale
+    _trace_cuda_memory("local_hidden_released")
+    sp_group = get_sp_group()
+    v = _gather_projected_rows(v_local, v_counts, sp_group)
+    _trace_cuda_memory("final_video_gathered")
+    a = _gather_projected_rows(a_local, a_counts, sp_group)
+    _trace_cuda_memory("final_audio_gathered")
 
     video_out = unpatchify_video(v, latent_t, lat_h // 2, lat_w // 2, self.latents_dim, self.patch_size)
     video_out = video_out[:, :, :orig_t, :orig_h, :orig_w]

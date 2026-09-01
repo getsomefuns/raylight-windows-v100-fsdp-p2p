@@ -24,7 +24,6 @@ SAFE_FP16_LOADER_VALUE = "fp16_h3_safe"
 
 K_OUT_PROJ = 64.0
 K_FC2 = 256.0
-SAFE_MLP_CHUNK_TOKENS = 4096
 
 _MODULE_PATCH_MARKER = "_raylight_h3_safe_fp16_installed"
 _MODEL_PATCH_MARKER = "_raylight_h3_safe_fp16_active"
@@ -239,33 +238,15 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
         if _SAFE_CONSTRUCTION_ACTIVE.get():
             activate_minimax_h3_safe_fp16_model(self)
 
-    def safe_mlp_chunk(self, x: torch.Tensor) -> torch.Tensor:
+    @functools.wraps(original_mlp_forward)
+    def safe_mlp_forward(self, x: torch.Tensor):
+        if not getattr(self, _MLP_PATCH_MARKER, False):
+            return original_mlp_forward(self, x)
         projected = self.fc1(x)
         gate, up = projected.chunk(2, dim=-1)
         activated = torch.nn.functional.silu(gate.to(torch.float32)).mul_(up.to(torch.float32))
         del projected, gate, up
         return safe_linear_projection(self.fc2, activated, K_FC2)
-
-    @functools.wraps(original_mlp_forward)
-    def safe_mlp_forward(self, x: torch.Tensor):
-        if not getattr(self, _MLP_PATCH_MARKER, False):
-            return original_mlp_forward(self, x)
-        if x.ndim != 2 or x.shape[0] <= SAFE_MLP_CHUNK_TOKENS:
-            return safe_mlp_chunk(self, x)
-
-        output = None
-        for start in range(0, x.shape[0], SAFE_MLP_CHUNK_TOKENS):
-            stop = min(start + SAFE_MLP_CHUNK_TOKENS, x.shape[0])
-            chunk = safe_mlp_chunk(self, x[start:stop])
-            if output is None:
-                output = torch.empty(
-                    (x.shape[0], chunk.shape[-1]),
-                    dtype=chunk.dtype,
-                    device=chunk.device,
-                )
-            output[start:stop].copy_(chunk)
-            del chunk
-        return output
 
     @functools.wraps(original_block_forward)
     def safe_block_forward(
@@ -304,7 +285,6 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
 __all__ = [
     "K_FC2",
     "K_OUT_PROJ",
-    "SAFE_MLP_CHUNK_TOKENS",
     "SAFE_FP16_LOADER_VALUE",
     "SAFE_FP16_OPTION",
     "activate_minimax_h3_safe_fp16_model",

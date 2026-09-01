@@ -1,4 +1,5 @@
 import ast
+import json
 import torch
 from .path_helpers import comfy_root, repo_root
 
@@ -89,3 +90,114 @@ def test_minimax_sequence_split_owns_only_local_storage(monkeypatch):
     assert segments == [(0, 4, 1)]
     assert local_hidden.untyped_storage().data_ptr() != hidden.untyped_storage().data_ptr()
     assert local_rope.untyped_storage().data_ptr() != rope.untyped_storage().data_ptr()
+
+
+class _RecordingIdentity(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.chunk_sizes = []
+
+    def forward(self, value):
+        self.chunk_sizes.append(value.shape[0])
+        return value.clone()
+
+
+class _RecordingLinear(torch.nn.Linear):
+    def __init__(self):
+        super().__init__(3, 2, bias=False, dtype=torch.float32)
+        self.chunk_sizes = []
+        with torch.no_grad():
+            self.weight.copy_(torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))
+
+    def forward(self, value):
+        self.chunk_sizes.append(value.shape[0])
+        return super().forward(value)
+
+
+class _FakeGatherGroup:
+    def __init__(self, gathered):
+        self.gathered = gathered
+        self.inputs = []
+
+    def all_gather(self, value, dim=0):
+        self.inputs.append((value.clone(), dim))
+        return self.gathered.clone()
+
+
+def test_minimax_final_projection_uses_only_rank_local_target_rows_in_chunks(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    monkeypatch.setattr(attention, "_ATTN_TYPE", "TORCH")
+    monkeypatch.setattr(attention, "_SYNC_ULYSSES", True)
+    monkeypatch.setattr(attention, "make_xfuser_attention", lambda *_args: None)
+    import raylight.diffusion_models.minimax.xdit_context_parallel as parallel
+
+    norm = _RecordingIdentity()
+    projector = _RecordingLinear()
+    final_layer = type("FinalLayer", (), {"norm": norm})()
+    local_hidden = torch.arange(15, dtype=torch.float32).reshape(5, 3)
+    shift = torch.tensor([[3.0, 3.0, 3.0]])
+    scale = torch.tensor([[1.0, 1.0, 1.0]])
+
+    projected, counts = parallel._project_local_final_segment(
+        final_layer,
+        local_hidden,
+        shift,
+        scale,
+        (2, 9, 0),
+        projector,
+        rank=1,
+        world_size=2,
+        chunk_tokens=2,
+    )
+
+    expected_hidden = local_hidden[:4] * 2.0 + 3.0
+    assert counts == [3, 4]
+    assert norm.chunk_sizes == [2, 2]
+    assert projector.chunk_sizes == [2, 2]
+    torch.testing.assert_close(projected, expected_hidden[:, :2])
+
+
+def test_minimax_gathers_only_small_projected_rows_and_removes_rank_padding(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    monkeypatch.setattr(attention, "_ATTN_TYPE", "TORCH")
+    monkeypatch.setattr(attention, "_SYNC_ULYSSES", True)
+    monkeypatch.setattr(attention, "make_xfuser_attention", lambda *_args: None)
+    import raylight.diffusion_models.minimax.xdit_context_parallel as parallel
+
+    local = torch.tensor([[20.0], [21.0], [22.0], [23.0]])
+    gathered = torch.tensor([[10.0], [11.0], [0.0], [0.0], [20.0], [21.0], [22.0], [23.0]])
+    group = _FakeGatherGroup(gathered)
+
+    result = parallel._gather_projected_rows(local, [2, 4], group)
+
+    assert group.inputs[0][0].shape == (4, 1)
+    assert group.inputs[0][1] == 0
+    assert result.flatten().tolist() == [10.0, 11.0, 20.0, 21.0, 22.0, 23.0]
+
+
+def test_minimax_cuda_memory_trace_emits_only_new_high_watermarks(monkeypatch, capsys):
+    import raylight.distributed_modules.attention as attention
+
+    monkeypatch.setattr(attention, "_ATTN_TYPE", "TORCH")
+    monkeypatch.setattr(attention, "_SYNC_ULYSSES", True)
+    monkeypatch.setattr(attention, "make_xfuser_attention", lambda *_args: None)
+    import raylight.diffusion_models.minimax.xdit_context_parallel as parallel
+
+    state = {"allocated": 100, "peak": 200}
+    monkeypatch.setenv("RAYLIGHT_H3_MEMORY_TRACE", "1")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(torch.cuda, "memory_allocated", lambda _device: state["allocated"])
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda _device: state["peak"])
+    parallel._TRACE_HIGH_WATER.clear()
+
+    parallel._trace_cuda_memory("block_0_end")
+    parallel._trace_cuda_memory("block_1_end")
+    state.update(allocated=150, peak=300)
+    parallel._trace_cuda_memory("final_video_local")
+
+    records = [json.loads(line.split(" ", 1)[1]) for line in capsys.readouterr().out.splitlines()]
+    assert [record["event"] for record in records] == ["block_0_end", "final_video_local"]
+    assert records[-1]["peak_allocated_bytes"] == 300
