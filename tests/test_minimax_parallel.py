@@ -92,6 +92,32 @@ def test_minimax_sequence_split_owns_only_local_storage(monkeypatch):
     assert local_rope.untyped_storage().data_ptr() != rope.untyped_storage().data_ptr()
 
 
+def test_minimax_packed_inputs_are_released_before_transformer_blocks():
+    function = _function(RAYLIGHT, "usp_dit_forward")
+    deleted = {
+        target.id
+        for node in ast.walk(function)
+        if isinstance(node, ast.Delete)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+    assert {
+        "video_x",
+        "audio_x",
+        "context",
+        "video_rows",
+        "audio_rows",
+        "cond_video_rows",
+        "cond_audio_rows",
+        "all_video_rows",
+        "all_audio_rows",
+        "video_embed",
+        "audio_embed",
+        "text_states",
+    } <= deleted
+
+
 def test_minimax_qk_norm_is_written_back_into_projection_storage(monkeypatch):
     import raylight.distributed_modules.attention as attention
 

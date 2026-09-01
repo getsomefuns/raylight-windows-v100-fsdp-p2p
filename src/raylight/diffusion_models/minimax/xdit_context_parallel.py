@@ -234,6 +234,8 @@ def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
 
 def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_payload=None, **kwargs):
     video_x, audio_x = x[0], x[1]
+    video_dtype = video_x.dtype
+    audio_dtype = audio_x.dtype
     orig_t, orig_h, orig_w = video_x.shape[2], video_x.shape[3], video_x.shape[4]
     video_x = comfy.ldm.common_dit.pad_to_patch_size(video_x, self.patch_size)
     if video_x.shape[0] != 1:
@@ -328,6 +330,10 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
         else:  # ref_audio / audio
             h[a:b] = audio_embed[aoff:aoff + n]
             aoff += n
+    del video_x, audio_x, context
+    del video_rows, audio_rows, cond_video_rows, cond_audio_rows
+    del all_video_rows, all_audio_rows, video_embed, audio_embed, text_states
+    del img_update, audio_update
     _trace_cuda_memory("packed_hidden_built")
 
     t_vals = torch.tensor(unique_t, dtype=torch.float32, device=device)
@@ -401,4 +407,4 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     video_out = video_out[:, :, :orig_t, :orig_h, :orig_w]
     audio_out = unpack_audio(a)
 
-    return [-video_out.to(video_x.dtype), -audio_out.to(audio_x.dtype)]
+    return [-video_out.to(video_dtype), -audio_out.to(audio_dtype)]
