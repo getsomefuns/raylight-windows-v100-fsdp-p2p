@@ -85,9 +85,11 @@ class _FakeXformersOps:
 
     def __init__(self):
         self.call = None
+        self.calls = []
 
     def memory_efficient_attention(self, query, key, value, *, attn_bias):
         self.call = (query, key, value, attn_bias)
+        self.calls.append(self.call)
         return torch.zeros_like(query)
 
 
@@ -111,6 +113,29 @@ def test_xformers_gqa_uses_expand_views_in_five_dimensions():
     assert shaped_value.stride(3) == 0
     assert isinstance(bias, _FakeXformersOps.LowerTriangularMask)
     assert output.shape == query.shape
+
+
+def test_xformers_long_sequence_splits_independent_kv_groups(monkeypatch):
+    query = torch.randn(1, 32, 10, 8)
+    key = torch.randn(1, 4, 10, 8)
+    value = torch.randn(1, 4, 10, 8)
+    fake_ops = _FakeXformersOps()
+    monkeypatch.setattr(attention_module, "XFORMERS_GROUP_CHUNK_SEQUENCE", 8)
+
+    output = run_text_encoder_attention(
+        query,
+        key,
+        value,
+        backend="XFORMERS_GQA",
+        xformers_ops=fake_ops,
+    )
+
+    assert len(fake_ops.calls) == 2
+    assert [call[0].shape[2] for call in fake_ops.calls] == [2, 2]
+    assert [call[1].shape[2] for call in fake_ops.calls] == [2, 2]
+    assert all(isinstance(call[3], _FakeXformersOps.LowerTriangularMask) for call in fake_ops.calls)
+    assert output.shape == query.shape
+    assert output.data_ptr() == query.data_ptr()
 
 
 def test_torch_efficient_physically_expands_kv_heads(monkeypatch):
@@ -180,6 +205,22 @@ def test_v100_backends_match_float32_math_strictly(backend):
 
     expected = run_text_encoder_attention(query, key, value, backend="MATH_DEBUG")
     actual = run_text_encoder_attention(query, key, value, backend=backend)
+    difference = (actual - expected).abs()
+
+    assert float(difference.max().item()) <= 1e-4
+    assert float(difference.mean().item()) <= 1e-5
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA kernel validation requires a GPU")
+def test_v100_group_chunked_xformers_matches_float32_math(monkeypatch):
+    torch.manual_seed(31)
+    monkeypatch.setattr(attention_module, "XFORMERS_GROUP_CHUNK_SEQUENCE", 17)
+    query = torch.randn(1, 32, 64, 128, device="cuda:0", dtype=torch.float32) * 0.1
+    key = torch.randn(1, 4, 64, 128, device="cuda:0", dtype=torch.float32) * 0.1
+    value = torch.randn(1, 4, 64, 128, device="cuda:0", dtype=torch.float32) * 0.1
+
+    expected = run_text_encoder_attention(query, key, value, backend="MATH_DEBUG")
+    actual = run_text_encoder_attention(query, key, value, backend="XFORMERS_GQA")
     difference = (actual - expected).abs()
 
     assert float(difference.max().item()) <= 1e-4

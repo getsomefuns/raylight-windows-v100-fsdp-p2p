@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 
@@ -38,6 +39,13 @@ def test_math_probe_rejects_long_sequence_before_cuda_allocation() -> None:
 
     with pytest.raises(ValueError, match="2048"):
         module.benchmark_attention("MATH_DEBUG", 2049, device="cuda:0")
+
+
+def test_capacity_peak_excludes_random_fixture_construction_workspace() -> None:
+    module = _load_script()
+    source = inspect.getsource(module.benchmark_attention)
+
+    assert source.rfind("torch.randn") < source.rfind("torch.cuda.reset_peak_memory_stats")
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="capacity probe contract requires CUDA")

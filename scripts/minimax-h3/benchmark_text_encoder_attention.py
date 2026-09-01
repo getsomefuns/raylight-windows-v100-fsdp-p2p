@@ -68,7 +68,6 @@ def benchmark_attention(
     except KeyError as exc:
         raise ValueError("dtype must be float32 or float16") from exc
     torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats(cuda_device)
     query = key = value = output = None
     try:
         query = torch.randn(1, Q_HEADS, sequence, HEAD_DIM, device=cuda_device, dtype=torch_dtype)
@@ -76,6 +75,9 @@ def benchmark_attention(
         value = torch.randn(1, KV_HEADS, sequence, HEAD_DIM, device=cuda_device, dtype=torch_dtype)
         input_bytes = sum(tensor.numel() * tensor.element_size() for tensor in (query, key, value))
         torch.cuda.synchronize(cuda_device)
+        # Fixture construction can transiently allocate random-number workspaces.
+        # Gate B measures the attention call with its live Q/K/V inputs, not that setup noise.
+        torch.cuda.reset_peak_memory_stats(cuda_device)
         started = time.perf_counter()
         output = run_text_encoder_attention(query, key, value, backend=selected, is_causal=True)
         torch.cuda.synchronize(cuda_device)

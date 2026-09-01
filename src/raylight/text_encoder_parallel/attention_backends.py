@@ -26,6 +26,8 @@ class AttentionBackendUnavailable(RuntimeError):
 
 ProbeResult = bool | tuple[bool, str]
 BackendProbe = Callable[[TextEncoderAttentionBackend], ProbeResult]
+XFORMERS_GROUP_CHUNK_SEQUENCE = 16384
+XFORMERS_GROUPS_PER_CALL = 2
 
 
 def _parse_backend(requested: str | TextEncoderAttentionBackend) -> TextEncoderAttentionBackend:
@@ -127,12 +129,29 @@ def _xformers_gqa_forward(
     grouped_key = key.transpose(1, 2).reshape(batch, sequence, kv_heads, 1, head_dim).expand(-1, -1, -1, groups, -1)
     grouped_value = value.transpose(1, 2).reshape(batch, sequence, kv_heads, 1, head_dim).expand(-1, -1, -1, groups, -1)
     attention_bias = xformers_ops.LowerTriangularMask() if is_causal else None
-    output = xformers_ops.memory_efficient_attention(
-        grouped_query,
-        grouped_key,
-        grouped_value,
-        attn_bias=attention_bias,
-    )
+    if sequence <= XFORMERS_GROUP_CHUNK_SEQUENCE or kv_heads <= XFORMERS_GROUPS_PER_CALL:
+        output = xformers_ops.memory_efficient_attention(
+            grouped_query,
+            grouped_key,
+            grouped_value,
+            attn_bias=attention_bias,
+        )
+    else:
+        # GQA KV groups are mathematically independent.  Splitting only that axis keeps
+        # every query's complete causal sequence while bounding CUTLASS workspace on V100.
+        # Q is dead immediately after attention in the TP2 block, so its long-sequence
+        # storage can safely become the output instead of allocating another full Q tensor.
+        output = grouped_query
+        for start in range(0, kv_heads, XFORMERS_GROUPS_PER_CALL):
+            end = min(start + XFORMERS_GROUPS_PER_CALL, kv_heads)
+            chunk = xformers_ops.memory_efficient_attention(
+                grouped_query[:, :, start:end],
+                grouped_key[:, :, start:end],
+                grouped_value[:, :, start:end],
+                attn_bias=attention_bias,
+            )
+            output[:, :, start:end].copy_(chunk)
+            del chunk
     return output.reshape(batch, sequence, query_heads, head_dim).transpose(1, 2)
 
 
