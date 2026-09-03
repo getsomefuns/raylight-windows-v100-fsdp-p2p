@@ -133,13 +133,13 @@ git commit -m "test: add DynamicVRAM runtime gate"
 - Consumes: Task 1 runtime probe and exact version table.
 - Produces: an offline-installable wheel directory and SHA256 manifest under `runtime-downloads`; these are not committed.
 
-- [ ] **Step 1: 确认 E 盘至少有 80 GiB 可用，ComfyUI 和 Ray 未运行**
+- [x] **Step 1: 确认 E 盘至少有 80 GiB 可用，ComfyUI 和 Ray 未运行**
 
 Run: `Get-PSDrive E` and inspect only Python processes whose command line belongs to `E:\ComfyUI-py310`.
 
 Expected: free space >= 80 GiB and no active ComfyUI/Ray worker before runtime mutation.
 
-- [ ] **Step 2: 仅下载、不安装候选 wheel**
+- [x] **Step 2: 仅下载、不安装候选 wheel**
 
 Run:
 
@@ -152,15 +152,15 @@ E:\ComfyUI-py310\Python310\python.exe -m pip download `
 
 Expected: one Windows/Python-compatible wheel per requested package plus dependencies; no installed version changes.
 
-- [ ] **Step 3: 生成 SHA256 清单并用 pip dry-run 验证解析结果**
+- [x] **Step 3: 生成 SHA256 清单并用 pip dry-run 验证解析结果**
 
 Run: `Get-FileHash` for every wheel and `pip install --dry-run --no-index --find-links ...` with the exact four pins.
 
 Expected: resolver selects exactly the requested Torch stack and does not propose CPU-only torch.
 
-- [ ] **Step 4: 记录 wheel 文件名、大小、哈希和解析结论**
+- [x] **Step 4: 记录 wheel 文件名、大小、哈希和解析结论**
 
-- [ ] **Step 5: 不提交二进制，只提交更新后的专项测试记录**
+- [x] **Step 5: 不提交二进制，只提交更新后的专项测试记录**
 
 ```powershell
 git add docs/testing/runtime/DYNAMIC_VRAM_TORCH28_2026-09.zh-CN.md

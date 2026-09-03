@@ -48,4 +48,17 @@
 
 ## 后续结果
 
-候选 wheel、环境迁移、AIMDO、P2P/FSDP、真实工作流和回退结论将在执行相应 Gate 后逐项追加。
+### 候选 wheel
+
+从 PyTorch 官方 cu128 索引只下载、不安装，并完成离线 `pip --dry-run --force-reinstall`。解析退出码为 0，选择了精确的四件套和正常依赖，没有选择 CPU Torch。
+
+| wheel | 大小 | SHA256 |
+|---|---:|---|
+| torch 2.8.0+cu128 / cp310 / Windows | 3,461,427,674 B | `43938E9A...14D34F9E` |
+| torchvision 0.23.0+cu128 | 7,540,139 B | `8EC6F228...FE5A6C3F` |
+| torchaudio 2.8.0+cu128 | 4,672,929 B | `5D7A9D91...174C2366` |
+| xformers 0.0.32.post2 / cp39-abi3 / Windows | 100,221,079 B | `87FA13F4...079E6F09` |
+
+本地 wheel 缓存中的 `SHA256SUMS.json` 保存全部 14 个文件的完整字节数和哈希。二进制不提交仓库。
+
+环境迁移、AIMDO、P2P/FSDP、真实工作流和回退结论将在执行相应 Gate 后逐项追加。
