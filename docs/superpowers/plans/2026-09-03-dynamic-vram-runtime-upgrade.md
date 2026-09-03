@@ -37,7 +37,7 @@
 - CLI: `python scripts/runtime/verify_dynamic_vram_runtime.py --comfyui-root PATH [--require-dynamic-vram] [--json PATH]`
 - JSON 必须包含 Torch 四件套、CUDA runtime、设备、架构、xFormers、AIMDO、ComfyUI patcher 类型和每项 probe 结果。
 
-- [ ] **Step 1: 写版本、架构和 DynamicVRAM 判定的失败测试**
+- [x] **Step 1: 写版本、架构和 DynamicVRAM 判定的失败测试**
 
 ```python
 def test_candidate_requires_exact_stack_sm70_and_dynamic_patcher():
@@ -56,13 +56,13 @@ def test_candidate_requires_exact_stack_sm70_and_dynamic_patcher():
     assert "DynamicVRAM is not active" in errors
 ```
 
-- [ ] **Step 2: 运行测试并确认因探针模块不存在而失败**
+- [x] **Step 2: 运行测试并确认因探针模块不存在而失败**
 
 Run: `E:\ComfyUI-py310\Python310\python.exe -m pytest tests/test_dynamic_vram_runtime_probe.py -q`
 
 Expected: FAIL during import because `scripts.runtime.verify_dynamic_vram_runtime` does not exist.
 
-- [ ] **Step 3: 实现最小探针和 JSON 输出**
+- [x] **Step 3: 实现最小探针和 JSON 输出**
 
 ```python
 EXPECTED = {
@@ -87,7 +87,7 @@ def validate_runtime_facts(facts, require_dynamic_vram):
     return errors
 ```
 
-- [ ] **Step 4: 增加纯 CPU 可测的 xFormers/AIMDO/IPC 结果字段校验**
+- [x] **Step 4: 增加纯 CPU 可测的 xFormers/AIMDO/IPC 结果字段校验**
 
 ```python
 def test_release_probe_rejects_missing_gpu_subprobes():
@@ -99,7 +99,7 @@ def test_release_probe_rejects_missing_gpu_subprobes():
     assert "CUDA IPC round-trip failed" in errors
 ```
 
-- [ ] **Step 5: 运行探针单测和当前 2.7 基线采集**
+- [x] **Step 5: 运行探针单测和当前 2.7 基线采集**
 
 Run:
 
@@ -112,9 +112,9 @@ E:\ComfyUI-py310\Python310\python.exe scripts/runtime/verify_dynamic_vram_runtim
 
 Expected: unit tests PASS; baseline probe exits nonzero only for candidate requirements and records the current working 2.7 stack without changing it.
 
-- [ ] **Step 6: 在专项测试汇总写入基线版本和“DynamicVRAM 未启用”的事实，不写长日志**
+- [x] **Step 6: 在专项测试汇总写入基线版本和“DynamicVRAM 未启用”的事实，不写长日志**
 
-- [ ] **Step 7: 提交探针与基线记录**
+- [x] **Step 7: 提交探针与基线记录**
 
 ```powershell
 git add scripts/runtime/verify_dynamic_vram_runtime.py tests/test_dynamic_vram_runtime_probe.py docs/testing/runtime/DYNAMIC_VRAM_TORCH28_2026-09.zh-CN.md
