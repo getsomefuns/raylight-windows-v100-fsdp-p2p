@@ -36,8 +36,20 @@ PyTorch 2.8/AIMDO TCC DynamicVRAM 试验没有进入正式环境，其候选 Pyt
 - 新旧 Director 合同分别通过能力检测。
 - 当前 Director 的 `core_sampling`、一采执行器和 Refine 执行器别名均可安装同一个阶段桥并完整恢复。
 - 普通 MODEL 透传、Ray 代理不回退、双 rank 结果一致、NaN/Inf 拦截、外接 SIGMAS、shift 开关、多段复用和清理均有回归覆盖。
+- 首轮实机验收发现官方 MiniMax AV latent 的 `samples` 是 ComfyUI `NestedTensor`，不是普通 `torch.Tensor`；已增加真实容器回归测试并修复类型门禁。
+- 自动化验收：全量 `701 passed`、Director 专项 `91 passed`，实机补丁专项 `31 passed`。
 
-最终双卡实机工作流结果在完成部署后补记。
+## 双卡实机验收
+
+- 兼容代码提交：`47c5ee0`；最终部署副本的 467 个受管理文件通过 SHA-256 与来源提交校验。
+- 工作流：`MMH3Director.json` 的有效单段配置，56 帧、864×480、24 fps、约 2.33 秒；为了兼容性冒烟验收将采样临时覆盖为 1 步，未修改原工作流文件。
+- 新版阶段桥成功接管，同一次操作由 rank 0/1 两个 worker 完成；没有退回主进程 GPU0。
+- 远程采样 48.55 秒；模型转入 GPU 约 2.03 秒；完整队列 157.26 秒。
+- 通信：200 次 all-to-all、479 次 all-gather；两卡利用率峰值均为 100%。
+- GPU 显存峰值：GPU0 10819 MiB、GPU1 9701 MiB。
+- 输出：H.264，864×480，24 fps，56 帧，时长 2.333 秒；Director 完成 VAE 解码和保存。
+- 任务结束后 ComfyUI/Ray 进程树已关闭，两卡均回到约 10 MiB、0% 利用率。
+- 完整结构化数据位于本地 `.local/artifacts/director-b8f721c-smoke/20260903-150416-director/benchmark.json`，不纳入源码提交。
 
 ## 边界
 
