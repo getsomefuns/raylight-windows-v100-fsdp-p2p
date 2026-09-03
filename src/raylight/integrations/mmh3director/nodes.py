@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ray
 
+from .bridge import install_mmh3director_sample_bridge
 from .metadata import validate_rank_metadata
 from .proxy import RayMMH3DirectorModelProxy
 
@@ -38,6 +39,7 @@ class RayMMH3DirectorModelAdapter:
         if metadata.model_family != "minimax_h3":
             raise ValueError(f"MMH3Director adapter requires MiniMax H3 workers; found {metadata.model_family}")
 
+        install_mmh3director_sample_bridge(require_director=True)
         return (
             RayMMH3DirectorModelProxy(
                 ray_actors,

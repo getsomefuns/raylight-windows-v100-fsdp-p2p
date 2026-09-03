@@ -122,9 +122,9 @@ Before TP2 encoding, the main process unloads current ComfyUI GPU models and acq
 | Explicit Ray sampler | `RayUNETLoader` plus XFuser sampler/guider/scheduler nodes | LTX and existing MiniMax H3 I2V/REF2VA graphs with decomposed controls | Fully retained; old JSON needs no migration |
 | Director MODEL proxy | `RayUNETLoader` → `Ray MODEL Adapter (MMH3Director)` → `MiniMaxH3Director` | One Director node for seed, steps, sampler, scheduler, shifts, duration, FPS, geometry, segments, and output | New in 1.10.0; enabled only when explicitly connected |
 
-The proxy carries no weights. It only marks which Ray workers must execute this MODEL's sampling request. After Director prepares conditioning, latent, noise, and sigmas, its normal `comfy.sample.sample()` call is intercepted for this exact proxy type, executed by both workers, and returned as latent so Director can continue VAE, audio, mux, and save. Director therefore does not sample locally and then sample again in Raylight.
+The proxy carries no weights. It only marks which Ray workers must execute this MODEL's sampling request. Legacy Director is intercepted at `comfy.sample.sample()`; current Director is intercepted at `sample_single_stage()` before `BasicGuider → SamplerCustomAdvanced`. Conditioning, latent, fixed seed, sampling controls, and optional SIGMAS are executed by both workers and returned as latent so Director can continue VAE, audio, mux, and save. Director therefore does not sample locally and then sample again in Raylight.
 
-Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is explicit and never silently falls back to GPU 0. MiniMaxH3Director source is unmodified; the compatibility target is 1.0.0 at commit `d655912`.
+Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is explicit and never silently falls back to GPU 0. MiniMaxH3Director source is unmodified; validated coordinates include legacy `d655912` and current mainline `b8f721c`.
 
 ### Boundaries
 
@@ -677,7 +677,7 @@ A playable file, non-black pixels, and absence of NaN/Inf are only basic gates. 
 - GGUF does not use this FSDP implementation.
 - Do not force the LTX 2.3 model globally to FP16: the validated experiment produced black video and audio NaN/Inf. Keep the default BF16/FP32 inference policy and the branch's V100 fallbacks.
 - Ray on Windows is Beta and has more startup/host-memory overhead than Linux + NCCL.
-- The Director adapter guarantees the standard MiniMaxH3Director 1.0.0 seam at commit `d655912`; an incompatible version fails explicitly.
+- The Director adapter retains the legacy MiniMaxH3Director `d655912` sample bridge and adds the `b8f721c` stage bridge. Other interface coordinates require new acceptance and incompatible versions fail explicitly.
 - Multi-segment reuse reduces model reloads but cannot eliminate main-process CLIP/VAE, intermediate-latent, RAM, or commit/pagefile pressure.
 - Remote Director sampling has no separate per-frame preview stream; Director/ComfyUI still owns preview and decode.
 - Models, GPU families, drivers, quantization layouts, and longer workflows outside the validation matrix need independent correctness, memory, and visual acceptance.

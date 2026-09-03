@@ -59,7 +59,10 @@ def test_adapter_reads_metadata_from_every_rank_and_returns_weightless_proxy():
         "generation_id": 11,
     }
 
-    with mock.patch.object(director_nodes.ray, "get", side_effect=lambda futures: futures):
+    with (
+        mock.patch.object(director_nodes.ray, "get", side_effect=lambda futures: futures),
+        mock.patch.object(director_nodes, "install_mmh3director_sample_bridge") as install_bridge,
+    ):
         (proxy,) = director_nodes.RayMMH3DirectorModelAdapter().adapt_model(ray_actors)
 
     assert isinstance(proxy, RayMMH3DirectorModelProxy)
@@ -67,6 +70,7 @@ def test_adapter_reads_metadata_from_every_rank_and_returns_weightless_proxy():
     assert proxy.session_id == "session-a"
     assert proxy.generation_id == 11
     assert [actor.get_mmh3director_proxy_metadata.calls for actor in actors] == [1, 1]
+    install_bridge.assert_called_once_with(require_director=True)
 
 
 @pytest.mark.parametrize(

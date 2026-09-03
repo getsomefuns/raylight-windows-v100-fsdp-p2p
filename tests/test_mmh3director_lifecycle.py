@@ -80,7 +80,10 @@ class _Actor:
 
 def _build_proxy(actors):
     ray_actors = {"workers": actors, "world_size": len(actors)}
-    with mock.patch.object(nodes.ray, "get", side_effect=lambda value: value):
+    with (
+        mock.patch.object(nodes.ray, "get", side_effect=lambda value: value),
+        mock.patch.object(nodes, "install_mmh3director_sample_bridge"),
+    ):
         return nodes.RayMMH3DirectorModelAdapter().adapt_model(ray_actors)[0]
 
 

@@ -2027,11 +2027,14 @@ class RayWorker:
                     metadata["sampling_settings"].get("audio_shift", 3.0),
                 )
             )
-            model_for_sampling = MiniMaxH3SigmaShift.execute(
-                self.model,
-                shift_video,
-                shift_audio,
-            )[0]
+            if bool(request.get("apply_shift", True)):
+                model_for_sampling = MiniMaxH3SigmaShift.execute(
+                    self.model,
+                    shift_video,
+                    shift_audio,
+                )[0]
+            else:
+                model_for_sampling = self.model.clone()
 
             merged_options = dict(getattr(model_for_sampling, "model_options", {}) or {})
             merged_transformer_options = dict(merged_options.get("transformer_options", {}) or {})

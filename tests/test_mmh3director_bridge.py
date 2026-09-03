@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import sys
+from types import ModuleType
 from unittest import mock
 
 import pytest
 import torch
 
 import comfy.sample
+import comfy.nested_tensor
 from raylight.integrations.mmh3director import bridge
 from raylight.integrations.mmh3director.metadata import MMH3DirectorModelMetadata
 from raylight.integrations.mmh3director.proxy import RayMMH3DirectorModelProxy
@@ -28,6 +31,8 @@ EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS = (
     "preview_every",
     "denoise",
     "phase_name",
+    "sigmas",
+    "apply_shift",
 )
 
 
@@ -49,6 +54,8 @@ def _supported_sample_single_stage(
     preview_every: int = 1,
     denoise: float = 1.0,
     phase_name: str = "sample",
+    sigmas=None,
+    apply_shift: bool = True,
 ):
     del (
         model,
@@ -67,6 +74,8 @@ def _supported_sample_single_stage(
         preview_every,
         denoise,
         phase_name,
+        sigmas,
+        apply_shift,
     )
 
 
@@ -90,7 +99,8 @@ class _SampleRemote:
 
     def remote(self, request):
         self.requests.append(request)
-        samples = request["latent_image"].clone() if self.samples is None else self.samples.clone()
+        source = request["latent_image"] if self.samples is None else self.samples
+        samples = source._copy() if getattr(source, "is_nested", False) else source.clone()
         return {
             "rank": self.rank,
             "operation_id": request["operation_id"],
@@ -184,7 +194,7 @@ def test_missing_director_parameter_reports_version_commit_and_field():
     def missing_scheduler(*, model, positive, negative, latent, seed, cfg, steps, sampler_name, **kwargs):
         del model, positive, negative, latent, seed, cfg, steps, sampler_name, kwargs
 
-    with pytest.raises(RuntimeError, match=r"scheduler.*1\.0\.0.*d655912"):
+    with pytest.raises(RuntimeError, match=r"scheduler.*b8f721c"):
         bridge.validate_mmh3director_sample_single_stage(missing_scheduler)
 
 
@@ -257,6 +267,161 @@ def test_proxy_request_preserves_director_inputs_and_uses_every_rank():
         assert request["disable_pbar"] is True
         assert request["seed"] == 12345
         assert "callback" not in request
+
+
+def test_new_director_stage_routes_proxy_before_basic_guider_and_preserves_latent_metadata():
+    proxy, actors = _proxy()
+    latent_samples = torch.zeros(1, 32, 2, 4, 4)
+    latent = {
+        "samples": latent_samples,
+        "noise_mask": torch.ones(1, 1, 2, 4, 4),
+        "batch_index": [7],
+        "director_marker": "preserved",
+    }
+    sigmas = torch.tensor([[1.0, 0.4, 0.0]])
+    prepared_noise = torch.full_like(latent_samples, 0.25)
+    phases = []
+
+    with (
+        mock.patch.object(bridge.comfy.sample, "prepare_noise", return_value=prepared_noise) as prepare_noise,
+        mock.patch.object(bridge.comfy.sample, "fix_empty_latent_channels", return_value=latent_samples),
+        mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
+        mock.patch.object(bridge, "_release_main_process_models_before_remote_sampling"),
+        mock.patch.object(bridge.ray, "get", side_effect=lambda futures: futures),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_device", return_value=torch.device("cpu")),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_dtype", return_value=torch.float32),
+    ):
+        output = bridge.dispatch_mmh3director_stage(
+            model=proxy,
+            positive=[["positive", {}]],
+            negative=[],
+            latent=latent,
+            seed=12345,
+            cfg=1.0,
+            steps=8,
+            sampler_name="res_multistep",
+            scheduler="simple",
+            shift_video=11.0,
+            shift_audio=2.5,
+            on_phase=lambda name, value: phases.append((name, value)),
+            on_step_preview=None,
+            preview_every=1,
+            denoise=0.8,
+            phase_name="sample",
+            sigmas=sigmas,
+            apply_shift=True,
+        )
+
+    prepare_noise.assert_called_once_with(latent_samples, 12345, [7])
+    assert output["director_marker"] == "preserved"
+    assert output["samples"].dtype == torch.float32
+    assert output is not latent
+    assert phases == [("sample", 0), ("sample", 1)]
+    for actor in actors:
+        request = actor.sample_mmh3director_request.requests[0]
+        assert request["noise"] is prepared_noise
+        assert torch.equal(request["sigmas"], torch.tensor([1.0, 0.4, 0.0]))
+        assert request["apply_shift"] is True
+        assert request["steps"] == 8
+        assert request["sampler_name"] == "res_multistep"
+        assert request["scheduler"] == "simple"
+        assert request["model_options"]["transformer_options"] == {
+            "minimax_h3_sigma_shift_video": 11.0,
+            "minimax_h3_sigma_shift_audio": 2.5,
+        }
+
+
+def test_new_director_stage_accepts_real_minimax_av_nested_latent():
+    proxy, actors = _proxy()
+    video = torch.zeros(1, 24, 2, 4, 4)
+    audio = torch.zeros(1, 32, 2, 10)
+    nested = comfy.nested_tensor.NestedTensor((video, audio))
+    latent = {"samples": nested, "director_marker": "preserved"}
+    prepared_noise = comfy.nested_tensor.NestedTensor((torch.ones_like(video), torch.ones_like(audio)))
+
+    with (
+        mock.patch.object(bridge.comfy.sample, "prepare_noise", return_value=prepared_noise),
+        mock.patch.object(bridge.comfy.sample, "fix_empty_latent_channels", return_value=nested),
+        mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
+        mock.patch.object(bridge, "_release_main_process_models_before_remote_sampling"),
+        mock.patch.object(bridge.ray, "get", side_effect=lambda futures: futures),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_device", return_value=torch.device("cpu")),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_dtype", return_value=torch.float32),
+    ):
+        output = bridge.dispatch_mmh3director_stage(
+            model=proxy,
+            positive=[["positive", {}]],
+            negative=[],
+            latent=latent,
+            seed=12345,
+            cfg=1.0,
+            steps=1,
+            sampler_name="res_multistep",
+            scheduler="simple",
+            apply_shift=False,
+        )
+
+    assert output["director_marker"] == "preserved"
+    assert getattr(output["samples"], "is_nested", False) is True
+    assert len(output["samples"].unbind()) == 2
+    for actor in actors:
+        assert actor.sample_mmh3director_request.requests[0]["latent_image"] is nested
+
+
+def test_new_director_stage_passes_normal_model_to_original_unchanged():
+    original = mock.Mock(return_value={"samples": "local"})
+    normal_model = object()
+    latent = {"samples": torch.zeros(1)}
+    kwargs = {
+        "model": normal_model,
+        "positive": ["positive"],
+        "negative": ["negative"],
+        "latent": latent,
+        "seed": 9,
+        "cfg": 1.0,
+        "steps": 4,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "sigmas": torch.tensor([1.0, 0.0]),
+        "apply_shift": False,
+    }
+
+    wrapper = bridge._make_mmh3director_stage_wrapper(original)
+
+    assert wrapper(**kwargs) == {"samples": "local"}
+    original.assert_called_once_with(**kwargs)
+
+
+def test_new_director_stage_installer_patches_only_exact_imported_aliases(isolated_sample_bridge):
+    original = _supported_sample_single_stage
+    core = ModuleType("ComfyUI_MiniMaxH3_Director.director.core_sampling")
+    core.__file__ = "C:/nodes/ComfyUI_MiniMaxH3_Director/director/core_sampling.py"
+    core.sample_single_stage = original
+    executor = ModuleType("ComfyUI_MiniMaxH3_Director.director.executor_core")
+    executor.__file__ = "C:/nodes/ComfyUI_MiniMaxH3_Director/director/executor_core.py"
+    executor.sample_single_stage = original
+    unrelated = ModuleType("unrelated.executor_core")
+    unrelated.__file__ = "C:/nodes/unrelated/executor_core.py"
+    unrelated.sample_single_stage = original
+
+    with mock.patch.dict(
+        sys.modules,
+        {
+            core.__name__: core,
+            executor.__name__: executor,
+            unrelated.__name__: unrelated,
+        },
+        clear=False,
+    ):
+        bridge.install_mmh3director_sample_bridge(require_director=True)
+
+        assert core.sample_single_stage is executor.sample_single_stage
+        assert core.sample_single_stage is not original
+        assert unrelated.sample_single_stage is original
+
+        bridge.uninstall_mmh3director_sample_bridge_for_test()
+        assert core.sample_single_stage is original
+        assert executor.sample_single_stage is original
 
 
 @pytest.mark.parametrize(

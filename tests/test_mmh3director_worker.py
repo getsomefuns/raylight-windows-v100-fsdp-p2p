@@ -29,6 +29,7 @@ class _ModelPatcher:
         self.model_options = {"transformer_options": {"existing": True}}
         self.sampling = SimpleNamespace(noise_scale=0.75)
         self.cleanup_calls = 0
+        self.clone_calls = 0
 
     def get_model_object(self, name):
         if name == "model_sampling":
@@ -39,6 +40,14 @@ class _ModelPatcher:
 
     def cleanup(self):
         self.cleanup_calls += 1
+
+    def clone(self):
+        self.clone_calls += 1
+        cloned = _ModelPatcher()
+        cloned.model_options = {
+            "transformer_options": dict(self.model_options.get("transformer_options", {}))
+        }
+        return cloned
 
 
 def _worker(is_fsdp=False):
@@ -76,6 +85,7 @@ def _request(operation_id="operation-a", samples=None):
         "force_full_denoise": True,
         "noise_mask": torch.ones(1, 1, 2, 4, 4),
         "sigmas": None,
+        "apply_shift": True,
         "disable_pbar": True,
         "seed": 12345,
         "model_options": {
@@ -180,6 +190,52 @@ def test_worker_uses_director_noise_applies_shifts_and_disables_callback():
     assert result["finite"] is True
     assert worker._mmh3director_active_operation is None
     assert worker.get_mmh3director_sample_status("operation-a")["state"] == "completed"
+
+
+def test_worker_passes_external_sigmas_to_comfy_sampler_unchanged():
+    worker = _worker()
+    request = _request(operation_id="operation-sigmas")
+    request["sigmas"] = torch.tensor([1.0, 0.7, 0.2, 0.0])
+    shifted_model = _ModelPatcher()
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            return_value=(shifted_model,),
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch("comfy.sample.sample", return_value=request["latent_image"]) as sample,
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+    ):
+        _unwrapped_sample(worker, request)
+
+    assert sample.call_args.kwargs["sigmas"] is request["sigmas"]
+
+
+def test_worker_skips_sigma_shift_when_current_director_disables_it():
+    worker = _worker()
+    request = _request(operation_id="operation-no-shift")
+    request["apply_shift"] = False
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+        ) as sigma_shift,
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch("comfy.sample.sample", return_value=request["latent_image"]) as sample,
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+    ):
+        _unwrapped_sample(worker, request)
+
+    sigma_shift.assert_not_called()
+    assert worker.model.clone_calls == 1
+    assert sample.call_args.args[0] is not worker.model
 
 
 def test_worker_rejects_callback_in_request_and_clears_failed_status():

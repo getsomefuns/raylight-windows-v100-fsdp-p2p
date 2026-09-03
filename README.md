@@ -139,9 +139,9 @@ TP2 编码开始前，主进程主动卸载当前 ComfyUI GPU 模型，并向两
 | 原显式 Ray sampler | `RayUNETLoader` + XFuser sampler/guider/scheduler 节点 | LTX、现有 MiniMax H3 I2V/REF2VA 工作流、精细拆分参数 | 完整保留；旧 JSON 无需迁移 |
 | Director MODEL 代理 | `RayUNETLoader` → `Ray MODEL Adapter (MMH3Director)` → `MiniMaxH3Director` | 用一个 Director 节点管理 seed、steps、sampler、scheduler、shift、时长、FPS、分辨率、分镜和输出 | 1.10.0 新增；显式选择才启用 |
 
-代理本身不保存模型权重。它只标记“这个 MODEL 的采样请求交给哪些 Ray Worker”，并只拦截自己的精确类型。Director 准备完 conditioning、latent、noise 和 sigmas 后照常调用 `comfy.sample.sample()`；桥把这一次调用交给两个 Worker，等待返回 latent，再由 Director 继续 VAE、音频、拼接和保存。因此不存在 Director 本地采样一次、Raylight 再采样一次的重复计算。
+代理本身不保存模型权重。它只标记“这个 MODEL 的采样请求交给哪些 Ray Worker”，并只拦截自己的精确类型。旧版 Director 在 `comfy.sample.sample()` 入口被桥接；新版 Director 在 `sample_single_stage()` 进入 `BasicGuider → SamplerCustomAdvanced` 之前被桥接。桥把 conditioning、latent、固定 seed、采样参数和可选 SIGMAS 交给两个 Worker，等待返回 latent，再由 Director 继续 VAE、音频、拼接和保存。因此不存在 Director 本地采样一次、Raylight 再采样一次的重复计算。
 
-普通 ComfyUI `MODEL` 完全透传。代理请求失败时明确报错，不会静默退回 GPU0。MiniMaxH3Director 源码未修改，兼容目标为 1.0.0、提交 `d655912`。
+普通 ComfyUI `MODEL` 完全透传。代理请求失败时明确报错，不会静默退回 GPU0。MiniMaxH3Director 源码未修改；兼容坐标包括旧版 `d655912` 和当前主线 `b8f721c`。
 
 ### 能力边界
 
@@ -916,7 +916,7 @@ O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒
 - LTX/LTXAV 应保持 ComfyUI 默认 BF16/FP32 推理范围；实测强制全局 FP16 会产生全黑视频和音频 NaN/Inf。
 - Text Encoder、Video/Audio VAE 和 Spatial/Temporal Upscaler 当前不做 FSDP 权重分片；仅受支持的 MiniMax H3 Text Encoder 可显式选择独立 TP2。
 - VAE 编解码与文本编码当前不会自动使用两张 GPU。
-- Director 适配器只保证 MiniMaxH3Director 1.0.0（提交 `d655912`）的标准采样接缝；不兼容版本会明确失败。
+- Director 适配器同时保留 MiniMaxH3Director `d655912` 的旧采样桥和 `b8f721c` 的阶段桥；其他接口坐标必须重新验收，不兼容版本会明确失败。
 - Director 多段复用减少模型重载，但不能消除主进程 CLIP/VAE、中间 latent、RAM 与 commit/pagefile 压力。
 - 远程 Director 采样没有独立逐帧预览流；预览与解码仍由 Director/ComfyUI 主进程处理。
 - FSDP 仍需要当前完整层、激活、P2P buffer、LoRA 和 CUDA 工作区的临时显存。
