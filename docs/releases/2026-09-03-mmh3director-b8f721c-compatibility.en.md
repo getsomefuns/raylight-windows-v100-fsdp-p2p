@@ -1,4 +1,14 @@
-# MiniMaxH3Director b8f721c compatibility update
+# 1.13.1: MiniMaxH3Director b8f721c compatibility update
+
+[简体中文](2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md)
+
+## Release positioning
+
+- Version: `1.13.1`
+- Baseline: `1.13.0` (O11)
+- Type: backward-compatible patch release; it does not open an O12 stage
+- Compatibility code commit: `47c5ee0`
+- Acceptance documentation commit: `311c14f`
 
 ## Why this update exists
 
@@ -41,7 +51,7 @@ The PyTorch 2.8/AIMDO TCC DynamicVRAM experiment never replaced the formal runti
 
 ## Dual-GPU hardware acceptance
 
-- Compatibility code commit: `47c5ee0`; all 467 files in the final deployment matched its source commit and SHA-256 manifest.
+- Compatibility code commit: `47c5ee0`; all 467 managed files in the acceptance deployment matched its source commit and SHA-256 manifest.
 - Workflow: the active single segment in `MMH3Director.json`, 56 frames at 864×480 and 24 fps (about 2.33 seconds). Sampling was temporarily overridden to one step for this compatibility smoke test; the source workflow was not modified.
 - The current stage bridge intercepted successfully and rank 0/1 workers completed the same operation with no main-process GPU0 fallback.
 - Remote sampling: 48.55 seconds; model-to-GPU preparation: about 2.03 seconds; complete queued run: 157.26 seconds.

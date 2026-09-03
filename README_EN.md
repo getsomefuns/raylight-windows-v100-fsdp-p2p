@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.13.1 is an O11 compatibility patch for MiniMaxH3Director. It retains the legacy `comfy.sample.sample()` bridge used by commit `d655912` while adapting the `sample_single_stage → BasicGuider/CFGGuider → SamplerCustomAdvanced` path in `b8f721c`. Official MiniMax AV `NestedTensor` inputs, external SIGMAS, `apply_shift`, and Director sampling controls are forwarded correctly to the dual-V100 workers, and remote failures never fall back silently to GPU0. The full automated suite reports `701 passed`; a current-Director hardware smoke test produced 56 frames at 864×480 and 24 fps with both GPUs reaching 100% utilization. Director, ComfyUI core, model precision, FSDP, and P2P data paths are unchanged. See the [1.13.1 English release note](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md).
+
 Version 1.13.0 (O11) fixes long multimodal Text Encoder OOMs caused by SDPA Math fallback and a dense square causal mask. The dedicated dual-GPU Loader now exposes independent `AUTO`, `XFORMERS_GQA`, `TORCH_EFFICIENT`, and `MATH_DEBUG` routing; AUTO selects xFormers GQA on the target V100 system. One 15-second video, seven distinct images, and a meaningful 7000-character prompt expand to 24,236 positions and pass in 112.94/112.55 seconds cold/warm. The follow-up Diffusion-lifetime work also completes the real 15-second, 365-frame, 0.4 MP, seven-image + video + audio REF2VA Turbo4 case: sampling falls from 1999.41 to 1456.12 seconds and sampling-window board peaks fall from 16215/16230 to 13005/12873 MiB. The 365-frame output decodes successfully. The 0.6 MP boundary remains unaccepted. See the [O11 English release note](docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md) and [Chinese test record](docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md).
 
 Version 1.12.0 (O10) adds an explicit MiniMax H3 Qwen3-VL-32B NVFP4 Text Encoder TP2 capacity path. GPU 0 performs vision preprocessing; the seven Linear operations in each of the 50 language layers are tensor-sharded and execute concurrently on both V100s, with CUDA P2P/NVLink SUM for partial results. Formal peaks are 9.25/9.23 GiB and GPU 0 falls 31.9% from the single-GPU peak. I2V, REF2VA, Director three/five-second, and five-segment outputs pass numerical and media quality gates. Text Encoder cold/warm medians are nevertheless 27.17/26.91 seconds versus 20.76/10.37 seconds for one V100, so this remains an explicit, default-off experimental capacity mode rather than a recommended performance mode. See the [O10 English release note](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md) and [test record](docs/testing/minimax-h3/DUAL_GPU_TEXT_ENCODER_TP2_2026-08.zh-CN.md).
@@ -31,7 +33,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.13.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.13.1; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -45,6 +47,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - O9 adaptive CUDA P2P chunking 1.11.0: [English](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md) / [中文](docs/releases/2026-08-o9-adaptive-p2p-chunking.zh-CN.md)
 - O10 dual-V100 Text Encoder TP2 1.12.0: [English](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md) / [中文](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md)
 - O11 efficient Text Encoder attention 1.13.0: [English](docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md) / [中文](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md)
+- MiniMaxH3Director `b8f721c` compatibility patch 1.13.1: [English](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md) / [中文](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 

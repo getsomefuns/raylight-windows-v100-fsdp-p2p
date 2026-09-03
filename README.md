@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.13.1 是 O11 上的 MiniMaxH3Director 兼容补丁。它同时保留旧版 `d655912` 的 `comfy.sample.sample()` 桥，并适配新版 `b8f721c` 改用的 `sample_single_stage → BasicGuider/CFGGuider → SamplerCustomAdvanced` 路径；官方 MiniMax AV `NestedTensor`、外接 SIGMAS、`apply_shift` 及 Director 的采样参数均可正确传给双 V100 worker，远程失败也不会静默退回 GPU0。全量自动化测试为 `701 passed`，新版 Director 双卡实机冒烟验证完成 56 帧、864×480、24 fps 输出，两张 GPU 均达到 100% 利用率。此次补丁没有修改 Director、ComfyUI 核心、模型精度、FSDP 或 P2P 数据路径。详见 [1.13.1 中文发布说明](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md)。
+
 1.13.0（O11）修复长多模态 Text Encoder 中 SDPA 回退数学注意力和平方遮罩导致的 OOM。专用双卡 Loader 新增独立的 `AUTO`、`XFORMERS_GQA`、`TORCH_EFFICIENT`、`MATH_DEBUG` 路由；目标 V100 上 AUTO 选择 xFormers GQA。15 秒视频、7 张不同图片和 7000 字符提示词展开为 24,236 序列并完整通过，冷/热为 112.94/112.55 秒。追加的 Diffusion 生命周期优化又让用户真实 15 秒、365 帧、0.4 MP、7图+1视频+1音频 REF2VA Turbo4 完整生成：采样由 1999.41 秒降至 1456.12 秒，采样期整卡峰值由 16215/16230 MiB 降至 13005/12873 MiB，输出365帧且可解码。0.6 MP 仍未验收通过。详见 [O11 中文发布说明](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md)。
 
 1.12.0（O10）新增显式可选的 MiniMax H3 Qwen3-VL-32B NVFP4 Text Encoder TP2 容量路径。GPU0 完成视觉塔预处理后，50 层语言主干的 7 个 Linear 在两张 V100 上按张量维度分片并同时计算，层内 partial 通过 CUDA P2P/NVLink SUM 合并。正式验证中每卡峰值为 9.25/9.23 GiB，相比单卡 GPU0 峰值下降 31.9%；普通 I2V、REF2VA、Director 3 秒/5 秒和五段视频均通过数值与媒体质量验收。但 Text Encoder 冷/热中位数 27.17/26.91 秒，慢于单卡 20.76/10.37 秒，因此该能力只定级为默认关闭的实验性容量模式，不是推荐性能模式。详见 [O10 中文发布说明](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/DUAL_GPU_TEXT_ENCODER_TP2_2026-08.zh-CN.md)。
@@ -41,7 +43,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.13.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.13.1；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -55,6 +57,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - O9 自适应 CUDA P2P 分块 1.11.0：[中文](docs/releases/2026-08-o9-adaptive-p2p-chunking.zh-CN.md) / [English](docs/releases/2026-08-o9-adaptive-p2p-chunking.en.md)
 - O10 双 V100 Text Encoder TP2 1.12.0：[中文](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md) / [English](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md)
 - O11 Text Encoder 高效注意力 1.13.0：[中文](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md) / [English](docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md)
+- MiniMaxH3Director `b8f721c` 兼容补丁 1.13.1：[中文](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md) / [English](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
