@@ -13,6 +13,7 @@ def _candidate_facts(**overrides):
         "cuda": "12.8",
         "arch_list": ["sm_70", "sm_75", "sm_80", "sm_86", "sm_90"],
         "device_capabilities": [[7, 0], [7, 0]],
+        "cuda_vmm_supported": [True, True],
         "dynamic_vram": True,
         "xformers_forward": True,
         "aimdo_devices": [0, 1],
@@ -50,6 +51,7 @@ def test_release_probe_rejects_missing_v100_and_gpu_subprobes():
     facts = _candidate_facts(
         arch_list=["sm_75", "sm_80"],
         device_capabilities=[[7, 0]],
+        cuda_vmm_supported=[False, False],
         xformers_forward=False,
         aimdo_devices=[0],
         aimdo_host_buffer_lib=False,
@@ -61,6 +63,7 @@ def test_release_probe_rejects_missing_v100_and_gpu_subprobes():
 
     assert "torch wheel does not contain sm_70" in errors
     assert "both devices must be compute capability 7.0" in errors
+    assert "CUDA virtual memory management is unavailable" in errors
     assert "xFormers V100 forward failed" in errors
     assert "AIMDO did not register both devices" in errors
     assert "AIMDO host buffer library is unavailable" in errors

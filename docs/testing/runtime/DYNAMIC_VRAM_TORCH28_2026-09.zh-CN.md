@@ -2,10 +2,10 @@
 
 ## 文档状态
 
-- 阶段：TCC 兼容候选已通过底层与 ComfyUI 启动门槛，真实工作流回归进行中
+- 阶段：TCC 设备发现补丁通过，但 V100 缺少 CUDA VMM，候选未推广
 - 设计：`docs/superpowers/specs/2026-09-03-dynamic-vram-runtime-upgrade-design.md`
 - 计划：`docs/superpowers/plans/2026-09-03-dynamic-vram-runtime-upgrade.md`
-- 当前结论：官方 comfy-aimdo 0.4.13 仍不支持 Windows TCC；本项目的受约束 `0.4.13+tcc1` 候选已在双 V100 上通过 NVML 压力监控、失败关闭、DynamicVRAM 和完整 ComfyUI 启动验证。正式 `Python310` 仍为 Torch 2.7/cu126，尚未推广候选。
+- 当前结论：`0.4.13+tcc1` 解决了 Windows TCC 设备发现和 NVML 压力监控，但两张 V100 均报告不支持 CUDA Virtual Memory Management。ComfyUI 虽打印 DynamicVRAM 已启用，首个真实 Text Encoder 在创建最小 VBAR 时即失败。正式 `Python310` 保持 Torch 2.7/cu126，候选不得推广。
 
 ## 测试验证目标
 
@@ -105,12 +105,14 @@
 | Torch / GPU | 2.8.0+cu128，含 `sm_70`；两张 V100 capability 7.0 |
 | xFormers / CUDA IPC | 两卡 FP16 forward 与父子进程 CUDA IPC 均通过 |
 | AIMDO | GPU0/GPU1 均注册；禁用 NVML 的反向探针按设计拒绝注册 |
-| DynamicVRAM | 运行时探针为 `true`；真实 ComfyUI 日志为 `DynamicVRAM support detected and enabled` |
+| CUDA VMM | GPU0/GPU1 的 `CU_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT_SUPPORTED` 均为 0 |
+| 最小 VBAR | 32 MiB `cuMemAddressReserve` 返回 CUDA 801 `operation not supported` |
+| DynamicVRAM | 仅初始化标志可置为 `true`；加入 VBAR 实际分配后为 `false`，不能用于模型 |
 | 节点启动 | Raylight 与 MiniMax H3 Director 导入成功；KJNodes 仅有不相关的可选 Triton VAE 警告 |
 | 聚焦自动测试 | 14 passed；另有 Windows pytest 临时目录清理警告，无测试失败 |
 
-原始候选 JSON 和启动日志保存在本机 `runtime-results`；正文不复制长日志。完整 P2P/FSDP、Ray worker、真实 I2V/REF2VA、质量、资源与回收门槛仍在执行中。
+真实非 Director I2V 使用完整 MiniMax H3 配置、448×448、39 帧、Turbo8、safe-FP16。工作流在 Text Encoder 创建 VBAR 时于 3.02 秒内失败，未进入 Ray worker、FSDP/P2P 或采样。因此没有生成视频，也没有性能或质量数据。原始候选 JSON 与该次失败日志保存在本机 `runtime-results`；正文不复制长日志。
 
 ### 阶段决定
 
-官方 wheel 的失败结论保持不变；`0.4.13+tcc1` 作为新的隔离候选继续 Gate D-F。只有真实双 worker、P2P/FSDP、I2V/REF2VA、质量、性能和资源回收全部通过后，才允许修改正式版本锁和推广到规范 `Python310`。当前没有推送 GitHub。
+`0.4.13+tcc1` 设备发现补丁本身有复现价值，但不足以让 V100 使用官方 DynamicVRAM 架构。Gate D 在真实模型负载前失败，后续 P2P/FSDP、I2V/REF2VA、性能与质量测试按计划停止。若继续，需要另立“V100 Unified Memory/非 VMM 后端”设计；它不是当前补丁的安全小改。正式版本锁、README 支持结论和 `Python310` 不变，当前没有推送 GitHub。

@@ -504,5 +504,6 @@ git commit -m "docs: record DynamicVRAM upgrade rollback"
 - 本地版本为 `0.4.13+tcc1`，WDDM 仍优先，TCC 仅在 NVML 压力设备成功映射时启用；
 - 禁用或缺失 NVML 时必须失败关闭；
 - wheel、DLL、补丁均进入 SHA-256 构建清单，安装脚本默认拒绝修改规范 `Python310`；
-- 候选已通过双 V100、sm_70、xFormers FP16、CUDA IPC、AIMDO 双卡注册、无 NVML 失败关闭和真实 ComfyUI DynamicVRAM 启动门槛；
-- Task 5/6 的双 worker、P2P/FSDP、真实 I2V/REF2VA、性能、质量和回收验证继续执行。完成前不修改正式版本锁，不推广候选，不处理新版 Director 入口适配。
+- 候选已通过双 V100、sm_70、xFormers FP16、CUDA IPC、AIMDO 双卡注册、无 NVML 失败关闭和真实 ComfyUI 启动；
+- 后续硬件探针确认两张 V100 的 CUDA VMM 能力均为 0，32 MiB 最小 VBAR 分配返回 CUDA 801；原“DynamicVRAM 已启用”只代表初始化标志，不能代表模型可用；
+- 真实 448×448、39 帧 I2V 在 Text Encoder 创建 VBAR 时失败，未进入双 worker、P2P/FSDP 或采样。当前候选按 Gate D 停止推广；正式版本锁与 `Python310` 不变。若继续，必须另立 Unified Memory/非 VMM 后端计划，不处理新版 Director 入口适配。

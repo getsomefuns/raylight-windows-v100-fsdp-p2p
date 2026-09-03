@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import importlib.metadata
 import json
 import os
@@ -43,6 +44,39 @@ def _probe_xformers_forward(torch_module) -> tuple[bool, str | None]:
         return True, None
     except Exception as error:
         return False, f"{type(error).__name__}: {error}"
+
+
+def _probe_cuda_vmm_support(torch_module) -> tuple[list[bool], str | None]:
+    """Read CU_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT_SUPPORTED."""
+    if sys.platform != "win32":
+        return [], "CUDA VMM probe currently supports Windows only"
+    try:
+        driver = ctypes.WinDLL("nvcuda.dll")
+        driver.cuInit.argtypes = [ctypes.c_uint]
+        driver.cuInit.restype = ctypes.c_int
+        driver.cuDeviceGet.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+        driver.cuDeviceGet.restype = ctypes.c_int
+        driver.cuDeviceGetAttribute.argtypes = [
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+        driver.cuDeviceGetAttribute.restype = ctypes.c_int
+        if driver.cuInit(0) != 0:
+            raise RuntimeError("cuInit failed")
+        supported = []
+        for index in range(torch_module.cuda.device_count()):
+            device = ctypes.c_int()
+            if driver.cuDeviceGet(ctypes.byref(device), index) != 0:
+                raise RuntimeError(f"cuDeviceGet failed for cuda:{index}")
+            value = ctypes.c_int()
+            result = driver.cuDeviceGetAttribute(ctypes.byref(value), 102, device.value)
+            if result != 0:
+                raise RuntimeError(f"cuDeviceGetAttribute(102) failed for cuda:{index}: {result}")
+            supported.append(bool(value.value))
+        return supported, None
+    except Exception as error:
+        return [], f"{type(error).__name__}: {error}"
 
 
 def _cuda_ipc_child(source, result_queue) -> None:
@@ -185,6 +219,12 @@ def _dynamic_vram_state(comfyui_root: Path | None) -> tuple[bool, str | None]:
             )
 
         active = activate_dynamic_vram(comfy_aimdo.control, load_modules)
+        if active:
+            model_management, _, _ = load_modules()
+            model_vbar = importlib.import_module("comfy_aimdo.model_vbar")
+            devices = model_management.get_all_torch_devices()
+            probe = model_vbar.ModelVBAR(32 * 1024**2, devices[0].index)
+            del probe
         return active, None
     except Exception as error:
         return False, f"{type(error).__name__}: {error}"
@@ -195,6 +235,7 @@ def collect_runtime_facts(comfyui_root: Path | None = None, *, run_gpu_probes: b
 
     capabilities = [list(torch.cuda.get_device_capability(index)) for index in range(torch.cuda.device_count())]
     devices = [torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())]
+    cuda_vmm_supported, cuda_vmm_error = _probe_cuda_vmm_support(torch)
     xformers_forward, xformers_error = (False, "GPU probes skipped")
     cuda_ipc_round_trip, cuda_ipc_error = (False, "GPU probes skipped")
     aimdo_devices: list[int] = []
@@ -222,6 +263,8 @@ def collect_runtime_facts(comfyui_root: Path | None = None, *, run_gpu_probes: b
         "device_count": int(torch.cuda.device_count()),
         "devices": devices,
         "device_capabilities": capabilities,
+        "cuda_vmm_supported": cuda_vmm_supported,
+        "cuda_vmm_error": cuda_vmm_error,
         "arch_list": list(torch.cuda.get_arch_list()),
         "xformers_forward": xformers_forward,
         "xformers_error": xformers_error,
@@ -246,6 +289,8 @@ def validate_runtime_facts(facts: dict[str, Any], require_dynamic_vram: bool) ->
         errors.append("torch wheel does not contain sm_70")
     if facts.get("device_capabilities") != [[7, 0], [7, 0]]:
         errors.append("both devices must be compute capability 7.0")
+    if facts.get("cuda_vmm_supported") != [True, True]:
+        errors.append("CUDA virtual memory management is unavailable")
     if facts.get("xformers_forward") is not True:
         errors.append("xFormers V100 forward failed")
     if facts.get("aimdo_devices") != [0, 1]:
