@@ -180,19 +180,19 @@ git commit -m "docs: record DynamicVRAM candidate wheels"
 - Consumes: offline wheel directory from Task 2.
 - Produces: canonical `E:\ComfyUI-py310\Python310` candidate plus byte-count/file-count verified rollback copy.
 
-- [ ] **Step 1: 保存原环境 freeze、关键包信息和目录统计**
+- [x] **Step 1: 保存原环境 freeze、关键包信息和目录统计**
 
 Record `pip freeze`, `pip check`, `torch.utils.collect_env`, `xformers.info`, file count, byte count, and timestamp into the backup manifest.
 
-- [ ] **Step 2: 将原 `Python310` 移到精确备份目录，再复制回规范路径作为候选**
+- [x] **Step 2: 将原 `Python310` 移到精确备份目录，再复制回规范路径作为候选**
 
 Use native PowerShell path checks before move/copy. Verify both resolved paths remain direct children of `E:\ComfyUI-py310`; do not use a wildcard or unresolved environment variable.
 
-- [ ] **Step 3: 核对候选副本与备份的文件数和总字节数一致**
+- [x] **Step 3: 核对候选副本与备份的文件数和总字节数一致**
 
 Expected: both counts match before any package installation.
 
-- [ ] **Step 4: 从离线 wheel 目录安装精确 Torch 栈**
+- [x] **Step 4: 从离线 wheel 目录安装精确 Torch 栈**
 
 Run:
 
@@ -203,13 +203,13 @@ E:\ComfyUI-py310\Python310\python.exe -m pip install --no-index `
   torchaudio==2.8.0+cu128 xformers==0.0.32.post2
 ```
 
-- [ ] **Step 5: 若 flash-attn 导入出现 Torch ABI 错误，则从候选环境移除**
+- [x] **Step 5: 若 flash-attn 导入出现 Torch ABI 错误，则从候选环境移除**
 
 Expected: Raylight 不依赖它；移除原因和结果写入测试记录。
 
-- [ ] **Step 6: 运行 `pip check`，只允许保留升级前已经记录的无关冲突**
+- [x] **Step 6: 运行 `pip check`，只允许保留升级前已经记录的无关冲突**
 
-- [ ] **Step 7: 运行 Task 1 探针的静态部分**
+- [x] **Step 7: 运行 Task 1 探针的静态部分**
 
 Expected: exact versions、CUDA 12.8、`sm_70` 和两张 capability 7.0 通过。
 
@@ -466,19 +466,19 @@ Do not push GitHub unless the user explicitly requests it.
 - Consumes: exact backup/candidate paths and failure evidence.
 - Produces: restored canonical PyTorch 2.7 runtime and a concise failure decision record.
 
-- [ ] **Step 1: 停止属于 `E:\ComfyUI-py310` 的 ComfyUI 和 Ray 进程并确认 GPU 空闲**
+- [x] **Step 1: 停止属于 `E:\ComfyUI-py310` 的 ComfyUI 和 Ray 进程并确认 GPU 空闲**
 
-- [ ] **Step 2: 解析并验证候选、备份、失败归档三个绝对路径均位于 `E:\ComfyUI-py310` 下**
+- [x] **Step 2: 解析并验证候选、备份、失败归档三个绝对路径均位于 `E:\ComfyUI-py310` 下**
 
-- [ ] **Step 3: 将失败候选移到 `runtime-failed`，把备份恢复为规范 `Python310`**
+- [x] **Step 3: 将失败候选移到 `runtime-failed`，把备份恢复为规范 `Python310`**
 
 No recursive deletion is allowed during rollback.
 
-- [ ] **Step 4: 用恢复环境运行版本、xFormers、CUDA、P2P 和 ComfyUI 启动冒烟测试**
+- [x] **Step 4: 用恢复环境运行版本、xFormers、CUDA、P2P 和 ComfyUI 启动冒烟测试**
 
 Expected: torch 2.7.0+cu126, xformers 0.0.30, `sm_70`, P2P pass, and only the known DynamicVRAM fallback warning remains.
 
-- [ ] **Step 5: 在专项记录中写明失败 Gate、根因证据、未推广理由和后续可行路径**
+- [x] **Step 5: 在专项记录中写明失败 Gate、根因证据、未推广理由和后续可行路径**
 
 - [ ] **Step 6: 提交失败结论，但不修改正式版本锁或 README 的已支持环境**
 

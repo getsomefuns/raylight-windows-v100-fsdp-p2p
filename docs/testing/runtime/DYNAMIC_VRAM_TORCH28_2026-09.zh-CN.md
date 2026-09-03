@@ -2,10 +2,10 @@
 
 ## 文档状态
 
-- 阶段：运行时升级执行中
+- 阶段：候选验证失败，已完成完整回退
 - 设计：`docs/superpowers/specs/2026-09-03-dynamic-vram-runtime-upgrade-design.md`
 - 计划：`docs/superpowers/plans/2026-09-03-dynamic-vram-runtime-upgrade.md`
-- 当前结论：PyTorch 2.7 基线已固化；尚未升级正式环境
+- 当前结论：Torch 2.8/cu128 的 V100、xFormers 与 CUDA IPC 基础能力通过，但官方 comfy-aimdo 0.4.13 无法在 Windows TCC 设备上初始化；候选未推广，规范运行时已恢复为 Torch 2.7/cu126
 
 ## 测试验证目标
 
@@ -61,4 +61,52 @@
 
 本地 wheel 缓存中的 `SHA256SUMS.json` 保存全部 14 个文件的完整字节数和哈希。二进制不提交仓库。
 
-环境迁移、AIMDO、P2P/FSDP、真实工作流和回退结论将在执行相应 Gate 后逐项追加。
+### 候选环境迁移与静态门禁
+
+原 `Python310` 已完整移入 `runtime-backups/Python310-torch2.7.0-cu126-20260903`，再复制回规范路径作为候选。安装前两份目录均为 104,584 个文件、8,592,682,973 字节，统计完全一致。回滚清单保存了 285 条 `pip freeze` 记录、升级前 `pip check`、Torch 环境信息和 xFormers 信息。
+
+| 项目 | Torch 2.8 候选结果 |
+|---|---|
+| PyTorch / CUDA runtime | 2.8.0+cu128 / 12.8 |
+| torchvision / torchaudio | 0.23.0+cu128 / 2.8.0+cu128 |
+| xFormers | 0.0.32.post2 |
+| Torch arch | 含 `sm_70` |
+| GPU | 两张 V100 均为 capability 7.0 |
+| xFormers FP16 forward | 两张 V100 真实前向通过，输出形状、dtype 与有限值检查通过 |
+| CUDA IPC round-trip | 父/子进程跨进程通过 |
+| flash-attn | 候选中未安装，无 Torch ABI 包需要移除 |
+| 新增依赖冲突 | Pillow 12.3.0 与现有 MoviePy 2.1.1、Streamlit 1.50.0 不兼容；其余五项是升级前已记录冲突 |
+
+虽然 xFormers wheel 的构建信息未列出 `sm_70`，其 CUTLASS 路径在两张 V100 上均完成了真实 FP16 attention forward，因此没有把构建列表当成失败结论。
+
+### 失败门禁：AIMDO / TCC
+
+独立探针和最小 CUDA 上下文探针均确认 `comfy_aimdo.control.init_devices()` 返回 `False`。启用 AIMDO 详细日志后得到直接根因：
+
+- AIMDO 的 CUDA hooks 能安装；
+- 在 TCC V100 上调用 `cuDeviceGetLuid` 返回 CUDA 801 `operation not supported`；
+- 随后 Windows WDDM adapter 初始化失败，AIMDO 清理 hooks 并拒绝注册设备；
+- 单卡、双卡以及 NVML pressure 开/关均不能改变结果。
+
+这不是 Torch 2.8、xFormers、GPU 可见性或探针缺少 CUDA context 导致。当前官方 Windows 实现把 WDDM/DXGI 预算接口作为初始化硬条件，而本项目为了 CUDA P2P/NVLink 保持两张 V100 为 TCC，两者直接冲突。
+
+官方仓库的 PR #68 曾验证把 WDDM 初始化改为非致命、退回 `cuMemGetInfo` 可以运行，但未被合并；维护者指出缺少 WDDM 预算信息可能导致共享显存溢出和性能退化。对本项目而言，TCC 没有 WDDM 共享显存回退，后续若继续研究，应以 comfy-aimdo 0.4.13 的 TCC 专用源码构建、显存压力准确性和真实 MiniMax H3 回归为新的独立计划，不能把未验收二进制直接作为正式依赖。
+
+### 回退验证
+
+失败候选完整保存在 `runtime-failed/Python310-torch2.8.0-cu128-20260903-120320`，原备份已恢复为规范 `Python310`。
+
+| 验证项 | 回退结果 |
+|---|---|
+| Torch 栈 | 2.7.0+cu126 / torchvision 0.22.0+cu126 / torchaudio 2.7.0+cu126 / xFormers 0.0.30 |
+| Torch arch / GPU | 含 `sm_70`；双 V100 正确识别 |
+| 依赖冲突 | 只剩升级前已记录的五项；Pillow 新增冲突消失 |
+| 自动测试 | 45 passed，12 subtests passed |
+| CUDA P2P 正确性 | 4 组 payload、双 rank 均为零 mismatch、最大误差 0 |
+| CUDA P2P 吞吐探针 | 110 MiB payload 单向约 59.6 GiB/s |
+| ComfyUI 启动 | 0.31.0 完整加载现有 custom nodes，并在临时端口成功启动 |
+| 资源回收 | 冒烟服务已关闭，无项目进程和 GPU 计算进程残留 |
+
+### 阶段决定
+
+Gate C 的 AIMDO 双设备注册失败，违反“任一 Gate A-F 失败即停止推广并恢复 Torch 2.7 备份”的既定规则。本候选没有进入 ComfyUI/Ray worker、FSDP 或真实工作流测试；这是硬门禁生效，不是遗漏。正式版本锁、README 和部署副本均未切换到 Torch 2.8，也未推送 GitHub。
