@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
+import os
 import queue
 from pathlib import Path
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Callable
 
 
 EXPECTED = {
@@ -15,6 +16,7 @@ EXPECTED = {
     "torchvision": "0.23.0+cu128",
     "torchaudio": "2.8.0+cu128",
     "xformers": "0.0.32.post2",
+    "comfy_aimdo": "0.4.13+tcc1",
     "cuda": "12.8",
 }
 
@@ -86,18 +88,21 @@ def _probe_cuda_ipc_round_trip(torch_module) -> tuple[bool, str | None]:
         return False, f"{type(error).__name__}: {error}"
 
 
-def _probe_aimdo_subprocess() -> tuple[list[int], bool, str | None]:
+def _probe_aimdo_subprocess(*, nvml_pressure: bool) -> tuple[list[int], bool, bool, str | None]:
     child = r'''
 import importlib
 import json
+import os
+import torch
 import comfy_aimdo.control
 
 try:
+    torch.cuda.init()
+    nvml_pressure = os.environ["RAYLIGHT_AIMDO_PROBE_NVML"] == "1"
     try:
-        comfy_aimdo.control.init(simple_vram_headroom=None)
+        comfy_aimdo.control.init(simple_vram_headroom=None, nvml_pressure=nvml_pressure)
     except TypeError:
         comfy_aimdo.control.init()
-    import torch
     devices = [torch.device(f"cuda:{index}") for index in range(torch.cuda.device_count())]
     try:
         initialized = comfy_aimdo.control.init_devices((device.index, 0) for device in devices)
@@ -117,6 +122,8 @@ except Exception as error:
         "error": f"{type(error).__name__}: {error}",
     }))
 '''
+    environment = dict(os.environ)
+    environment["RAYLIGHT_AIMDO_PROBE_NVML"] = "1" if nvml_pressure else "0"
     completed = subprocess.run(
         [sys.executable, "-c", child],
         check=False,
@@ -124,17 +131,39 @@ except Exception as error:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=environment,
     )
     try:
         payload = json.loads(completed.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as error:
         detail = completed.stderr.strip() or completed.stdout.strip() or str(error)
-        return [], False, f"AIMDO probe produced no JSON: {detail}"
+        return [], False, False, f"AIMDO probe produced no JSON: {detail}"
     return (
         [int(index) for index in payload.get("devices", [])],
         bool(payload.get("host_buffer_lib", False)),
+        bool(payload.get("initialized", False)),
         payload.get("error"),
     )
+
+
+def activate_dynamic_vram(
+    control: Any,
+    load_modules: Callable[[], tuple[Any, Any, Any]],
+    *,
+    vram_headroom_gib: float = 0,
+) -> bool:
+    """Run the same AIMDO activation order used by ComfyUI's main module."""
+    control.init(simple_vram_headroom=None, nvml_pressure=True)
+    model_management, memory_management, model_patcher = load_modules()
+    headroom_bytes = int(vram_headroom_gib * 1024**3)
+    initialized = control.init_devices(
+        (device.index, headroom_bytes) for device in model_management.get_all_torch_devices()
+    )
+    if not initialized:
+        return False
+    model_patcher.CoreModelPatcher = model_patcher.ModelPatcherDynamic
+    memory_management.aimdo_enabled = True
+    return True
 
 
 def _dynamic_vram_state(comfyui_root: Path | None) -> tuple[bool, str | None]:
@@ -146,12 +175,16 @@ def _dynamic_vram_state(comfyui_root: Path | None) -> tuple[bool, str | None]:
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     try:
-        import comfy.memory_management
-        import comfy.model_patcher
+        import comfy_aimdo.control
 
-        active = bool(getattr(comfy.memory_management, "aimdo_enabled", False)) and (
-            comfy.model_patcher.CoreModelPatcher is comfy.model_patcher.ModelPatcherDynamic
-        )
+        def load_modules() -> tuple[Any, Any, Any]:
+            return (
+                importlib.import_module("comfy.model_management"),
+                importlib.import_module("comfy.memory_management"),
+                importlib.import_module("comfy.model_patcher"),
+            )
+
+        active = activate_dynamic_vram(comfy_aimdo.control, load_modules)
         return active, None
     except Exception as error:
         return False, f"{type(error).__name__}: {error}"
@@ -166,11 +199,15 @@ def collect_runtime_facts(comfyui_root: Path | None = None, *, run_gpu_probes: b
     cuda_ipc_round_trip, cuda_ipc_error = (False, "GPU probes skipped")
     aimdo_devices: list[int] = []
     aimdo_host_buffer_lib = False
+    aimdo_nvml_fail_closed = False
     aimdo_error = "GPU probes skipped"
+    aimdo_no_nvml_error = "GPU probes skipped"
     if run_gpu_probes and torch.cuda.is_available():
         xformers_forward, xformers_error = _probe_xformers_forward(torch)
         cuda_ipc_round_trip, cuda_ipc_error = _probe_cuda_ipc_round_trip(torch)
-        aimdo_devices, aimdo_host_buffer_lib, aimdo_error = _probe_aimdo_subprocess()
+        aimdo_devices, aimdo_host_buffer_lib, _, aimdo_error = _probe_aimdo_subprocess(nvml_pressure=True)
+        _, _, no_nvml_initialized, aimdo_no_nvml_error = _probe_aimdo_subprocess(nvml_pressure=False)
+        aimdo_nvml_fail_closed = not no_nvml_initialized and aimdo_no_nvml_error is None
     dynamic_vram, dynamic_vram_error = _dynamic_vram_state(comfyui_root)
     return {
         "python": sys.version.split()[0],
@@ -191,6 +228,8 @@ def collect_runtime_facts(comfyui_root: Path | None = None, *, run_gpu_probes: b
         "aimdo_devices": aimdo_devices,
         "aimdo_host_buffer_lib": aimdo_host_buffer_lib,
         "aimdo_error": aimdo_error,
+        "aimdo_nvml_fail_closed": aimdo_nvml_fail_closed,
+        "aimdo_no_nvml_error": aimdo_no_nvml_error,
         "cuda_ipc_round_trip": cuda_ipc_round_trip,
         "cuda_ipc_error": cuda_ipc_error,
         "dynamic_vram": dynamic_vram,
@@ -213,6 +252,8 @@ def validate_runtime_facts(facts: dict[str, Any], require_dynamic_vram: bool) ->
         errors.append("AIMDO did not register both devices")
     if facts.get("aimdo_host_buffer_lib") is not True:
         errors.append("AIMDO host buffer library is unavailable")
+    if facts.get("aimdo_nvml_fail_closed") is not True:
+        errors.append("AIMDO did not fail closed without NVML pressure")
     if facts.get("cuda_ipc_round_trip") is not True:
         errors.append("CUDA IPC round-trip failed")
     if require_dynamic_vram and facts.get("dynamic_vram") is not True:

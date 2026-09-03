@@ -2,10 +2,10 @@
 
 ## 文档状态
 
-- 阶段：候选验证失败，已完成完整回退
+- 阶段：TCC 兼容候选已通过底层与 ComfyUI 启动门槛，真实工作流回归进行中
 - 设计：`docs/superpowers/specs/2026-09-03-dynamic-vram-runtime-upgrade-design.md`
 - 计划：`docs/superpowers/plans/2026-09-03-dynamic-vram-runtime-upgrade.md`
-- 当前结论：Torch 2.8/cu128 的 V100、xFormers 与 CUDA IPC 基础能力通过，但官方 comfy-aimdo 0.4.13 无法在 Windows TCC 设备上初始化；候选未推广，规范运行时已恢复为 Torch 2.7/cu126
+- 当前结论：官方 comfy-aimdo 0.4.13 仍不支持 Windows TCC；本项目的受约束 `0.4.13+tcc1` 候选已在双 V100 上通过 NVML 压力监控、失败关闭、DynamicVRAM 和完整 ComfyUI 启动验证。正式 `Python310` 仍为 Torch 2.7/cu126，尚未推广候选。
 
 ## 测试验证目标
 
@@ -79,7 +79,7 @@
 
 虽然 xFormers wheel 的构建信息未列出 `sm_70`，其 CUTLASS 路径在两张 V100 上均完成了真实 FP16 attention forward，因此没有把构建列表当成失败结论。
 
-### 失败门禁：AIMDO / TCC
+### 官方 0.4.13 的失败门禁：AIMDO / TCC
 
 独立探针和最小 CUDA 上下文探针均确认 `comfy_aimdo.control.init_devices()` 返回 `False`。启用 AIMDO 详细日志后得到直接根因：
 
@@ -90,23 +90,27 @@
 
 这不是 Torch 2.8、xFormers、GPU 可见性或探针缺少 CUDA context 导致。当前官方 Windows 实现把 WDDM/DXGI 预算接口作为初始化硬条件，而本项目为了 CUDA P2P/NVLink 保持两张 V100 为 TCC，两者直接冲突。
 
-官方仓库的 PR #68 曾验证把 WDDM 初始化改为非致命、退回 `cuMemGetInfo` 可以运行，但未被合并；维护者指出缺少 WDDM 预算信息可能导致共享显存溢出和性能退化。对本项目而言，TCC 没有 WDDM 共享显存回退，后续若继续研究，应以 comfy-aimdo 0.4.13 的 TCC 专用源码构建、显存压力准确性和真实 MiniMax H3 回归为新的独立计划，不能把未验收二进制直接作为正式依赖。
+官方仓库的 PR #68 曾验证把 WDDM 初始化改为非致命、退回 `cuMemGetInfo` 可以运行，但未被合并；维护者指出缺少 WDDM 预算信息可能导致共享显存溢出和性能退化。因此本项目没有采用无条件绕过，而是把“NVML 压力设备已成功映射”作为 TCC 注册的硬条件。
 
-### 回退验证
+### `0.4.13+tcc1` 构建与候选验证
 
-失败候选完整保存在 `runtime-failed/Python310-torch2.8.0-cu128-20260903-120320`，原备份已恢复为规范 `Python310`。
+早期失败候选已原地迁移为 `runtime-candidates/Python310-torch2.8.0-cu128-aimdo-tcc1`，不再使用语义错误的 `runtime-failed` 目录。正式 Torch 2.7 环境未改变。
 
-| 验证项 | 回退结果 |
+| 验证项 | TCC 兼容候选结果 |
 |---|---|
-| Torch 栈 | 2.7.0+cu126 / torchvision 0.22.0+cu126 / torchaudio 2.7.0+cu126 / xFormers 0.0.30 |
-| Torch arch / GPU | 含 `sm_70`；双 V100 正确识别 |
-| 依赖冲突 | 只剩升级前已记录的五项；Pillow 新增冲突消失 |
-| 自动测试 | 45 passed，12 subtests passed |
-| CUDA P2P 正确性 | 4 组 payload、双 rank 均为零 mismatch、最大误差 0 |
-| CUDA P2P 吞吐探针 | 110 MiB payload 单向约 59.6 GiB/s |
-| ComfyUI 启动 | 0.31.0 完整加载现有 custom nodes，并在临时端口成功启动 |
-| 资源回收 | 冒烟服务已关闭，无项目进程和 GPU 计算进程残留 |
+| 本地包 | `comfy-aimdo 0.4.13+tcc1`；满足当前 ComfyUI 的 `==0.4.13` 版本语义 |
+| 固定来源 | comfy-aimdo `3f4259a...`；Detours `e4bfd6b...`；Windows SDK NuGet 10.0.26100.1 |
+| 构建产物 | wheel、DLL、补丁均有 SHA-256，并由 `BUILD-MANIFEST.json` 复验 |
+| 后端策略 | WDDM 优先；WDDM 不可用时仅允许已成功映射的 NVML；无 NVML 必须失败关闭 |
+| Torch / GPU | 2.8.0+cu128，含 `sm_70`；两张 V100 capability 7.0 |
+| xFormers / CUDA IPC | 两卡 FP16 forward 与父子进程 CUDA IPC 均通过 |
+| AIMDO | GPU0/GPU1 均注册；禁用 NVML 的反向探针按设计拒绝注册 |
+| DynamicVRAM | 运行时探针为 `true`；真实 ComfyUI 日志为 `DynamicVRAM support detected and enabled` |
+| 节点启动 | Raylight 与 MiniMax H3 Director 导入成功；KJNodes 仅有不相关的可选 Triton VAE 警告 |
+| 聚焦自动测试 | 14 passed；另有 Windows pytest 临时目录清理警告，无测试失败 |
+
+原始候选 JSON 和启动日志保存在本机 `runtime-results`；正文不复制长日志。完整 P2P/FSDP、Ray worker、真实 I2V/REF2VA、质量、资源与回收门槛仍在执行中。
 
 ### 阶段决定
 
-Gate C 的 AIMDO 双设备注册失败，违反“任一 Gate A-F 失败即停止推广并恢复 Torch 2.7 备份”的既定规则。本候选没有进入 ComfyUI/Ray worker、FSDP 或真实工作流测试；这是硬门禁生效，不是遗漏。正式版本锁、README 和部署副本均未切换到 Torch 2.8，也未推送 GitHub。
+官方 wheel 的失败结论保持不变；`0.4.13+tcc1` 作为新的隔离候选继续 Gate D-F。只有真实双 worker、P2P/FSDP、I2V/REF2VA、质量、性能和资源回收全部通过后，才允许修改正式版本锁和推广到规范 `Python310`。当前没有推送 GitHub。

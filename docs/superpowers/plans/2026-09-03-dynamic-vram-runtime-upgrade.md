@@ -495,3 +495,14 @@ git commit -m "docs: record DynamicVRAM upgrade rollback"
 - [ ] 旧运行时备份仍存在且 manifest 完整。
 - [ ] GitHub 未在没有明确授权时推送。
 - [ ] 新版 MiniMaxH3Director 适配仍作为下一项独立工作，没有混入本次验证。
+
+## 2026-09-03 TCC 兼容候选续行
+
+官方 0.4.13 wheel 的失败与回退记录仍然有效，但不再是本计划的最终终止点。经用户确认后，本计划增加受约束的源码构建分支：
+
+- 固定 comfy-aimdo v0.4.13、Detours v4.0.1 和 Windows SDK NuGet 10.0.26100.1；
+- 本地版本为 `0.4.13+tcc1`，WDDM 仍优先，TCC 仅在 NVML 压力设备成功映射时启用；
+- 禁用或缺失 NVML 时必须失败关闭；
+- wheel、DLL、补丁均进入 SHA-256 构建清单，安装脚本默认拒绝修改规范 `Python310`；
+- 候选已通过双 V100、sm_70、xFormers FP16、CUDA IPC、AIMDO 双卡注册、无 NVML 失败关闭和真实 ComfyUI DynamicVRAM 启动门槛；
+- Task 5/6 的双 worker、P2P/FSDP、真实 I2V/REF2VA、性能、质量和回收验证继续执行。完成前不修改正式版本锁，不推广候选，不处理新版 Director 入口适配。
