@@ -480,7 +480,7 @@ Expected: torch 2.7.0+cu126, xformers 0.0.30, `sm_70`, P2P pass, and only the kn
 
 - [x] **Step 5: 在专项记录中写明失败 Gate、根因证据、未推广理由和后续可行路径**
 
-- [ ] **Step 6: 提交失败结论，但不修改正式版本锁或 README 的已支持环境**
+- [x] **Step 6: 提交失败结论，但不修改正式版本锁或 README 的已支持环境**
 
 ```powershell
 git add docs/testing/runtime/DYNAMIC_VRAM_TORCH28_2026-09.zh-CN.md
