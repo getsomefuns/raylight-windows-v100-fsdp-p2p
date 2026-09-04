@@ -144,6 +144,51 @@ def test_tp2_proxy_lease_context_uses_same_workers_and_unique_operation_ids() ->
     assert empty.call_count == 2
 
 
+def test_cached_tp2_proxy_uses_recycled_workers_for_next_encode() -> None:
+    payload, old_ray_actors, old_workers = _payload()
+    new_workers = [mock.Mock(name=f"new-worker-{rank}") for rank in range(2)]
+    new_ray_actors = {"workers": new_workers, "world_size": 2}
+    observed = []
+
+    def resolve_current_actors(actor_payload):
+        current = actor_payload[0]
+        return current, current["workers"], {"global_world_size": 2}
+
+    @contextmanager
+    def lease(actors, operation_id, owner):
+        observed.append((actors, operation_id, owner))
+        yield tuple(actors["workers"])
+
+    with (
+        mock.patch.object(
+            tp_nodes, "ensure_fresh_actors", side_effect=resolve_current_actors
+        ) as ensure,
+        mock.patch.object(
+            tp_nodes.folder_paths,
+            "get_full_path_or_raise",
+            return_value="E:/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        ),
+        mock.patch.object(tp_nodes.folder_paths, "get_folder_paths", return_value=[]),
+        mock.patch.object(tp_nodes, "MiniMaxH3Tokenizer", return_value=object()),
+        mock.patch.object(tp_nodes, "external_text_encoder_gpu_lease", side_effect=lease),
+        mock.patch.object(tp_nodes.comfy.model_management, "unload_all_models"),
+        mock.patch.object(tp_nodes.comfy.model_management, "soft_empty_cache"),
+    ):
+        clip, _ = tp_nodes.RayMiniMaxH3DualGPUCLIPLoader().load_clip(
+            "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "tp2", payload
+        )
+        payload[0] = new_ray_actors
+
+        with clip._execution_context_factory():
+            pass
+
+    assert ensure.call_args_list == [mock.call(payload), mock.call(payload)]
+    assert observed[0][0] is new_ray_actors
+    assert observed[0][0] is not old_ray_actors
+    assert observed[0][0]["workers"] == new_workers
+    assert observed[0][0]["workers"] != old_workers
+
+
 @pytest.mark.parametrize("worker_count", [0, 1, 3])
 def test_tp2_mode_fails_closed_unless_exactly_two_workers(worker_count: int) -> None:
     payload, ray_actors, workers = _payload(worker_count)

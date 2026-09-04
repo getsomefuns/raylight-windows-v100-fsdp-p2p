@@ -1110,7 +1110,10 @@ class RayUNETLoader:
             if transition == "reuse":
                 return (ray_actors,)
             if transition == "recycle":
-                print("[Raylight] Diffusion checkpoint changed; recycling Ray workers before loading")
+                print(
+                    "[Raylight] Diffusion model, LoRA, or loading options changed; "
+                    "recycling Ray workers before loading"
+                )
                 ray_actors, gpu_actors = _recycle_ray_actor_payload(ray_actors_init)
                 ray.get([actor.set_lora_list.remote(lora) for actor in gpu_actors])
                 ray.get(

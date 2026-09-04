@@ -117,6 +117,16 @@ class RayMiniMaxH3DualGPUCLIPLoader:
 
         @contextmanager
         def execution_context():
+            current_ray_actors, current_workers, current_parallel_dict = ensure_fresh_actors(
+                ray_actors_init
+            )
+            current_world_size = int(
+                current_parallel_dict.get("global_world_size", len(current_workers))
+            )
+            if len(current_workers) != 2 or current_world_size != 2:
+                raise RuntimeError(
+                    "MiniMax H3 TP2 lost its two-worker Ray topology before encoding"
+                )
             operation_id = f"minimax-h3-tp2-{uuid.uuid4().hex}"
             # MiniMax reference preparation may have left the ~5 GiB Video VAE
             # resident on GPU0.  TP2 needs both V100s exclusively while its
@@ -124,7 +134,7 @@ class RayMiniMaxH3DualGPUCLIPLoader:
             comfy.model_management.unload_all_models()
             comfy.model_management.soft_empty_cache()
             with external_text_encoder_gpu_lease(
-                ray_actors, operation_id, "MiniMaxH3TP2"
+                current_ray_actors, operation_id, "MiniMaxH3TP2"
             ):
                 yield
 
