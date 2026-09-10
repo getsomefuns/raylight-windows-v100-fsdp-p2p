@@ -58,12 +58,12 @@ profiles = {
         "xformers": "0.0.30",
     },
     (3, 12): {
-        "name": "python312-torch28",
+        "name": "python312-torch212",
         "python": (3, 12, 10),
-        "torch": "2.8.0+cu126",
-        "torchvision": "0.23.0+cu126",
-        "torchaudio": "2.8.0+cu126",
-        "xformers": "0.0.32.post2",
+        "torch": "2.12.0+cu126",
+        "torchvision": "0.27.0+cu126",
+        "torchaudio": "2.11.0+cu126",
+        "xformers": "0.0.35",
     },
 }
 profile = profiles.get(sys.version_info[:2])

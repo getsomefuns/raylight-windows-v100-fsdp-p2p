@@ -6,11 +6,42 @@ import os
 import socket
 import sys
 from datetime import timedelta
+from functools import wraps
 
 import torch.distributed as dist
 
 
 BACKEND_NAME = "raylight_windows_gloo"
+
+
+def install_windows_gloo_new_group_router(dist_module=dist):
+    """Route xFuser's hard-coded ``gloo`` CPU groups to our Windows backend.
+
+    PyTorch 2.10+ restored the libuv Gloo transport on Windows, but a plain
+    ``new_group(..., backend="gloo")`` still creates a second implicit Gloo
+    device.  xFuser does exactly that for every coordinator's CPU group.  The
+    Raylight backend already owns the explicit, validated Windows device, so
+    reuse it for those groups as well.
+    """
+    current = dist_module.new_group
+    original = getattr(current, "_raylight_original_new_group", None)
+    if original is not None:
+        return original
+    original = current
+
+    @wraps(original)
+    def routed_new_group(*args, **kwargs):
+        args = list(args)
+        if len(args) >= 3 and str(args[2]).lower() == "gloo":
+            args[2] = BACKEND_NAME
+        if str(kwargs.get("backend", "")).lower() == "gloo":
+            kwargs = dict(kwargs)
+            kwargs["backend"] = BACKEND_NAME
+        return original(*args, **kwargs)
+
+    routed_new_group._raylight_original_new_group = original
+    dist_module.new_group = routed_new_group
+    return original
 
 
 def is_windows() -> bool:

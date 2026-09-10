@@ -502,6 +502,35 @@ class WindowsP2PTests(unittest.TestCase):
             module.WindowsSpinControl._offset(0, module.WindowsSpinControl._SLOT_COUNT + 1),
             module.WindowsSpinControl._offset(0, 1),
         )
+        self.assertNotEqual(
+            module.WindowsSpinControl._offset(0, 1),
+            module.WindowsSpinControl._offset(
+                0,
+                1,
+                channel=module.WindowsSpinControl._CONSUMED_CHANNEL,
+            ),
+        )
+
+    def test_endpoint_waits_for_peer_consumed_publication_before_buffer_reuse(self):
+        module = load_module()
+        endpoint = module.CudaP2PAllToAll.__new__(module.CudaP2PAllToAll)
+        endpoint.rank = 0
+        endpoint.timeout_seconds = 7
+        endpoint.control = mock.Mock()
+        endpoint._stream = mock.Mock()
+        endpoint._peer_consumed_event = object()
+        endpoint._buffer_operation_id = 41
+
+        endpoint._wait_for_peer_buffer_consumption()
+
+        endpoint.control.wait_consumed.assert_called_once_with(
+            1,
+            41,
+            timeout_seconds=7,
+        )
+        endpoint._stream.wait_event.assert_called_once_with(
+            endpoint._peer_consumed_event
+        )
 
     def test_spin_control_rejects_non_positive_operation_ids(self):
         module = load_module()

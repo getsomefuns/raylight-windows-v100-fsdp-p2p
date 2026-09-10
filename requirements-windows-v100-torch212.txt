@@ -1,10 +1,11 @@
 --extra-index-url https://download.pytorch.org/whl/cu126
 
-# Python 3.12 / PyTorch 2.8 candidate runtime for the Windows dual-V100 path.
-torch==2.8.0+cu126
-torchvision==0.23.0+cu126
-torchaudio==2.8.0+cu126
-xformers==0.0.32.post2
+# Python 3.12 / PyTorch 2.12 runtime for the Windows dual-V100 path.
+# PyTorch 2.8/2.9 Windows wheels cannot create a Gloo transport device.
+torch==2.12.0+cu126
+torchvision==0.27.0+cu126
+torchaudio==2.11.0+cu126
+xformers==0.0.35
 ray==2.57.0
 xfuser==0.4.5
 yunchang==0.6.4

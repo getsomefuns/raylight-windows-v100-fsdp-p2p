@@ -21,13 +21,19 @@ class XFuserActor:
     def run(self, rank: int, port: int, raylight_src: str):
         import sys
 
+        def mark(stage: str):
+            print(f"[XFUSER_PROBE] rank={rank} stage={stage}", flush=True)
+
         sys.path.insert(0, raylight_src)
+
+        mark("imports_begin")
 
         import torch
         import torch.distributed as dist
         from raylight.distributed_worker.windows_gloo import (
             BACKEND_NAME,
             init_windows_gloo_process_group,
+            install_windows_gloo_new_group_router,
         )
         from xfuser.core.distributed import (
             get_sp_group,
@@ -35,6 +41,9 @@ class XFuserActor:
             initialize_model_parallel,
         )
 
+        mark("imports_ok")
+
+        mark("default_pg_begin")
         gloo_host = init_windows_gloo_process_group(
             rank=rank,
             world_size=2,
@@ -42,12 +51,30 @@ class XFuserActor:
             port=port,
             timeout=timedelta(seconds=60),
         )
+        mark("default_pg_ok")
         try:
+            original_new_group = dist.new_group
+            group_counter = 0
+
+            def traced_new_group(*args, **kwargs):
+                nonlocal group_counter
+                group_counter += 1
+                label = f"new_group_{group_counter}_{kwargs.get('backend', 'default')}"
+                mark(label + "_begin")
+                group = original_new_group(*args, **kwargs)
+                mark(label + "_ok")
+                return group
+
+            dist.new_group = traced_new_group
+            install_windows_gloo_new_group_router(dist)
+            mark("xfuser_environment_begin")
             init_distributed_environment(
                 rank=rank,
                 world_size=2,
                 backend=BACKEND_NAME,
             )
+            mark("xfuser_environment_ok")
+            mark("model_parallel_begin")
             initialize_model_parallel(
                 data_parallel_degree=1,
                 sequence_parallel_degree=2,
@@ -57,10 +84,13 @@ class XFuserActor:
                 pipeline_parallel_degree=1,
                 backend=BACKEND_NAME,
             )
+            mark("model_parallel_ok")
             torch.cuda.set_device(0)
             source = torch.arange(8, device="cuda:0", dtype=torch.float32) + rank * 100
             output = torch.empty_like(source)
+            mark("all_to_all_begin")
             dist.all_to_all_single(output, source, group=get_sp_group().device_group)
+            mark("all_to_all_ok")
             return {
                 "rank": rank,
                 "gpu": torch.cuda.get_device_name(0),

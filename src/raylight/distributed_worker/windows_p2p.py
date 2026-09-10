@@ -391,7 +391,7 @@ class CudaP2PAllToAll:
         self._peer_buffer = None
         self._peer_ready_event = None
         self._peer_consumed_event = None
-        self._buffer_has_previous_exchange = False
+        self._buffer_operation_id = None
 
     def local_handles(self):
         # Keep the cross-process metadata pickle free of dynamically imported
@@ -434,6 +434,23 @@ class CudaP2PAllToAll:
         self._poisoned_reason = f"{type(exc).__name__}: {exc}"
         raise P2PGroupError(self._poisoned_reason) from exc
 
+    def _wait_for_peer_buffer_consumption(self):
+        """Wait until the peer has recorded consumption of our prior buffer.
+
+        CUDA IPC events are reusable.  The CPU handshake is required before
+        waiting on the event so a fast rank cannot observe the event's older
+        generation and overwrite the shared send buffer while the peer still
+        copies the previous chunk.
+        """
+        if self._buffer_operation_id is None:
+            return
+        self.control.wait_consumed(
+            1 - self.rank,
+            self._buffer_operation_id,
+            timeout_seconds=self.timeout_seconds,
+        )
+        self._stream.wait_event(self._peer_consumed_event)
+
     def _exchange_collective_geometry(self, total_bytes, collective_name):
         operation_id = self._operation_id
         self._operation_id += 1
@@ -465,8 +482,7 @@ class CudaP2PAllToAll:
         chunk_bytes = chunk_end - chunk_start
 
         with torch.cuda.stream(self._stream):
-            if self._buffer_has_previous_exchange:
-                self._stream.wait_event(self._peer_consumed_event)
+            self._wait_for_peer_buffer_consumption()
             send_start, send_end = all_to_all_chunk_send_slice(
                 self.rank,
                 total_bytes,
@@ -509,7 +525,8 @@ class CudaP2PAllToAll:
                     non_blocking=True,
                 )
             self._consumed_event.record(self._stream)
-        self._buffer_has_previous_exchange = True
+        self.control.publish_consumed(self.rank, operation_id)
+        self._buffer_operation_id = operation_id
         return operation_id, wait_ns
 
     def all_to_all_single(self, output, input_tensor):
@@ -616,8 +633,7 @@ class CudaP2PAllToAll:
         chunk_bytes = chunk_end - chunk_start
 
         with torch.cuda.stream(self._stream):
-            if self._buffer_has_previous_exchange:
-                self._stream.wait_event(self._peer_consumed_event)
+            self._wait_for_peer_buffer_consumption()
             self._send_buffer[:chunk_bytes].copy_(
                 input_bytes[chunk_start:chunk_end],
                 non_blocking=True,
@@ -651,7 +667,8 @@ class CudaP2PAllToAll:
                     source[src_start:src_end], non_blocking=True
                 )
             self._consumed_event.record(self._stream)
-        self._buffer_has_previous_exchange = True
+        self.control.publish_consumed(self.rank, operation_id)
+        self._buffer_operation_id = operation_id
         return operation_id
 
     def all_gather_into_tensor(self, output, input_tensor, async_op=False):
@@ -807,7 +824,7 @@ class WindowsNamedControl:
         self.rank = rank
         self._mapping = mmap.mmap(
             -1,
-            self._SLOT.size * 2,
+            self._SLOT.size * 4,
             tagname=f"Local\\RaylightP2P_{safe_name}_metadata",
             access=mmap.ACCESS_WRITE,
         )
@@ -827,6 +844,12 @@ class WindowsNamedControl:
         self._kernel32.CloseHandle.restype = wintypes.BOOL
         self._ready_events = tuple(
             self._create_event(f"Local\\RaylightP2P_{safe_name}_ready_{event_rank}")
+            for event_rank in range(2)
+        )
+        self._consumed_events = tuple(
+            self._create_event(
+                f"Local\\RaylightP2P_{safe_name}_consumed_{event_rank}"
+            )
             for event_rank in range(2)
         )
         self._closed = False
@@ -863,11 +886,48 @@ class WindowsNamedControl:
             )
         return total_bytes
 
+    def publish_consumed(self, rank, operation_id):
+        if rank != self.rank:
+            raise ValueError(f"control rank mismatch: endpoint={rank}, control={self.rank}")
+        offset = (2 + rank) * self._SLOT.size
+        self._SLOT.pack_into(self._mapping, offset, operation_id, 1)
+        if not self._kernel32.SetEvent(self._consumed_events[rank]):
+            raise OSError(
+                ctypes.get_last_error(),
+                f"SetEvent failed for consumed rank {rank}",
+            )
+
+    def wait_consumed(self, rank, operation_id, timeout_seconds):
+        timeout_ms = max(0, min(round(timeout_seconds * 1000), 0xFFFFFFFE))
+        result = self._kernel32.WaitForSingleObject(
+            self._consumed_events[rank], timeout_ms
+        )
+        if result == self._WAIT_TIMEOUT:
+            raise TimeoutError(
+                f"timed out waiting for rank {rank} to consume operation "
+                f"{operation_id} after {timeout_seconds}s"
+            )
+        if result != self._WAIT_OBJECT_0:
+            raise OSError(
+                ctypes.get_last_error(),
+                f"WaitForSingleObject consumed failed with status {result}",
+            )
+        peer_operation, _ = self._SLOT.unpack_from(
+            self._mapping,
+            (2 + rank) * self._SLOT.size,
+        )
+        if peer_operation != operation_id:
+            raise ValueError(
+                "collective consumed operation mismatch: "
+                f"local={operation_id}, peer={peer_operation}"
+            )
+        return True
+
     def close(self):
         if self._closed:
             return
         self._closed = True
-        for handle in self._ready_events:
+        for handle in self._ready_events + self._consumed_events:
             self._kernel32.CloseHandle(handle)
         self._mapping.close()
 
@@ -877,6 +937,9 @@ class WindowsSpinControl:
 
     _ENTRY = struct.Struct("<qq")
     _SLOT_COUNT = 131_072
+    _READY_CHANNEL = 0
+    _CONSUMED_CHANNEL = 1
+    _CHANNEL_COUNT = 2
 
     def __init__(self, group_name: str, rank: int):
         if sys.platform != "win32":
@@ -889,7 +952,7 @@ class WindowsSpinControl:
         self.rank = rank
         self._mapping = mmap.mmap(
             -1,
-            self._ENTRY.size * 2 * self._SLOT_COUNT,
+            self._ENTRY.size * 2 * self._SLOT_COUNT * self._CHANNEL_COUNT,
             tagname=f"Local\\RaylightP2P_{safe_name}_spin",
             access=mmap.ACCESS_WRITE,
         )
@@ -905,9 +968,12 @@ class WindowsSpinControl:
         return operation_id % cls._SLOT_COUNT
 
     @classmethod
-    def _offset(cls, rank, operation_id):
+    def _offset(cls, rank, operation_id, channel=_READY_CHANNEL):
+        if channel not in (cls._READY_CHANNEL, cls._CONSUMED_CHANNEL):
+            raise ValueError(f"unsupported control channel {channel}")
         slot = cls._slot(operation_id)
-        return (rank * cls._SLOT_COUNT + slot) * cls._ENTRY.size
+        channel_offset = channel * 2 * cls._SLOT_COUNT
+        return (channel_offset + rank * cls._SLOT_COUNT + slot) * cls._ENTRY.size
 
     def publish_ready(self, rank, operation_id, total_bytes):
         if rank != self.rank:
@@ -941,6 +1007,43 @@ class WindowsSpinControl:
     def peek_ready(self, rank, operation_id):
         offset = self._offset(rank, operation_id)
         return struct.unpack_from("<q", self._mapping, offset)[0]
+
+    def publish_consumed(self, rank, operation_id):
+        if rank != self.rank:
+            raise ValueError(f"control rank mismatch: endpoint={rank}, control={self.rank}")
+        offset = self._offset(
+            rank,
+            operation_id,
+            channel=self._CONSUMED_CHANNEL,
+        )
+        struct.pack_into("<q", self._mapping, offset, operation_id)
+
+    def wait_consumed(self, rank, operation_id, timeout_seconds):
+        offset = self._offset(
+            rank,
+            operation_id,
+            channel=self._CONSUMED_CHANNEL,
+        )
+        deadline = time.perf_counter() + timeout_seconds
+        spins = 0
+        while True:
+            peer_operation = struct.unpack_from("<q", self._mapping, offset)[0]
+            if peer_operation == operation_id:
+                return True
+            if peer_operation > operation_id:
+                raise ValueError(
+                    "collective consumed operation mismatch: "
+                    f"local={operation_id}, peer={peer_operation}"
+                )
+            if time.perf_counter() >= deadline:
+                raise TimeoutError(
+                    f"timed out waiting for rank {rank} to consume operation "
+                    f"{operation_id} after {timeout_seconds}s"
+                )
+            spins += 1
+            if spins % 4096 == 0:
+                time.sleep(0)
+
     def close(self):
         if self._closed:
             return

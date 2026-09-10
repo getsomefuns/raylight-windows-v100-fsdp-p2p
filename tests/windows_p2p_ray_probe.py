@@ -22,6 +22,9 @@ class P2PActor:
         import sys
         import torch
 
+        source_root = str(MODULE_PATH.parents[2])
+        if source_root not in sys.path:
+            sys.path.insert(0, source_root)
         spec = importlib.util.spec_from_file_location(f"raylight_windows_p2p_ray_{rank}", MODULE_PATH)
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module

@@ -20,7 +20,11 @@ from xfuser.core.distributed import (
     initialize_model_parallel,
 )
 from xfuser.core.distributed.utils import RankGenerator
-from raylight.distributed_worker.windows_gloo import BACKEND_NAME, is_windows
+from raylight.distributed_worker.windows_gloo import (
+    BACKEND_NAME,
+    install_windows_gloo_new_group_router,
+    is_windows,
+)
 
 
 def _normalized_degree(value: int | None) -> int:
@@ -144,6 +148,8 @@ def initialize_xfuser_parallel(local_rank: int, world_size: int, parallel_dict: 
         xfuser_attn.set_sync_ulysses(parallel_dict["sync_ulysses"])
 
     backend = BACKEND_NAME if is_windows() else None
+    if is_windows():
+        install_windows_gloo_new_group_router()
     init_distributed_environment(
         rank=local_rank,
         world_size=world_size,

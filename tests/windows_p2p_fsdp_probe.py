@@ -29,6 +29,9 @@ GLOO_MODULE_PATH = REPO_ROOT / "src/raylight/distributed_worker/windows_gloo.py"
 def load_file_module(name, path):
     import sys
 
+    source_root = str(REPO_ROOT / "src")
+    if source_root not in sys.path:
+        sys.path.insert(0, source_root)
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
