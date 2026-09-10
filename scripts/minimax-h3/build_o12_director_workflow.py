@@ -218,16 +218,93 @@ def build_workflow(
     return workflow
 
 
+def derive_variant(
+    combined: dict[str, Any], *, variant: str, turbo_steps: int
+) -> dict[str, Any]:
+    """Derive a directly comparable accelerator/step workflow from O12 combined."""
+    if variant not in {"none", "te", "sol", "combined"}:
+        raise ValueError("variant must be one of: none, te, sol, combined")
+    if turbo_steps not in {4, 8}:
+        raise ValueError("turbo_steps must be 4 or 8")
+
+    workflow = copy.deepcopy(combined)
+    by_type = {node["type"]: node for node in workflow["nodes"]}
+    director = by_type["MiniMaxH3Director"]
+    adapter = by_type["RayMMH3DirectorModelAdapter"]
+    te_speed = by_type["TESpeedMiniMaxH3"]
+    sol = by_type["SolAttnV100"]
+    lora = by_type["RayLoraLoader"]
+    save_video = by_type["SaveVideo"]
+
+    include_te = variant in {"te", "combined"}
+    include_sol = variant in {"sol", "combined"}
+    removed_ids = set()
+    if not include_te:
+        removed_ids.add(te_speed["id"])
+    if not include_sol:
+        removed_ids.add(sol["id"])
+    workflow["nodes"] = [node for node in workflow["nodes"] if node["id"] not in removed_ids]
+
+    route_ids = {adapter["id"], te_speed["id"], sol["id"]}
+    workflow["links"] = [
+        link
+        for link in workflow["links"]
+        if not (link[5] == "MODEL" and link[1] in route_ids)
+    ]
+
+    route_nodes = [adapter]
+    if include_te:
+        route_nodes.append(te_speed)
+    if include_sol:
+        route_nodes.append(sol)
+    route_nodes.append(director)
+
+    first_link_id = max([link[0] for link in workflow["links"]], default=0) + 1
+    new_links = []
+    for offset, (source, target) in enumerate(zip(route_nodes, route_nodes[1:])):
+        link_id = first_link_id + offset
+        new_links.append([link_id, source["id"], 0, target["id"], 0, "MODEL"])
+        source["outputs"][0]["links"] = [link_id]
+        _input(target, "model")["link"] = link_id
+    workflow["links"].extend(new_links)
+
+    director["widgets_values"][13] = turbo_steps
+    if turbo_steps == 8:
+        lora["widgets_values"][0] = (
+            "MMH3\\Ref2va\\lightx2v\\"
+            "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+        )
+        te_speed["widgets_values"][5] = "8-step LoRA"
+    else:
+        te_speed["widgets_values"][5] = "4-step LoRA"
+
+    suffix = {"none": "Base", "te": "TE", "sol": "Sol", "combined": "TE_Sol"}[variant]
+    save_video["widgets_values"][0] = (
+        f"video/raylight_o12/MMH3Director_REF2VA_Turbo{turbo_steps}_{suffix}"
+    )
+    workflow["last_node_id"] = max(node["id"] for node in workflow["nodes"])
+    workflow["last_link_id"] = max(link[0] for link in workflow["links"])
+    return workflow
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", required=True, type=Path)
     parser.add_argument("--ray-template", required=True, type=Path)
     parser.add_argument("--te-template", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--variant", choices=("none", "te", "sol", "combined"), default="combined"
+    )
+    parser.add_argument("--turbo-steps", choices=(4, 8), type=int, default=4)
     args = parser.parse_args()
 
-    workflow = build_workflow(
-        _load(args.base), _load(args.ray_template), _load(args.te_template)
+    workflow = derive_variant(
+        build_workflow(
+            _load(args.base), _load(args.ray_template), _load(args.te_template)
+        ),
+        variant=args.variant,
+        turbo_steps=args.turbo_steps,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
