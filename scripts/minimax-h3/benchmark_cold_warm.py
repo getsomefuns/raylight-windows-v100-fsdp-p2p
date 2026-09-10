@@ -29,7 +29,19 @@ REPO_ROOT = SCRIPT_ROOT.parents[1]
 MODEL_MANIFEST = SCRIPT_ROOT / "models.json"
 COMFY_ROOT = Path(os.environ.get("RAYLIGHT_COMFY_ROOT", REPO_ROOT.parent / "ComfyUI"))
 ENV_ROOT = COMFY_ROOT.parent
-PYTHON = Path(os.environ.get("RAYLIGHT_PYTHON", ENV_ROOT / "Python310" / "python.exe"))
+
+
+def discover_runtime_python(environment_root: Path, explicit: str | None = None) -> Path:
+    """Prefer the O12 Python 3.12 runtime while retaining the legacy fallback."""
+    if explicit:
+        return Path(explicit)
+    python312 = environment_root / "Python312" / "python.exe"
+    if python312.is_file():
+        return python312
+    return environment_root / "Python310" / "python.exe"
+
+
+PYTHON = discover_runtime_python(ENV_ROOT, os.environ.get("RAYLIGHT_PYTHON"))
 RESULT_ROOT = Path(
     os.environ.get(
         "RAYLIGHT_MINIMAX_BENCHMARK_ROOT",

@@ -205,6 +205,25 @@ def test_server_environment_accepts_explicit_p2p_capacity():
     assert environment["RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES"] == "268435456"
 
 
+def test_discover_runtime_python_prefers_python312(tmp_path):
+    python310 = tmp_path / "Python310" / "python.exe"
+    python312 = tmp_path / "Python312" / "python.exe"
+    python310.parent.mkdir()
+    python312.parent.mkdir()
+    python310.touch()
+    python312.touch()
+
+    assert benchmark.discover_runtime_python(tmp_path) == python312
+
+
+def test_discover_runtime_python_falls_back_to_python310(tmp_path):
+    python310 = tmp_path / "Python310" / "python.exe"
+    python310.parent.mkdir()
+    python310.touch()
+
+    assert benchmark.discover_runtime_python(tmp_path) == python310
+
+
 def test_configure_prompt_geometry_uses_exact_dimensions_duration_and_fps():
     prompt = {
         "10": {

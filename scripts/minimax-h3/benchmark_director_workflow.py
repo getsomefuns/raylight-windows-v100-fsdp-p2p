@@ -284,6 +284,22 @@ def extract_p2p_profiles(text: str) -> list[dict]:
     return profiles
 
 
+def comfyui_command(port: int, reserve_vram_gib: float) -> list[str]:
+    """Build the benchmark server command for the validated O12 runtime profile."""
+    return [
+        str(base.PYTHON),
+        "main.py",
+        "--listen",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--disable-cuda-malloc",
+        "--disable-dynamic-vram",
+        "--reserve-vram",
+        str(reserve_vram_gib),
+    ]
+
+
 def run_workflow(
     workflow_path: Path,
     *,
@@ -326,17 +342,7 @@ def run_workflow(
         raise RuntimeError(f"port {port} already has a running ComfyUI server")
 
     p2p_capacity_bytes = int(p2p_capacity_mib) * 2**20
-    command = [
-        str(base.PYTHON),
-        "main.py",
-        "--listen",
-        "127.0.0.1",
-        "--port",
-        str(port),
-        "--disable-cuda-malloc",
-        "--reserve-vram",
-        str(reserve_vram_gib),
-    ]
+    command = comfyui_command(port, reserve_vram_gib)
     report = {
         "workflow": str(workflow_path),
         "workflow_sha256": base.sha256_file(workflow_path),

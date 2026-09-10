@@ -131,6 +131,15 @@ def test_parse_args_accepts_cuda_allocator_experiment():
     assert args.cuda_alloc_conf.endswith("garbage_collection_threshold:0.55")
 
 
+def test_comfyui_command_uses_current_runtime_and_disables_dynamic_vram():
+    command = benchmark.comfyui_command(8189, 4.0)
+
+    assert command[0] == str(benchmark.base.PYTHON)
+    assert "--disable-cuda-malloc" in command
+    assert "--disable-dynamic-vram" in command
+    assert command[command.index("--reserve-vram") + 1] == "4.0"
+
+
 def test_parse_args_rejects_non_positive_runs():
     with pytest.raises(ValueError, match="runs must be positive"):
         benchmark.parse_args(["workflow.json", "--runs", "0"])
