@@ -38,7 +38,13 @@ def discover_python_executable(
     configured: str | os.PathLike[str] | None = None,
 ) -> Path:
     candidates = [Path(configured)] if configured else []
-    candidates.append(comfy.resolve().parent / "Python310" / "python.exe")
+    environment_root = comfy.resolve().parent
+    candidates.extend(
+        (
+            environment_root / "Python312" / "python.exe",
+            environment_root / "Python310" / "python.exe",
+        )
+    )
     for candidate in candidates:
         if candidate.is_file():
             return candidate.resolve()

@@ -181,3 +181,56 @@ def test_owned_xformers_ulysses_chunks_query_sequence(monkeypatch):
 
     assert query_chunks == [2, 2]
     assert output.shape == (1, 4, 5, 3)
+
+
+def test_owned_xformers_ulysses_runs_sol_override_between_exchange_phases(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    calls = []
+
+    class FakeAllToAll:
+        @staticmethod
+        def apply(_group, value, scatter_idx, gather_idx, _use_sync):
+            calls.append(("a2a", scatter_idx, gather_idx))
+            return value.clone()
+
+    class FakeProcessGroups:
+        ULYSSES_PG = object()
+        RING_PG = object()
+
+    def sol_override(original, q, k, v, heads, **kwargs):
+        calls.append(("sol", tuple(q.shape), heads, kwargs["transformer_options"]["solattn_block"]))
+        assert q.shape == k.shape == v.shape
+        combined = q + k + v
+        return combined.permute(0, 2, 1, 3).reshape(q.shape[0], q.shape[2], -1)
+
+    sol_override._solattn_override = True
+    monkeypatch.setattr(attention, "SeqAllToAll4D", FakeAllToAll)
+    monkeypatch.setattr(attention, "PROCESS_GROUP", FakeProcessGroups)
+    monkeypatch.setattr(attention.dist, "get_world_size", lambda _group: 1)
+    monkeypatch.setattr(
+        attention.xops,
+        "memory_efficient_attention",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("dense backend should not run when Sol returns an output")
+        ),
+    )
+
+    output = attention.xformers_ulysses_attention_owned(
+        [torch.ones(1, 2, 4, 3) for _ in range(3)],
+        use_sync=True,
+        transformer_options={
+            "optimized_attention_override": sol_override,
+            "solattn_sparse": True,
+            "solattn_block": 7,
+        },
+    )
+
+    assert calls == [
+        ("a2a", 2, 1),
+        ("a2a", 2, 1),
+        ("a2a", 2, 1),
+        ("sol", (1, 2, 4, 3), 2, 7),
+        ("a2a", 1, 2),
+    ]
+    assert output.shape == (1, 4, 2, 3)

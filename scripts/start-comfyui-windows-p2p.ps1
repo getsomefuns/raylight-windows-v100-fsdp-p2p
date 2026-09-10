@@ -41,10 +41,12 @@ if ([string]::IsNullOrWhiteSpace($ComfyRoot)) {
 $environmentRoot = Split-Path -Parent $comfyRoot
 
 if ([string]::IsNullOrWhiteSpace($PythonPath)) {
-    $bundledPython = Join-Path $environmentRoot "Python310\python.exe"
-    if (Test-Path -LiteralPath $bundledPython) {
-        $PythonPath = $bundledPython
-    } else {
+    $candidatePythons = @(
+        (Join-Path $environmentRoot "Python312\python.exe"),
+        (Join-Path $environmentRoot "Python310\python.exe")
+    )
+    $PythonPath = $candidatePythons | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($PythonPath)) {
         $PythonPath = (Get-Command python -ErrorAction Stop).Source
     }
 }
@@ -105,7 +107,13 @@ if ($ValidateOnly) {
 }
 
 Set-Location -LiteralPath $comfyRoot
-$mainArgs = @("main.py", "--listen", "127.0.0.1", "--port", [string]$Port, "--disable-cuda-malloc")
+$mainArgs = @(
+    "main.py",
+    "--listen", "127.0.0.1",
+    "--port", [string]$Port,
+    "--disable-cuda-malloc",
+    "--disable-dynamic-vram"
+)
 if ($ReserveVramGiB -gt 0) {
     $reserveVramText = $ReserveVramGiB.ToString([Globalization.CultureInfo]::InvariantCulture)
     $mainArgs += @("--reserve-vram", $reserveVramText)

@@ -1,7 +1,10 @@
 import json
+import platform
 import subprocess
 import sys
 from pathlib import Path
+
+import torch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -121,7 +124,7 @@ def test_runtime_probe_returns_machine_readable_python_versions(tmp_path):
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""
     report = json.loads(result.stdout)
-    assert report["runtime"]["python"]["python"] == "3.10.11"
-    assert report["runtime"]["python"]["torch"] == "2.7.0+cu126"
-    assert report["runtime"]["python"]["torch_cuda"] == "12.6"
+    assert report["runtime"]["python"]["python"] == platform.python_version()
+    assert report["runtime"]["python"]["torch"] == torch.__version__
+    assert report["runtime"]["python"]["torch_cuda"] == torch.version.cuda
     assert "sm_70" in report["runtime"]["python"]["sm_arches"]

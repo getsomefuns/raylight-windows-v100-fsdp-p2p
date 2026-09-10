@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import functools
 import importlib
 import inspect
@@ -18,6 +17,7 @@ import comfy.sample
 from raylight.distributed_worker.sampling_lifecycle import clear_ray_worker_vram_after_sampling
 
 from .proxy import RayMMH3DirectorModelProxy
+from .external_acceleration import serialize_external_acceleration
 
 
 SUPPORTED_DIRECTOR_VERSION = "main"
@@ -350,7 +350,7 @@ def dispatch_mmh3director_sample(
         "disable_pbar": bool(disable_pbar),
         "seed": seed,
         "apply_shift": bool(apply_shift),
-        "model_options": copy.deepcopy(model.model_options),
+        "model_options": serialize_external_acceleration(model.model_options),
     }
 
     print(

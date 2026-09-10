@@ -53,6 +53,7 @@ def xformers_ulysses_attention_owned(
     causal=False,
     chunk_heads=XFORMERS_HEAD_CHUNK,
     chunk_query_tokens=XFORMERS_QUERY_CHUNK_TOKENS,
+    transformer_options=None,
 ):
     """Consume Q/K/V references and return the rank-local Ulysses output."""
 
@@ -78,6 +79,69 @@ def xformers_ulysses_attention_owned(
     value = qkv.pop(0).transpose(1, 2)
     value_layer = SeqAllToAll4D.apply(ulysses_group, value, 2, 1, use_sync)
     del value
+    options = transformer_options or {}
+
+    def dense_local(query_bhsd, key_bhsd, value_bhsd, _heads, **_kwargs):
+        dense = _xformers_local_attention(
+            query_bhsd.transpose(1, 2),
+            key_bhsd.transpose(1, 2),
+            value_bhsd.transpose(1, 2),
+            scale=scale,
+            causal=causal,
+            chunk_heads=chunk_heads,
+            chunk_query_tokens=chunk_query_tokens,
+        )
+        return dense.reshape(dense.shape[0], dense.shape[1], -1)
+
+    override = options.get("optimized_attention_override")
+    if override is not None and getattr(override, "_solattn_override", False):
+        local_heads = query_layer.shape[2]
+        flat_context = override(
+            dense_local,
+            query_layer.transpose(1, 2),
+            key_layer.transpose(1, 2),
+            value_layer.transpose(1, 2),
+            local_heads,
+            mask=None,
+            skip_reshape=True,
+            skip_output_reshape=False,
+            scale=scale,
+            causal=causal,
+            transformer_options=options,
+        )
+        context_layer = flat_context.reshape(
+            query_layer.shape[0],
+            query_layer.shape[1],
+            local_heads,
+            query_layer.shape[3],
+        )
+        del flat_context
+    else:
+        context_layer = _xformers_local_attention(
+            query_layer,
+            key_layer,
+            value_layer,
+            scale=scale,
+            causal=causal,
+            chunk_heads=chunk_heads,
+            chunk_query_tokens=chunk_query_tokens,
+        )
+    del query_layer, key_layer, value_layer
+    output = SeqAllToAll4D.apply(ulysses_group, context_layer, 1, 2, use_sync)
+    del context_layer
+    return output
+
+
+def _xformers_local_attention(
+    query_layer,
+    key_layer,
+    value_layer,
+    *,
+    scale,
+    causal,
+    chunk_heads,
+    chunk_query_tokens,
+):
     attention_bias = xops.LowerTriangularMask() if causal else None
     context_layer = torch.empty_like(query_layer)
     if causal and chunk_query_tokens < query_layer.shape[1]:
@@ -98,10 +162,7 @@ def xformers_ulysses_attention_owned(
                 :, query_start:query_stop, head_start:head_stop
             ].copy_(context_chunk)
             del context_chunk
-    del query_layer, key_layer, value_layer
-    output = SeqAllToAll4D.apply(ulysses_group, context_layer, 1, 2, use_sync)
-    del context_layer
-    return output
+    return context_layer
 
 
 def make_xfuser_attention(attn_type, sync_ulysses):
@@ -168,6 +229,7 @@ def make_xfuser_attention(attn_type, sync_ulysses):
                 use_sync=sync_ulysses,
                 scale=kwargs.get("scale", None),
                 causal=kwargs.get("causal", False),
+                transformer_options=kwargs.get("transformer_options"),
             )
             out = output.transpose(1, 2)
 

@@ -3,6 +3,8 @@ from dataclasses import FrozenInstanceError
 import pytest
 import torch
 
+from comfy.ldm.minimax.model import MiniMaxH3Model
+from comfy.patcher_extension import WrappersMP
 from comfy_extras.nodes_minimax_h3 import MiniMaxH3SigmaShift
 from raylight.integrations.mmh3director.metadata import (
     MMH3DirectorModelMetadata,
@@ -79,13 +81,30 @@ def test_rank_metadata_rejects_missing_or_duplicate_ranks():
         validate_rank_metadata([_rank_row(0), _rank_row(0)])
 
 
-def test_proxy_contains_no_diffusion_weights_or_parameters():
+def test_proxy_exposes_a_weightless_minimax_diffusion_facade():
     proxy = _proxy()
 
     assert not hasattr(proxy, "state_dict")
-    assert not hasattr(proxy.model, "diffusion_model")
+    diffusion = proxy.get_model_object("diffusion_model")
+    assert isinstance(diffusion, MiniMaxH3Model)
+    assert len(diffusion.blocks) == 50
+    assert not tuple(diffusion.parameters())
     assert not any(isinstance(value, torch.nn.Parameter) for value in vars(proxy).values())
     assert proxy.ray_actors == {"workers": ("rank-0", "rank-1")}
+
+
+def test_proxy_supports_comfy_wrapper_lifecycle_and_clone_isolation():
+    proxy = _proxy()
+    wrapper = lambda executor, *args, **kwargs: executor(*args, **kwargs)
+
+    proxy.add_wrapper_with_key(WrappersMP.DIFFUSION_MODEL, "te-speed", wrapper)
+    cloned = proxy.clone()
+
+    assert proxy.get_wrappers(WrappersMP.DIFFUSION_MODEL, "te-speed") == [wrapper]
+    assert cloned.get_all_wrappers(WrappersMP.DIFFUSION_MODEL) == [wrapper]
+    cloned.remove_wrappers_with_key(WrappersMP.DIFFUSION_MODEL, "te-speed")
+    assert cloned.get_all_wrappers(WrappersMP.DIFFUSION_MODEL) == []
+    assert proxy.get_all_wrappers(WrappersMP.DIFFUSION_MODEL) == [wrapper]
 
 
 def test_clone_isolates_model_options_and_object_patch_maps():

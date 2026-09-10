@@ -25,13 +25,25 @@ def test_discover_comfy_root_supports_custom_node_deployment_layout(tmp_path: Pa
     assert path_helpers.discover_comfy_root(repo) == comfy.resolve()
 
 
-def test_python_executable_is_resolved_from_comfy_environment(tmp_path: Path) -> None:
+def test_python_executable_falls_back_to_python310(tmp_path: Path) -> None:
     comfy = _make_comfy_root(tmp_path / "ComfyUI")
     python = tmp_path / "Python310" / "python.exe"
     python.parent.mkdir()
     python.write_bytes(b"")
 
     assert path_helpers.discover_python_executable(comfy) == python.resolve()
+
+
+def test_python_executable_prefers_python312_when_both_runtimes_exist(tmp_path: Path) -> None:
+    comfy = _make_comfy_root(tmp_path / "ComfyUI")
+    python310 = tmp_path / "Python310" / "python.exe"
+    python312 = tmp_path / "Python312" / "python.exe"
+    python310.parent.mkdir()
+    python312.parent.mkdir()
+    python310.write_bytes(b"")
+    python312.write_bytes(b"")
+
+    assert path_helpers.discover_python_executable(comfy) == python312.resolve()
 
 
 def test_test_modules_do_not_use_ambiguous_absolute_tests_package() -> None:

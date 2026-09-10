@@ -226,6 +226,7 @@ def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
         out = xfuser_attn.xformers_ulysses_attention_owned(
             owned,
             use_sync=sync_ulysses,
+            transformer_options=transformer_options,
         ).reshape(1, sequence_length, self.heads * self.head_dim)
     else:
         out = xfuser_optimized_attention(q, k, v, self.heads, skip_reshape=True)

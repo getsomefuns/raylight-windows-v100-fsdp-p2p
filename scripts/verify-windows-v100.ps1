@@ -11,10 +11,12 @@ $comfyRoot = Split-Path -Parent $customNodesRoot
 $environmentRoot = Split-Path -Parent $comfyRoot
 
 if ([string]::IsNullOrWhiteSpace($PythonPath)) {
-    $bundledPython = Join-Path $environmentRoot "Python310\python.exe"
-    if (Test-Path -LiteralPath $bundledPython) {
-        $PythonPath = $bundledPython
-    } else {
+    $candidatePythons = @(
+        (Join-Path $environmentRoot "Python312\python.exe"),
+        (Join-Path $environmentRoot "Python310\python.exe")
+    )
+    $PythonPath = $candidatePythons | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($PythonPath)) {
         $PythonPath = (Get-Command python -ErrorAction Stop).Source
     }
 }
@@ -46,11 +48,35 @@ import importlib.metadata as metadata
 import sys
 import torch
 
+profiles = {
+    (3, 10): {
+        "name": "python310-torch27",
+        "python": (3, 10, 11),
+        "torch": "2.7.0+cu126",
+        "torchvision": "0.22.0+cu126",
+        "torchaudio": "2.7.0+cu126",
+        "xformers": "0.0.30",
+    },
+    (3, 12): {
+        "name": "python312-torch28",
+        "python": (3, 12, 10),
+        "torch": "2.8.0+cu126",
+        "torchvision": "0.23.0+cu126",
+        "torchaudio": "2.8.0+cu126",
+        "xformers": "0.0.32.post2",
+    },
+}
+profile = profiles.get(sys.version_info[:2])
+if profile is None:
+    print(f"FAIL: no validated runtime profile for Python {sys.version.split()[0]}")
+    raise SystemExit(1)
+print(f"runtime_profile={profile['name']}")
+
 expected = {
-    "torch": "2.7.0+cu126",
-    "torchvision": "0.22.0+cu126",
-    "torchaudio": "2.7.0+cu126",
-    "xformers": "0.0.30",
+    "torch": profile["torch"],
+    "torchvision": profile["torchvision"],
+    "torchaudio": profile["torchaudio"],
+    "xformers": profile["xformers"],
     "ray": "2.57.0",
     "xfuser": "0.4.5",
     "yunchang": "0.6.4",
@@ -71,8 +97,9 @@ for index in range(torch.cuda.device_count()):
 
 if sys.platform != "win32":
     failures.append("native Windows is required")
-if sys.version_info[:3] != (3, 10, 11):
-    failures.append(f"Python 3.10.11 was validated; found {sys.version.split()[0]}")
+if sys.version_info[:3] != profile["python"]:
+    wanted = ".".join(str(part) for part in profile["python"])
+    failures.append(f"Python {wanted} was validated for {profile['name']}; found {sys.version.split()[0]}")
 if torch.version.cuda != "12.6":
     failures.append(f"PyTorch CUDA 12.6 was validated; found {torch.version.cuda}")
 if torch.cuda.device_count() != 2:

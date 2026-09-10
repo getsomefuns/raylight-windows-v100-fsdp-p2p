@@ -2045,6 +2045,12 @@ class RayWorker:
                     merged_options[name] = copy.deepcopy(value)
             model_for_sampling.model_options = merged_options
 
+            from raylight.integrations.mmh3director.external_acceleration import (
+                apply_external_acceleration,
+            )
+
+            model_for_sampling = apply_external_acceleration(model_for_sampling)
+
             with torch.no_grad():
                 samples = comfy_sample.sample(
                     model_for_sampling,
