@@ -154,6 +154,43 @@ def _solattn_factory():
     return package.NODE_CLASS_MAPPINGS["SolAttnV100"]()
 
 
+class _TESpeedExactH3Adapter:
+    """Expose an exact MiniMaxH3Model view without replacing the FSDP module."""
+
+    def __init__(self, model, diffusion_view):
+        self._model = model
+        self._diffusion_view = diffusion_view
+
+    def get_model_object(self, name: str):
+        if name == "diffusion_model":
+            return self._diffusion_view
+        return self._model.get_model_object(name)
+
+    def __getattr__(self, name: str):
+        return getattr(self._model, name)
+
+
+def _te_speed_model_argument(model):
+    """Bridge TE-Speed's exact-type guard to PyTorch's dynamic FSDP subclass."""
+    from comfy.ldm.minimax.model import MiniMaxH3Model
+
+    get_model_object = getattr(model, "get_model_object", None)
+    if not callable(get_model_object):
+        return model
+    diffusion = get_model_object("diffusion_model")
+    if type(diffusion) is MiniMaxH3Model:
+        return model
+    if not isinstance(diffusion, MiniMaxH3Model):
+        return model
+
+    # Composable FSDP changes ``__class__`` in-place to a generated subclass.
+    # TE-Speed 3.3 accepts only the exact base type.  This weightless view shares
+    # the live module dictionary, so its blocks are still the real FSDP blocks.
+    view = object.__new__(MiniMaxH3Model)
+    view.__dict__ = diffusion.__dict__
+    return _TESpeedExactH3Adapter(model, view)
+
+
 def apply_external_acceleration(
     model,
     *,
@@ -169,9 +206,10 @@ def apply_external_acceleration(
     patched = model
     if te_config is not None:
         factory = te_speed_factory or _te_speed_factory
-        patched = factory().patch(patched, **te_config)[0]
+        te_argument = _te_speed_model_argument(patched)
+        te_result = factory().patch(te_argument, **te_config)[0]
+        patched = patched if te_result is te_argument else te_result
     if sol_config is not None:
         factory = solattn_factory or _solattn_factory
         patched = factory().patch(patched, **sol_config)[0]
     return patched
-

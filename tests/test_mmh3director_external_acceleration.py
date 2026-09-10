@@ -119,3 +119,45 @@ def test_apply_external_acceleration_replays_nodes_worker_side_without_leaking_c
     assert RAYLIGHT_SOLATTN_CONFIG_KEY not in patched.model_options["transformer_options"]
     assert calls[1][1]["fp16_safe"] is False
 
+
+def test_apply_external_acceleration_presents_exact_h3_type_to_te_speed_after_fsdp():
+    from comfy.ldm.minimax.model import MiniMaxH3Model
+
+    class FSDPMiniMaxH3Model(MiniMaxH3Model):
+        pass
+
+    fsdp_diffusion = object.__new__(FSDPMiniMaxH3Model)
+    fsdp_diffusion.__dict__ = {"blocks": [object(), object()]}
+
+    class Model:
+        def __init__(self):
+            self.model_options = {
+                "transformer_options": {
+                    RAYLIGHT_TE_SPEED_CONFIG_KEY: {
+                        "processing_control_value": 0.08,
+                        "processing_percent_1": 0.1,
+                        "processing_percent_2": 0.9,
+                        "mcs": 2,
+                        "device": "auto",
+                        "mode": "4-step LoRA",
+                    }
+                }
+            }
+
+        def get_model_object(self, name):
+            assert name == "diffusion_model"
+            return fsdp_diffusion
+
+    original = Model()
+
+    class StrictTE:
+        def patch(self, model, **_kwargs):
+            diffusion = model.get_model_object("diffusion_model")
+            assert type(diffusion) is MiniMaxH3Model
+            assert diffusion.blocks is fsdp_diffusion.blocks
+            return (model,)
+
+    patched = apply_external_acceleration(original, te_speed_factory=StrictTE)
+
+    assert patched is original
+    assert type(original.get_model_object("diffusion_model")) is FSDPMiniMaxH3Model
