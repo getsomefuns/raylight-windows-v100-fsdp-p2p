@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.14.0 (O12) moves the preferred runtime to Python 3.12.10 and PyTorch 2.12.0+cu126, and adds optional worker-side replay bridges for TE-Speed 3.3 and Sol-Attn V100. Existing workflows enable neither accelerator by default. In the matched 5.17-second 864x480 REF2VA matrix, Sol reduces 4/8-step warm worker sampling from 85.23/170.90 seconds to 69.28/138.06 seconds, about 19%. TE does not show a stable standalone benefit on these short trajectories. The Python312 full suite reports `725 passed` and `35 subtests passed`. See the [1.14.0 English release note](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.en.md) and [Chinese O12 test report](docs/testing/minimax-h3/O12_PYTHON312_H3_ACCELERATION_2026-09.zh-CN.md).
+
 Version 1.13.1 is an O11 compatibility patch for MiniMaxH3Director. It retains the legacy `comfy.sample.sample()` bridge used by commit `d655912` while adapting the `sample_single_stage → BasicGuider/CFGGuider → SamplerCustomAdvanced` path in `b8f721c`. Official MiniMax AV `NestedTensor` inputs, external SIGMAS, `apply_shift`, and Director sampling controls are forwarded correctly to the dual-V100 workers, and remote failures never fall back silently to GPU0. The full automated suite reports `701 passed`; a current-Director hardware smoke test produced 56 frames at 864×480 and 24 fps with both GPUs reaching 100% utilization. Director, ComfyUI core, model precision, FSDP, and P2P data paths are unchanged. See the [1.13.1 English release note](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md).
 
 Version 1.13.0 (O11) fixes long multimodal Text Encoder OOMs caused by SDPA Math fallback and a dense square causal mask. The dedicated dual-GPU Loader now exposes independent `AUTO`, `XFORMERS_GQA`, `TORCH_EFFICIENT`, and `MATH_DEBUG` routing; AUTO selects xFormers GQA on the target V100 system. One 15-second video, seven distinct images, and a meaningful 7000-character prompt expand to 24,236 positions and pass in 112.94/112.55 seconds cold/warm. The follow-up Diffusion-lifetime work also completes the real 15-second, 365-frame, 0.4 MP, seven-image + video + audio REF2VA Turbo4 case: sampling falls from 1999.41 to 1456.12 seconds and sampling-window board peaks fall from 16215/16230 to 13005/12873 MiB. The 365-frame output decodes successfully. The 0.6 MP boundary remains unaccepted. See the [O11 English release note](docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md) and [Chinese test record](docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md).
@@ -33,7 +35,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.13.1; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.14.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -48,6 +50,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - O10 dual-V100 Text Encoder TP2 1.12.0: [English](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md) / [中文](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md)
 - O11 efficient Text Encoder attention 1.13.0: [English](docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md) / [中文](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md)
 - MiniMaxH3Director `b8f721c` compatibility patch 1.13.1: [English](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md) / [中文](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md)
+- Python 3.12/Torch 2.12 and H3 external accelerator bridge 1.14.0: [English](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.en.md) / [中文](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -79,6 +82,26 @@ It does not:
 - turn two 16 GB GPUs into a transparent 32 GB device;
 - shard every model or every ComfyUI node;
 - support GGUF with FSDP, training/backward collectives, multi-node execution, or arbitrary GPU counts.
+
+## O12 optional MiniMax H3 accelerators
+
+O12 does not copy third-party algorithms into Raylight. External nodes patch a MODEL through their normal ComfyUI interface; Raylight serializes only their configuration and calls the installed node implementation inside both real workers.
+
+```text
+RayUNETLoader -> Ray MODEL Adapter (MMH3Director)
+              -> [TE-Speed, optional]
+              -> [Sol-Attn (V100), optional]
+              -> MiniMaxH3Director
+```
+
+- Omitting both nodes is the unchanged Base path.
+- Sol-only is the most repeatable sampling-speed option in the current 4/8-step matrix, about 19% faster than Base.
+- TE-only has no stable benefit in this short-trajectory acceptance. TE+Sol reproduces the combined topology but is not guaranteed to beat Sol-only.
+- Sol is approximate sparse attention and is not pixel-identical to Base. Validate subjective quality with production inputs.
+
+Third-party source and binaries are not bundled. Install compatible versions of [TE-Speed-MiniMaxH3-OSS](https://github.com/HELPMEEADICE/TE-Speed-MiniMaxH3-OSS) and [ComfyUI-MiniMaxH3-SolAttn-V100](https://github.com/aaalll12322/ComfyUI-MiniMaxH3-SolAttn-V100); Sol also requires a kernel compatible with Windows, Python 3.12, and V100.
+
+Eight matched Turbo4/Turbo8 `Base`, `TE`, `Sol`, and `TE_Sol` JSON files live in `example_workflows/o12`. On the project development machine they are deployed to `ComfyUI/user/default/workflows/O12`, and all outputs use `ComfyUI/output/video/raylight_o12`.
 
 ## MiniMax H3 dual-V100 Text Encoder TP2 (experimental)
 
@@ -269,18 +292,18 @@ The physical carrier-board or PCIe slot arrangement is not a software condition.
 |---|---|
 | Windows | NT build 22631.6199 / 23H2 |
 | NVIDIA driver | 577.00 |
-| Python | 3.10.11 x64 |
-| PyTorch | 2.7.0+cu126 |
-| torchvision | 0.22.0+cu126 |
-| torchaudio | 2.7.0+cu126 |
-| xformers | 0.0.30 |
+| Python | 3.12.10 x64 preferred; 3.10.11 rollback profile |
+| PyTorch | 2.12.0+cu126 preferred; 2.7.0+cu126 rollback profile |
+| torchvision | 0.27.0+cu126 |
+| torchaudio | 2.11.0+cu126 |
+| xformers | 0.0.35 |
 | Ray | 2.57.0 |
 | xFuser | 0.4.5 |
 | yunchang | 0.6.4 |
 | ComfyUI | 0.31.0, commit `62b3c94bd45154f6486c7abf1b9efcacee96ea69` |
-| Attention | `TORCH_EFFICIENT`; no FlashAttention |
+| Diffusion attention | Base uses `XFORMERS_MEMORY_EFFICIENT`; O12 optionally uses Sol-Attn V100; no FlashAttention |
 
-See [environment-windows-v100.json](environment-windows-v100.json) and [requirements-windows-v100.txt](requirements-windows-v100.txt) for machine-readable pins.
+See [environment-windows-v100.json](environment-windows-v100.json) and [requirements-windows-v100-torch212.txt](requirements-windows-v100-torch212.txt) for current machine-readable pins. [requirements-windows-v100.txt](requirements-windows-v100.txt) remains the Python310/Torch2.7 rollback profile.
 
 ## Installation and use
 
@@ -317,19 +340,19 @@ Confirm that both V100 GPUs use TCC, active NVLink links are visible, NVIDIA's `
 
 ### 2. Install the pinned environment
 
-Use an isolated Python 3.10.11 environment. Do not modify unrelated ComfyUI installations.
+Use an isolated Python 3.12.10 environment. Do not modify unrelated ComfyUI installations. O12 keeps the old Python310 environment intact for an explicit rollback.
 
 ```powershell
-$PY = "<Python 3.10.11 path>\python.exe"
+$PY = "<Python 3.12.10 path>\python.exe"
 cd <ComfyUI>\custom_nodes
 git clone `
   https://github.com/getsomefuns/raylight-windows-v100-fsdp-p2p.git raylight
 
-& $PY -m pip install -r .\raylight\requirements-windows-v100.txt
+& $PY -m pip install -r .\raylight\requirements-windows-v100-torch212.txt
 & $PY -m pip install -e .\raylight
 ```
 
-The validated V100 environment is `torch==2.7.0+cu126`, which retains `sm_70`. Do not install FlashAttention for this configuration, and do not replace the wheel with the cu128/cu130 builds used by newer architectures.
+The O12 V100 environment is `torch==2.12.0+cu126`, which retains `sm_70`; `2.7.0+cu126` is the rollback profile. The originally proposed Torch 2.8 Windows wheel fails the minimum Gloo transport probe and cannot provide this branch's control plane. Do not install FlashAttention or replace cu126 with cu128/cu130 builds intended for newer architectures.
 
 ### 3. Run preflight
 
@@ -383,7 +406,7 @@ Capacity and diagnostic settings are read when Ray workers start. Stop ComfyUI a
 Open <http://127.0.0.1:8188>. The essential ComfyUI command is:
 
 ```text
-main.py --listen 127.0.0.1 --port 8188 --disable-cuda-malloc --reserve-vram 3
+main.py --listen 127.0.0.1 --port 8188 --disable-cuda-malloc --disable-dynamic-vram --reserve-vram 3
 ```
 
 `--disable-cuda-malloc` is required by the validated V100 VAE path to avoid `cudaErrorNotSupported / operation not supported`.
@@ -564,6 +587,22 @@ FlashAttention, `--highvram`, or `--disable-smart-memory` when reproducing the a
 
 Same-checkpoint repeated generation, same-model Refine, and multi-segment generation pass. Segments reuse workers, but main-process CLIP/VAE weights and intermediate results can still increase physical RAM and commit. For strict isolation between two large workflows, run `RayKill`, wait for workers/GPU contexts to disappear, then start the next workflow.
 
+#### Reproduce the O12 accelerator workflows
+
+Use explicit release-matrix arguments on the project machine:
+
+```powershell
+cd E:\ComfyUI-py310
+.\start_raylight_p2p.ps1 `
+  -PythonPath E:\ComfyUI-py310\Python312\python.exe `
+  -P2PCapacityMiB 128 `
+  -ReserveVramGiB 4
+```
+
+Under the ComfyUI `O12` workflow directory, select `MMH3Director_O12_REF2VA_Turbo4_Sol.json` or `...Turbo8_Sol.json` for the recommended repeatable sampling gain. Use `...TE_Sol.json` to reproduce the chained topology, `...Base.json` for the exact Base control, and `...TE.json` only as an experimental TE-only control.
+
+The first execution includes model IO and Ray startup. Keep ComfyUI open and the checkpoint unchanged, then change the seed and run again for the warm measurement. The O12 JSON files already fix the MODEL chain, `fp16_h3_safe`, two-rank FSDP, and adaptive 128 MiB P2P settings; do not add another sampler stack. Keep diagnostics off for ordinary use. Outputs are written to `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o12`.
+
 ## Reproducible benchmark inputs
 
 The repository includes 5-second API prompt payloads under `benchmark_payloads/` for:
@@ -709,7 +748,8 @@ raylight/
 │  ├─ releases/                          bilingual release and upgrade notes
 │  └─ superpowers/plans/                 O1-O8 plans and acceptance gates
 ├─ environment-windows-v100.json         machine-readable validation matrix
-├─ requirements-windows-v100.txt         pinned Windows V100 dependencies
+├─ requirements-windows-v100-torch212.txt O12 preferred Windows V100 dependencies
+├─ requirements-windows-v100.txt         Python310/Torch2.7 rollback dependencies
 ├─ WINDOWS_P2P_CHANGES.md                previous-stage changes
 └─ WINDOWS_FSDP_CHANGES.md               current FSDP changes
 ```

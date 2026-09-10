@@ -139,6 +139,15 @@ O9 不改写上面的历史 P2P/Ulysses数据；它修复了旧 `all_to_all_sing
 
 真实回归覆盖 MiniMax H3 I2V/REF2VA、五段 MMH3Director + Refine 与 LTX 5 秒冷/热。LTX O9 冷/热端到端为 517.13/386.36 秒；两段采样为 14.9/45.9 与 14.9/47.8 s/it。输出均为 1280×704、121 帧、25 FPS，全部帧唯一、0 黑屏区间、音频 NaN/Inf=0；退出后两卡回到 10 MiB。完整数据见 [O9 验收记录](testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md)。
 
+## O12 补充：Python3.12/Torch2.12 与 H3 外部加速桥
+
+O12 的详细 MiniMax H3 Director 数据单独维护在 [O12 验收记录](testing/minimax-h3/O12_PYTHON312_H3_ACCELERATION_2026-09.zh-CN.md)，避免与早期 P2P/Ulysses 基线混淆。
+
+- Python 3.12.10 + Torch 2.12.0+cu126 已通过 Gloo、双 Ray actor、xFuser subgroup、FSDP2 与 CUDA P2P 真机门槛；PyTorch 2.8 Windows Gloo 探针失败，未采用。
+- 同一 864×480、124 帧、24 fps、约 5.17 秒 REF2VA 条件下，Sol-only 将热启动 4/8 步 worker 采样从 85.23/170.90 秒降到 69.28/138.06 秒，均约快 19%。
+- TE-only 在本次短轨迹中没有稳定收益；TE+Sol 的观测端到端为 130.67/200.05 秒，但采样与 Sol-only 相同或略慢，不能把 conditioning 波动误记为 TE 加速。
+- 16 个矩阵视频全部完整解码，均为 124/124 唯一帧且无黑段。4 步组合在同一进程三连跑复用同一 worker 对，退出后两卡回到 10 MiB。
+
 ## 证据与复现入口
 
 - 环境自检：[../scripts/verify-windows-v100.ps1](../scripts/verify-windows-v100.ps1)

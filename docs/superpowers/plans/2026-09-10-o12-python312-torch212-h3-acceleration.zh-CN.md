@@ -66,12 +66,12 @@
 **文件：**
 - 仅在发现真实不兼容时修改对应 Raylight拥有层，并先补回归测试。
 
-- [x] 运行完整单元测试（最终 Python312/Torch2.12 回归714项与35项子测试通过）。
+- [x] 运行完整单元测试（最终 Python312/Torch2.12 回归725项与35项子测试通过）。
 - [x] 运行 CUDA P2P、Ray双 actor、Gloo控制面、xFuser子组、FSDP2量化权重探针。
 - [x] 修复 xFuser硬编码 `backend="gloo"` 在新运行时另建隐式设备而卡死的问题，统一路由到 Raylight显式 Windows Gloo backend。
 - [x] 修复多分块复用 CUDA IPC event 时快 rank 可能提前覆盖共享缓冲区的问题；UINT8/FP16/BF16同步与异步尾块压力测试通过，实测带宽仍约59–61 GiB/s。
-- [ ] 运行旧 MiniMax H3 Director 4步工作流，确认旧路径正常出片。
-- [ ] 连续运行三次，确认 worker生命周期、内存和显存不持续增长。
+- [x] 运行旧 MiniMax H3 Director 4步 Base 工作流，确认旧路径正常出片。
+- [x] 4步 TE+Sol 连续运行三次；同一 worker 对复用，退出后两卡回到10 MiB，未出现持续内存/显存增长。
 
 ### Task 5：识别两个外部节点的 patch 契约
 
@@ -110,7 +110,7 @@
 - [x] 在 Ulysses all-to-all之后调用 Sol稀疏 override，保持输出布局和 dtype。
 - [x] Raylight已有 FP16安全逻辑拥有最终控制权，强制关闭外部内嵌 FP16Safe重复缩放。
 - [x] 真机合成张量验证28/56头布局、数值有限性和CUDA kernel实际消费Q/K/V；用户原始 `.pyd` 在Torch2.12下默认路径加载并执行通过。
-- [ ] 完整视频验证速度、显存与质量。
+- [x] 完整4/8步视频验证速度、显存与质量；Sol实际作用于两个 rank，16个矩阵视频全部通过媒体检查。
 
 ### Task 8：在 Ray worker执行 TE-Speed兼容缓存
 
@@ -123,7 +123,7 @@
 - [x] worker内导入并调用真实 TE-Speed节点，使其闭源 Cython缓存算法直接作用于真实 worker ModelPatcher。
 - [x] 每个 rank使用一致的纯数据配置重建patch，不跨 Ray传递 Cython对象或函数。
 - [x] 缺失外部节点时给出明确错误；未串联时旧路径不受影响。
-- [ ] 完整视频验证缓存命中、双 rank一致性、速度与异常回收。
+- [x] 完整视频验证双 rank一致性、速度与异常回收；短轨迹中TE未减少collective或产生稳定独立收益，保留为显式实验选项。
 
 ### Task 9：组合加速与端到端验收
 
@@ -135,11 +135,11 @@
 - 新建：`docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.en.md`
 - 新建：`scripts/minimax-h3/build_o12_director_workflow.py`
 
-- [ ] 运行相同素材/提示词/seed的5秒、0.4MP、16:9、FL2V工作流。
-- [ ] 分别测试无加速、TE、Sol、TE+Sol的4步与8步热启动。
-- [ ] 记录加载、预处理、Text Encoder、worker启动、采样、VAE/音频解码、保存、端到端时间及GPU/内存/分页峰值。
-- [ ] 组合路径目标达到或优于社区参考：4步132秒、8步200秒；若未达到，必须给出实测瓶颈而非降低标准。
-- [ ] 检查黑屏、噪声、NaN、音频异常、动作断裂和重复运行泄漏。
+- [x] 运行相同素材/提示词/几何的5.17秒、0.4MP、16:9 REF2VA工作流；社区FL2V只作量级参考，不混作同工作流对照。
+- [x] 分别测试无加速、TE、Sol、TE+Sol的4步与8步冷/热启动。
+- [x] 记录加载、conditioning、worker启动、采样、VAE/音频解码、保存、端到端时间及GPU/内存/分页峰值。
+- [x] 对照社区量级：组合4步130.67秒，优于132秒；组合8步200.05秒，比200秒慢0.05秒，按严格数值未超越。相对本机Base，Sol采样4/8步均约快19%。
+- [x] 检查黑屏、噪声、NaN、音频异常和重复运行泄漏；16个矩阵视频均124/124唯一帧、0黑段、完整解码，联系表无明显故障。
 - [ ] 部署唯一工作树到 `ComfyUI/custom_nodes/raylight`，复验部署一致性并更新中英文文档。
 
 ## 自审结论

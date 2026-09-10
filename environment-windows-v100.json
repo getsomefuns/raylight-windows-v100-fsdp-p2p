@@ -1,7 +1,7 @@
 {
-  "schema_version": 2,
-  "tested_date": "2026-08-16",
-  "profile_updated_date": "2026-08-31",
+  "schema_version": 3,
+  "tested_date": "2026-09-10",
+  "profile_updated_date": "2026-09-10",
   "scope": "native Windows, one machine, two ranks, FSDP2 inference enabled, Ulysses/Ring/CFG degree 0, DP degree 1",
   "hardware": {
     "gpus": 2,
@@ -15,16 +15,26 @@
     "nvidia_driver": "577.00",
     "nvidia_smi_reported_cuda_version": "12.9",
     "installed_cuda_toolkit": "12.9.86",
-    "python": "3.10.11"
+    "python": "3.12.10"
   },
   "python_packages": {
+    "torch": "2.12.0+cu126",
+    "torchvision": "0.27.0+cu126",
+    "torchaudio": "2.11.0+cu126",
+    "xformers": "0.0.35",
+    "ray": "2.57.0",
+    "xfuser": "0.4.5",
+    "yunchang": "0.6.4",
+    "te_speed_minimax_h3": "3.3 (optional)",
+    "solattn_v100": "1.1.1 route from the optional 1.2.0 package"
+  },
+  "legacy_runtime_profile": {
+    "python": "3.10.11",
     "torch": "2.7.0+cu126",
     "torchvision": "0.22.0+cu126",
     "torchaudio": "2.7.0+cu126",
     "xformers": "0.0.30",
-    "ray": "2.57.0",
-    "xfuser": "0.4.5",
-    "yunchang": "0.6.4"
+    "requirements": "requirements-windows-v100.txt"
   },
   "repositories": {
     "comfyui": "62b3c94bd45154f6486c7abf1b9efcacee96ea69",
@@ -54,6 +64,7 @@
     "maximum_validated_collective_input_bytes": 1610612736,
     "maximum_validated_remote_payload_bytes": 805306368,
     "maximum_synthetic_all_gather_shard_bytes": 402653184,
-    "maximum_validated_ltx_collective_input_bytes": 115343360
+    "maximum_validated_ltx_collective_input_bytes": 115343360,
+    "o12_default_runtime_requirements": "requirements-windows-v100-torch212.txt"
   }
 }

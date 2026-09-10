@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.14.0（O12）把推荐运行时升级到 Python 3.12.10 + PyTorch 2.12.0+cu126，并新增对 TE-Speed 3.3 与 Sol-Attn V100 的可选 worker 内重放桥。现有工作流默认不启用任何第三方加速；插入节点后，patch 会从 Director MODEL 代理传到两个真实 FSDP worker。5.17 秒、864×480 REF2VA 热启动矩阵中，Sol 将 4/8 步采样分别从 85.23/170.90 秒降到 69.28/138.06 秒，约快 19%；TE 在该短轨迹中没有稳定独立收益。Python312 全量回归为 `725 passed` 与 `35 subtests passed`。详见 [1.14.0 中文发布说明](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.zh-CN.md)和[O12 测试汇总](docs/testing/minimax-h3/O12_PYTHON312_H3_ACCELERATION_2026-09.zh-CN.md)。
+
 1.13.1 是 O11 上的 MiniMaxH3Director 兼容补丁。它同时保留旧版 `d655912` 的 `comfy.sample.sample()` 桥，并适配新版 `b8f721c` 改用的 `sample_single_stage → BasicGuider/CFGGuider → SamplerCustomAdvanced` 路径；官方 MiniMax AV `NestedTensor`、外接 SIGMAS、`apply_shift` 及 Director 的采样参数均可正确传给双 V100 worker，远程失败也不会静默退回 GPU0。全量自动化测试为 `701 passed`，新版 Director 双卡实机冒烟验证完成 56 帧、864×480、24 fps 输出，两张 GPU 均达到 100% 利用率。此次补丁没有修改 Director、ComfyUI 核心、模型精度、FSDP 或 P2P 数据路径。详见 [1.13.1 中文发布说明](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md)。
 
 1.13.0（O11）修复长多模态 Text Encoder 中 SDPA 回退数学注意力和平方遮罩导致的 OOM。专用双卡 Loader 新增独立的 `AUTO`、`XFORMERS_GQA`、`TORCH_EFFICIENT`、`MATH_DEBUG` 路由；目标 V100 上 AUTO 选择 xFormers GQA。15 秒视频、7 张不同图片和 7000 字符提示词展开为 24,236 序列并完整通过，冷/热为 112.94/112.55 秒。追加的 Diffusion 生命周期优化又让用户真实 15 秒、365 帧、0.4 MP、7图+1视频+1音频 REF2VA Turbo4 完整生成：采样由 1999.41 秒降至 1456.12 秒，采样期整卡峰值由 16215/16230 MiB 降至 13005/12873 MiB，输出365帧且可解码。0.6 MP 仍未验收通过。详见 [O11 中文发布说明](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md)和[测试汇总](docs/testing/minimax-h3/TEXT_ENCODER_EFFICIENT_ATTENTION_O11_2026-09.zh-CN.md)。
@@ -43,7 +45,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.13.1；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.14.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -58,6 +60,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - O10 双 V100 Text Encoder TP2 1.12.0：[中文](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.zh-CN.md) / [English](docs/releases/2026-08-29-dual-v100-text-encoder-tp2.en.md)
 - O11 Text Encoder 高效注意力 1.13.0：[中文](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md) / [English](docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md)
 - MiniMaxH3Director `b8f721c` 兼容补丁 1.13.1：[中文](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md) / [English](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md)
+- Python3.12/Torch2.12 与 H3 外部加速桥 1.14.0：[中文](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.zh-CN.md) / [English](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -96,6 +99,28 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 不会自动分片整个 ComfyUI 工作流；当前 FSDP 范围是通过 `RayUNETLoader`
   加载的 Diffusion Model。
 - 当前不支持 GGUF + FSDP、多于两个 rank、多机和训练反向传播。
+
+## O12 MiniMax H3 可选加速节点
+
+O12 不把第三方实现复制进 Raylight，而是提供一层窄范围桥接：外部节点仍按普通 ComfyUI 方式写入 MODEL patch，Raylight 只把可序列化配置送进两个真实 worker，并在那里调用已安装的原节点。
+
+推荐连接顺序：
+
+```text
+RayUNETLoader -> Ray MODEL Adapter (MMH3Director)
+              -> [TE-Speed，可选]
+              -> [Sol-Attn (V100)，可选]
+              -> MiniMaxH3Director
+```
+
+- 不连接两个外部节点就是原 Base 路径，旧工作流和数值行为不变。
+- 只连接 Sol 是当前最确定的采样加速方案；5.17 秒 REF2VA 的 4/8 步热采样均比 Base 快约 19%。
+- TE-only 在本次 4/8 步短轨迹中没有稳定收益。TE+Sol 可用于复现串联拓扑，但不能保证比 Sol-only 更快。
+- Sol 是稀疏近似注意力，画面与 Base 不会像素相同。正式生产前应使用自己的素材做质量复核。
+
+本仓库不包含外部节点源码或二进制。需要对应节点时分别安装 [TE-Speed-MiniMaxH3-OSS](https://github.com/HELPMEEADICE/TE-Speed-MiniMaxH3-OSS) 与 [ComfyUI-MiniMaxH3-SolAttn-V100](https://github.com/aaalll12322/ComfyUI-MiniMaxH3-SolAttn-V100)；Sol 还必须有匹配 Windows、Python 3.12、V100 的 kernel。
+
+可直接加载的对照工作流位于 `example_workflows/o12`，共包含 Turbo4/Turbo8 的 `Base`、`TE`、`Sol`、`TE_Sol` 八个 JSON。部署到本项目开发机后，对应 UI 路径为 `ComfyUI/user/default/workflows/O12`，输出统一保存到 `ComfyUI/output/video/raylight_o12`。
 
 ## MiniMax H3 双 V100 Text Encoder TP2（实验性）
 
@@ -331,21 +356,22 @@ CPU offload 数据可能进入页面文件。页面文件可以推迟 OOM，但�
 |---|---|
 | Windows | NT build 22631.6199 / 23H2 |
 | NVIDIA 驱动 | 577.00 |
-| Python | 3.10.11 x64 |
-| PyTorch | 2.7.0+cu126 |
-| torchvision | 0.22.0+cu126 |
-| torchaudio | 2.7.0+cu126 |
-| xformers | 0.0.30 |
+| Python | 3.12.10 x64（推荐）；3.10.11 为回滚 profile |
+| PyTorch | 2.12.0+cu126（推荐）；2.7.0+cu126 为回滚 profile |
+| torchvision | 0.27.0+cu126 |
+| torchaudio | 2.11.0+cu126 |
+| xformers | 0.0.35 |
 | Ray | 2.57.0 |
 | xFuser | 0.4.5 |
 | yunchang | 0.6.4 |
 | ComfyUI | 0.31.0，提交 `62b3c94bd45154f6486c7abf1b9efcacee96ea69` |
 | Raylight 上游基线 | 1.9.0，提交 `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf` |
-| Attention | `TORCH_EFFICIENT`，不安装 FlashAttention |
+| Diffusion Attention | Base 使用 `XFORMERS_MEMORY_EFFICIENT`；O12 可选 Sol-Attn V100；不安装 FlashAttention |
 
 机器可读版本清单见
 [environment-windows-v100.json](environment-windows-v100.json)，Python 依赖见
-[requirements-windows-v100.txt](requirements-windows-v100.txt)。
+[requirements-windows-v100-torch212.txt](requirements-windows-v100-torch212.txt)。旧
+[requirements-windows-v100.txt](requirements-windows-v100.txt) 保留为 Python310/Torch2.7 回滚 profile。
 
 ## 用户指南
 
@@ -390,21 +416,22 @@ cd E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
 
 ### 2. 安装固定版本环境
 
-建议使用独立 Python 3.10.11 环境，不要直接改动其他 ComfyUI 环境。
+建议使用独立 Python 3.12.10 环境，不要直接改动其他 ComfyUI 环境。O12 没有覆盖或删除旧 Python310；需要回滚时显式传入旧解释器即可。
 
 ```powershell
-$PY = "<你的 Python 3.10.11 路径>\python.exe"
+$PY = "<你的 Python 3.12.10 路径>\python.exe"
 cd <ComfyUI>\custom_nodes
 git clone `
   https://github.com/getsomefuns/raylight-windows-v100-fsdp-p2p.git raylight
 
-& $PY -m pip install -r .\raylight\requirements-windows-v100.txt
+& $PY -m pip install -r .\raylight\requirements-windows-v100-torch212.txt
 & $PY -m pip install -e .\raylight
 ```
 
 注意：
 
-- V100 验证环境固定为 `torch==2.7.0+cu126`。
+- O12 V100 验证环境固定为 `torch==2.12.0+cu126`；旧 `2.7.0+cu126` 仅作为回滚 profile。
+- 原候选 `torch==2.8.0+cu126` 的 Windows Gloo 最小探针失败，不能用于本分支的控制面；不要因为外部节点宣称由 2.8 编译就强制停留在 2.8。
 - 不要为这个配置安装 FlashAttention。
 - 不要把它替换成 cu128/cu130 PyTorch wheel；此分支验证的是包含 `sm_70`
   支持的 cu126 wheel。
@@ -486,7 +513,7 @@ http://127.0.0.1:8188
 脚本相当于使用以下关键 ComfyUI 参数：
 
 ```text
-main.py --listen 127.0.0.1 --port 8188 --disable-cuda-malloc --reserve-vram 3
+main.py --listen 127.0.0.1 --port 8188 --disable-cuda-malloc --disable-dynamic-vram --reserve-vram 3
 ```
 
 `--disable-cuda-malloc` 对已验证的 V100 VAE 路径是必要条件，用于避免
@@ -748,6 +775,27 @@ FP16 dtype allowlist、FlashAttention、`--highvram` 或 `--disable-smart-memory
 
 同 checkpoint 连续生成、同模型 Refine 与多段生成均已通过。多段不会为每一段重建 Worker，但 CLIP/VAE 的主进程权重和中间结果仍可能推高物理内存与 commit；更长视频不能只按显存判断容量。若需要强制隔离两个大型工作流，可在前一个工作流末尾 `RayKill`，等待 GPU/Worker 清空后再启动下一个。
 
+#### O12 加速工作流实机复现
+
+本机建议用明确参数启动，以复现发布矩阵：
+
+```powershell
+cd E:\ComfyUI-py310
+.\start_raylight_p2p.ps1 `
+  -PythonPath E:\ComfyUI-py310\Python312\python.exe `
+  -P2PCapacityMiB 128 `
+  -ReserveVramGiB 4
+```
+
+然后在 ComfyUI 的 `O12` 工作流目录选择：
+
+- `MMH3Director_O12_REF2VA_Turbo4_Sol.json`：当前推荐的 4 步采样加速方案。
+- `MMH3Director_O12_REF2VA_Turbo8_Sol.json`：当前推荐的 8 步采样加速方案。
+- `..._TE_Sol.json`：复现两个外部节点串联；本轮端到端最低，但采样不比 Sol-only 更快。
+- `..._Base.json`：精确 Base 对照；`..._TE.json`：TE-only 实验对照。
+
+首次执行包含模型读取与 Ray 启动。保持 ComfyUI 不关闭、checkpoint 不变，修改 seed 后再次运行才是热启动。O12 工作流已经把 MODEL 链、`fp16_h3_safe`、双 rank FSDP、128 MiB 自动分块所需节点设置固化；不要再增加第二套采样器。正常使用保持 `EnableDiagnostics` 关闭。所有结果写到 `E:\ComfyUI-py310\ComfyUI\output\video\raylight_o12`。
+
 ## 启动脚本设置了什么
 
 | 设置 | 默认值 | 作用 |
@@ -842,7 +890,7 @@ key。配置相同且 worker 健康时复用现有 actor；配置改变或健康
 - `torch.version.cuda`：PyTorch wheel 实际绑定的 CUDA 运行时。
 
 本项目运行时最重要的是第三项：已验证值为 CUDA 12.6，即
-`torch==2.7.0+cu126`。当前 Python 实现没有自编译 CUDA 扩展，因此运行分支本身
+`torch==2.12.0+cu126`。旧 `torch==2.7.0+cu126` 只作为回滚 profile。当前 Raylight Python 实现没有自编译 CUDA 扩展，因此运行分支本身
 不要求本机安装 CUDA Toolkit 12.9；编译 NVIDIA CUDA samples 时才需要 Toolkit。
 
 ## 测试与实测数据
@@ -986,7 +1034,8 @@ raylight/
 │  ├─ superpowers/plans/                 O1-O8 计划与验收门槛
 │  └─ windows-v100-fsdp-test-results-2026-08.csv  FSDP 精简数据
 ├─ environment-windows-v100.json         机器可读验证矩阵
-├─ requirements-windows-v100.txt         锁定依赖
+├─ requirements-windows-v100-torch212.txt O12 推荐锁定依赖
+├─ requirements-windows-v100.txt         Python310/Torch2.7 回滚依赖
 ├─ WINDOWS_P2P_CHANGES.md                上一阶段 P2P 修改说明
 └─ WINDOWS_FSDP_CHANGES.md               当前 FSDP 修改说明
 ```
