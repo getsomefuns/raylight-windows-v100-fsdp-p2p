@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -65,3 +66,11 @@ def test_derive_variant_rejects_unknown_variant_or_steps():
         builder.derive_variant(_combined_workflow(), variant="mystery", turbo_steps=4)
     with pytest.raises(ValueError, match="turbo_steps"):
         builder.derive_variant(_combined_workflow(), variant="none", turbo_steps=6)
+
+
+def test_all_committed_o12_workflows_are_valid_json():
+    workflow_root = Path(__file__).parents[1] / "example_workflows" / "o12"
+
+    parsed = [json.loads(path.read_text(encoding="utf-8")) for path in workflow_root.glob("*.json")]
+
+    assert len(parsed) == 8
