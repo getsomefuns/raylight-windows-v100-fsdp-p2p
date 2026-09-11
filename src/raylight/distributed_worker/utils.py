@@ -17,20 +17,24 @@ class _RayTqdmCompat:
     def __init__(self, iterable=None, **kwargs):
         self._iterable = iterable
         self._bar = ray_tqdm(iterable, **_filter_ray_tqdm_kwargs(kwargs))
+        self._closed = False
 
     def __iter__(self):
         try:
-            yield from self._bar
-            return
-        except TypeError:
-            pass
+            try:
+                yield from self._bar
+                return
+            except TypeError:
+                pass
 
-        if self._iterable is None:
-            return
+            if self._iterable is None:
+                return
 
-        for item in self._iterable:
-            yield item
-            self.update(1)
+            for item in self._iterable:
+                yield item
+                self.update(1)
+        finally:
+            self.close()
 
     def __enter__(self):
         return self
@@ -80,6 +84,9 @@ class _RayTqdmCompat:
             return refresh()
 
     def close(self):
+        if self._closed:
+            return None
+        self._closed = True
         close = getattr(self._bar, "close", None)
         if close is None:
             return None
