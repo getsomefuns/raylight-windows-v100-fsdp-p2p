@@ -1,22 +1,22 @@
-# O13 MiniMaxH3 Director ed3cdb0 完整兼容设计
+# O13 MiniMaxH3 Director 19b6a73 完整兼容设计
 
 ## 目标
 
-将 MiniMaxH3 Director 从 `b8f721c` 更新到 `ed3cdb0`，同时保持 Raylight Windows 双 V100 FSDP/P2P、SOL Attention、TE 加速、热 worker 复用和旧工作流兼容。适配范围必须覆盖 Director 一采、Director 自带二采 Refine、连续段重锁定、Refine 空间分块以及逐步循环 WebP 预览。
+将 MiniMaxH3 Director 从 `b8f721c` 更新到 `19b6a73`，同时保持 Raylight Windows 双 V100 FSDP/P2P、SOL Attention、TE 加速、热 worker 复用和旧工作流兼容。适配范围必须覆盖 Director 一采、Director 自带二采 Refine、连续段重锁定、Refine 空间分块、逐步循环 WebP 预览，以及新版 `shift_cache` 调用契约。
 
 ## 边界
 
 - 只修改唯一源码工作树 `E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p`；部署目录不直接编辑。
 - Director 作为独立上游节点仓库快进更新，不在其源码中维护本项目补丁。
 - 不修改 ComfyUI 核心、不修改 SOL Attention、TE-Speed 或其他节点。
-- 旧 Director `d655912`、`b8f721c` 接口继续被 Raylight 接受；新版 `ed3cdb0` 作为当前验证目标。
+- 旧 Director `d655912`、`b8f721c` 接口继续被 Raylight 接受；新版 `19b6a73` 作为当前验证目标。
 - 空间分块用于降低显存，不承诺比不分块更快；显存足够时默认关闭。
 
 ## 架构
 
 ### 新版采样契约
 
-Raylight 的 Director bridge 接受新增关键字：`after_shift`、`enable_tiling`、`tile_count`、`tile_overlap`。`after_shift` 不直接序列化闭包，而转换为受控能力标识；当前只接受 Director 的 `install_continue_prefix_remask`，未知回调必须明确报错。
+Raylight 的 Director bridge 接受新增关键字：`after_shift`、`enable_tiling`、`tile_count`、`tile_overlap`、`shift_cache`。`after_shift` 不直接序列化闭包，而转换为受控能力标识；当前只接受 Director 的 `install_continue_prefix_remask`，未知回调必须明确报错。`shift_cache` 只缓存主进程的 ComfyUI MODEL 克隆；Raylight 的真实权重位于远端 worker，因此 bridge 接收该参数但不把主进程缓存跨进程序列化，worker 继续由 Raylight 自己管理生命周期。
 
 ### 连续段重锁定
 
@@ -38,5 +38,4 @@ Raylight 的 Director bridge 接受新增关键字：`after_shift`、`enable_til
 - Refine 空间分块 2 块可完成一次4步采样，输出有限值且无空间接缝异常。
 - 开启实时预览时，4步采样能在结束前收到逐步事件并显示循环 WebP；关闭时无队列和额外传输。
 - 原有 O11/O12 工作流和节点接口测试不退化，热运行只保留一对 worker。
-- 部署副本与源码提交完全一致，Director 固定在 `ed3cdb0`。
-
+- 部署副本与源码提交完全一致，Director 固定在 `19b6a73`。

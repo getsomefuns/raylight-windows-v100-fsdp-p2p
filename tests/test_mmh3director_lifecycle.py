@@ -97,6 +97,13 @@ def _dispatch(proxy, callback=None):
         mock.patch.object(bridge.comfy.model_management, "unload_all_models"),
         mock.patch.object(bridge.comfy.model_management, "soft_empty_cache"),
         mock.patch.object(sampling_lifecycle.gc, "collect"),
+        mock.patch.object(bridge.preview_transport, "create_preview_queue", return_value=object()),
+        mock.patch.object(
+            bridge.preview_transport,
+            "wait_for_worker_results",
+            side_effect=lambda futures, _queue, _callback: futures,
+        ),
+        mock.patch.object(bridge.preview_transport, "close_preview_queue"),
     ):
         return bridge.dispatch_mmh3director_sample(
             proxy,

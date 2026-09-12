@@ -22,7 +22,7 @@ from . import preview_transport
 
 
 SUPPORTED_DIRECTOR_VERSION = "main"
-SUPPORTED_DIRECTOR_COMMIT = "ed3cdb0563db71fa5cb7f6861d167a8febf55e6d"
+SUPPORTED_DIRECTOR_COMMIT = "19b6a7325b1abdd8706b3c2f7d8ecf70a1126181"
 LEGACY_DIRECTOR_VERSION = "1.0.0"
 LEGACY_DIRECTOR_COMMIT = "d655912262bcd70ad43c3a431879be9539d8e054"
 LEGACY_SAMPLE_SINGLE_STAGE_PARAMETERS = (
@@ -251,8 +251,15 @@ def dispatch_mmh3director_stage(
     enable_tiling: bool = False,
     tile_count: int = 2,
     tile_overlap: int = 128,
+    shift_cache=None,
 ):
     """Route the current Director stage seam to the existing Ray workers."""
+
+    # Director 19b6a73 reuses SigmaShift clones through this local cache.  The
+    # real model lives in Ray workers, so retaining the main-process proxy clone
+    # has no weight/VRAM benefit. Accept the contract while keeping worker-side
+    # lifecycle ownership in Raylight.
+    del shift_cache
 
     if not isinstance(model, RayMMH3DirectorModelProxy):
         raise TypeError("dispatch_mmh3director_stage requires RayMMH3DirectorModelProxy")

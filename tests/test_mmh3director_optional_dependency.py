@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import importlib.util
+import inspect
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+import pytest
+
+from raylight.integrations.mmh3director import bridge
 
 from .path_helpers import comfy_root
 
@@ -53,3 +59,23 @@ def test_root_import_registers_adapter_without_importing_director_package():
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "PASS" in completed.stdout
+
+
+def test_installed_director_matches_the_current_stage_contract():
+    core_path = (
+        COMFYUI_ROOT
+        / "custom_nodes"
+        / "ComfyUI_MiniMaxH3_Director"
+        / "director"
+        / "core_sampling.py"
+    )
+    if not core_path.is_file():
+        pytest.skip("MiniMaxH3Director is not installed beside this checkout")
+
+    spec = importlib.util.spec_from_file_location("raylight_test_mmh3director_core", core_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert "shift_cache" in inspect.signature(module.sample_single_stage).parameters
+    assert bridge.validate_mmh3director_sample_single_stage(module.sample_single_stage) == "stage"

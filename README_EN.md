@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.15.0 (O13) adapts MiniMaxH3Director `19b6a73`. Director-native Refine, continuity remasking, Refine spatial tiling, and step-wise live previews now execute through the dual-V100 workers instead of being silently dropped. The new `shift_cache` argument is accepted explicitly, but the main-process proxy cache is not serialized; Raylight retains lifecycle ownership of the real remote weights. Refine tiling is a VRAM feature and the untiled path is normally faster when memory permits. Preview events come only from rank 0 through a size-one non-blocking queue, and disabling preview creates no transport. See the [1.15.0 English release note](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.en.md) and [O13 test record](docs/testing/minimax-h3/O13_MMH3DIRECTOR_19B6A73_2026-09.zh-CN.md).
+
 Version 1.14.0 (O12) moves the preferred runtime to Python 3.12.10 and PyTorch 2.12.0+cu126, and adds optional worker-side replay bridges for TE-Speed 3.3 and Sol-Attn V100. Existing workflows enable neither accelerator by default. In the matched 5.17-second 864x480 REF2VA matrix, Sol reduces 4/8-step warm worker sampling from 85.23/170.90 seconds to 69.28/138.06 seconds, about 19%. TE does not show a stable standalone benefit on these short trajectories. The Python312 full suite reports `725 passed` and `35 subtests passed`. See the [1.14.0 English release note](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.en.md) and [Chinese O12 test report](docs/testing/minimax-h3/O12_PYTHON312_H3_ACCELERATION_2026-09.zh-CN.md).
 
 Version 1.13.1 is an O11 compatibility patch for MiniMaxH3Director. It retains the legacy `comfy.sample.sample()` bridge used by commit `d655912` while adapting the `sample_single_stage → BasicGuider/CFGGuider → SamplerCustomAdvanced` path in `b8f721c`. Official MiniMax AV `NestedTensor` inputs, external SIGMAS, `apply_shift`, and Director sampling controls are forwarded correctly to the dual-V100 workers, and remote failures never fall back silently to GPU0. The full automated suite reports `701 passed`; a current-Director hardware smoke test produced 56 frames at 864×480 and 24 fps with both GPUs reaching 100% utilization. Director, ComfyUI core, model precision, FSDP, and P2P data paths are unchanged. See the [1.13.1 English release note](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md).
@@ -35,7 +37,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.14.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.15.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -51,6 +53,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - O11 efficient Text Encoder attention 1.13.0: [English](docs/releases/2026-09-o11-text-encoder-efficient-attention.en.md) / [中文](docs/releases/2026-09-o11-text-encoder-efficient-attention.zh-CN.md)
 - MiniMaxH3Director `b8f721c` compatibility patch 1.13.1: [English](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md) / [中文](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md)
 - Python 3.12/Torch 2.12 and H3 external accelerator bridge 1.14.0: [English](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.en.md) / [中文](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.zh-CN.md)
+- MiniMaxH3Director `19b6a73` full compatibility 1.15.0: [English](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.en.md) / [中文](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -150,7 +153,7 @@ Before TP2 encoding, the main process unloads current ComfyUI GPU models and acq
 
 The proxy carries no weights. It only marks which Ray workers must execute this MODEL's sampling request. Legacy Director is intercepted at `comfy.sample.sample()`; current Director is intercepted at `sample_single_stage()` before `BasicGuider → SamplerCustomAdvanced`. Conditioning, latent, fixed seed, sampling controls, and optional SIGMAS are executed by both workers and returned as latent so Director can continue VAE, audio, mux, and save. Director therefore does not sample locally and then sample again in Raylight.
 
-Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is explicit and never silently falls back to GPU 0. MiniMaxH3Director source is unmodified; validated coordinates include legacy `d655912` and current mainline `b8f721c`.
+Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is explicit and never silently falls back to GPU 0. MiniMaxH3Director source is unmodified; validated coordinates include legacy `d655912`, `b8f721c`, and current mainline `19b6a73`.
 
 ### Boundaries
 
@@ -159,8 +162,10 @@ Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is expl
 - Director owns all generation arguments. Raylight owns GPU count, parallel degrees, FSDP, CPU offload, attention, and worker lifecycle.
 - Only the Diffusion Model is FSDP-sharded. The explicit O10 node can use separate TP2 for the supported Text Encoder language backbone; its vision tower, Video VAE, Audio VAE, mux, and save remain in the ComfyUI main process.
 - Main-process preprocessing models are released from GPU before remote sampling to avoid rank-0 overlap. Reloadable weights can remain in RAM/commit, so multi-segment and long jobs must be sized against host memory and pagefile too.
-- Same-model Refine is validated. A custom refine path requiring another checkpoint, different weights, or bypassing standard `comfy.sample.sample()` is outside the guarantee.
-- Remote workers expose no separate per-frame preview stream. Director resumes its normal preview/decode path after receiving latent.
+- Director-native same-model Refine stays on both workers, including spatial tiling on each real worker sampler. Tiling saves transient VRAM but adds kernel launches, so leave it off when memory permits.
+- Continuity remasking is reconstructed on both real worker models. Unknown callbacks fail explicitly instead of silently degrading.
+- With Director live preview enabled, rank 0 sends at most 16 video-latent frames through a non-blocking single-slot queue to Director's original callback. Disabled preview creates no queue or preview traffic.
+- Custom Refine requiring another checkpoint, different weights, or bypassing `sample_single_stage()`/legacy `comfy.sample.sample()` is outside the guarantee.
 
 ## Current FSDP capability
 
@@ -719,9 +724,9 @@ A playable file, non-black pixels, and absence of NaN/Inf are only basic gates. 
 - GGUF does not use this FSDP implementation.
 - Do not force the LTX 2.3 model globally to FP16: the validated experiment produced black video and audio NaN/Inf. Keep the default BF16/FP32 inference policy and the branch's V100 fallbacks.
 - Ray on Windows is Beta and has more startup/host-memory overhead than Linux + NCCL.
-- The Director adapter retains the legacy MiniMaxH3Director `d655912` sample bridge and adds the `b8f721c` stage bridge. Other interface coordinates require new acceptance and incompatible versions fail explicitly.
+- The Director adapter retains the legacy MiniMaxH3Director `d655912` sample bridge and validates the `b8f721c` and `19b6a73` stage bridge. Other interface coordinates require new acceptance and incompatible versions fail explicitly.
 - Multi-segment reuse reduces model reloads but cannot eliminate main-process CLIP/VAE, intermediate-latent, RAM, or commit/pagefile pressure.
-- Remote Director sampling has no separate per-frame preview stream; Director/ComfyUI still owns preview and decode.
+- Remote step previews carry only sparse rank-0 CPU latents; Director/ComfyUI still owns TAE/WebP rendering and final decode.
 - Models, GPU families, drivers, quantization layouts, and longer workflows outside the validation matrix need independent correctness, memory, and visual acceptance.
 
 ## Troubleshooting

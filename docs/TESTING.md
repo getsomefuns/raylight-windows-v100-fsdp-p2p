@@ -143,6 +143,10 @@ O9 不改写上面的历史 P2P/Ulysses数据；它修复了旧 `all_to_all_sing
 
 O12 的详细 MiniMax H3 Director 数据单独维护在 [O12 验收记录](testing/minimax-h3/O12_PYTHON312_H3_ACCELERATION_2026-09.zh-CN.md)，避免与早期 P2P/Ulysses 基线混淆。
 
+## O13 补充：MiniMaxH3Director 19b6a73 完整兼容
+
+O13 覆盖 Director 自带 Refine、连续段动态 remask、Refine 空间分块、逐步实时预览及新版 `shift_cache` 契约。自动化与双 V100 实机证据单独维护在 [O13 验收记录](testing/minimax-h3/O13_MMH3DIRECTOR_19B6A73_2026-09.zh-CN.md)，不得与 O8/O12 的旧接口结果混算。
+
 - Python 3.12.10 + Torch 2.12.0+cu126 已通过 Gloo、双 Ray actor、xFuser subgroup、FSDP2 与 CUDA P2P 真机门槛；PyTorch 2.8 Windows Gloo 探针失败，未采用。
 - 同一 864×480、124 帧、24 fps、约 5.17 秒 REF2VA 条件下，Sol-only 将热启动 4/8 步 worker 采样从 85.23/170.90 秒降到 69.28/138.06 秒，均约快 19%。
 - TE-only 在本次短轨迹中没有稳定收益；TE+Sol 的观测端到端为 130.67/200.05 秒，但采样与 Sol-only 相同或略慢，不能把 conditioning 波动误记为 TE 加速。

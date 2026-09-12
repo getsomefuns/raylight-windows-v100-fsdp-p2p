@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "raylight"
-version = "1.14.1"
+version = "1.15.0"
 description = "Experimental native-Windows dual-V100 FSDP2 and CUDA P2P support for Raylight"
 authors = [
   {name = "Micko Lesmana", email = "mickolesmana@gmail.com"}

@@ -64,6 +64,7 @@ def _supported_sample_single_stage(
     enable_tiling: bool = False,
     tile_count: int = 2,
     tile_overlap: int = 128,
+    shift_cache=None,
 ):
     del (
         model,
@@ -88,6 +89,7 @@ def _supported_sample_single_stage(
         enable_tiling,
         tile_count,
         tile_overlap,
+        shift_cache,
     )
 
 
@@ -207,7 +209,7 @@ def test_proxy_dispatch_failure_never_falls_back_to_local_sampler(isolated_sampl
 
 def test_supported_director_signature_is_fixed_to_the_accepted_commit():
     assert bridge.EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS == EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS
-    assert bridge.SUPPORTED_DIRECTOR_COMMIT == "ed3cdb0563db71fa5cb7f6861d167a8febf55e6d"
+    assert bridge.SUPPORTED_DIRECTOR_COMMIT == "19b6a7325b1abdd8706b3c2f7d8ecf70a1126181"
     bridge.validate_mmh3director_sample_single_stage(_supported_sample_single_stage)
 
 
@@ -228,7 +230,7 @@ def test_missing_director_parameter_reports_version_commit_and_field():
     def missing_scheduler(*, model, positive, negative, latent, seed, cfg, steps, sampler_name, **kwargs):
         del model, positive, negative, latent, seed, cfg, steps, sampler_name, kwargs
 
-    with pytest.raises(RuntimeError, match=r"scheduler.*ed3cdb0"):
+    with pytest.raises(RuntimeError, match=r"scheduler.*19b6a73"):
         bridge.validate_mmh3director_sample_single_stage(missing_scheduler)
 
 
@@ -418,6 +420,7 @@ def test_new_director_stage_routes_proxy_before_basic_guider_and_preserves_laten
             enable_tiling=True,
             tile_count=3,
             tile_overlap=96,
+            shift_cache=object(),
         )
 
     prepare_noise.assert_called_once_with(latent_samples, 12345, [7])
