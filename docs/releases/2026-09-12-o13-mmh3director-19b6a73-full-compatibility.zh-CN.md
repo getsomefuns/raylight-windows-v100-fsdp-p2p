@@ -12,6 +12,7 @@
 - 实时预览只由 rank 0 抽取最多 16 个视频 latent 帧，通过容量为 1 的非阻塞 Ray 队列交回 Director 原回调。队列满时丢弃过期中间帧，不阻塞采样；预览关闭时不创建队列。
 - 接收 Director `19b6a73` 新增的 `shift_cache` 参数。该缓存只管理主进程 MODEL 克隆，而 Raylight 的真实权重在远端，因此不跨进程序列化，避免两套生命周期互相干扰。
 - 增加真实已安装 Director 签名回归测试，兼容错误会显示当前验证提交。
+- 修复 Ray worker 无法导入同级 Director 分块模块的问题：通过 ComfyUI 配置发现节点目录，以私有运行时包加载 `director` 子包；远端异常现在会在 Director 警告中保留根因末行。
 
 ## Director 上游更新覆盖
 
@@ -28,3 +29,4 @@
 
 自动化覆盖 bridge、worker remask、空间分块、异常恢复、预览队列、真实 Director 签名以及旧路由。双 V100 实机结果维护在 [O13 测试记录](../testing/minimax-h3/O13_MMH3DIRECTOR_19B6A73_2026-09.zh-CN.md)。
 
+同参实机工作流（864×480、124 帧/5.17 秒、首采 4 步 + Refine 2 步、2 块）端到端 299.85 秒。首采与 Refine 两次 operation 均由同一对 worker 完成，两卡利用率峰值均 100%，显存峰值 9223/9201 MiB；输出为 124 帧、24 fps 的 H.264 + AAC，抽检无黑屏、随机噪声或明显 tile 接缝，结束后两卡回落至约 10 MiB。

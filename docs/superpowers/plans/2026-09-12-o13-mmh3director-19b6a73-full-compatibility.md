@@ -57,13 +57,13 @@
 ### Task 5: Version, bilingual docs, commit, and deployment
 
 - [x] Publish Raylight `1.15.0` docs covering tiling, preview overhead, `shift_cache`, and fallback behavior.
-- [x] Run Director/O11/O12/deployment/contract tests and Ruff (`740 passed + 35 subtests`; Ruff passes).
-- [ ] Review `git diff --check`, paths, secrets, and unrelated files; commit canonical source.
-- [ ] Deploy with the canonical script and verify the marker matches the source commit.
+- [x] Run Director/O11/O12/deployment/contract tests and Ruff (`741 passed + 35 subtests`; Ruff passes).
+- [x] Review `git diff --check`, paths, secrets, and unrelated files; commit canonical source.
+- [x] Deploy with the canonical script and verify the marker matches the source commit.
 
 ### Task 6: Dual-V100 four-step acceptance
 
-- [ ] Start ComfyUI with the production launcher and verify clean imports.
-- [ ] Run one four-step Director workflow with live preview and two-tile Refine.
-- [ ] Verify both GPUs, finite media, animated previews, tile quality, and one worker pair.
-- [ ] Record evidence and stop the test process; return to the failing TDD task if needed.
+- [x] Start ComfyUI with the production launcher and verify clean imports.
+- [x] Run one four-step Director workflow with live preview and two-tile Refine.
+- [x] Verify both GPUs, finite media, animated previews, tile quality, and one worker pair.
+- [x] Record evidence and stop the test process; the first failure returned to TDD and passed an identical rerun.

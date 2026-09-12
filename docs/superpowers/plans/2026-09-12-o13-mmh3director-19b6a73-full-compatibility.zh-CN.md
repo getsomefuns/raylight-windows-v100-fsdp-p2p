@@ -67,15 +67,15 @@
 **Files:** `pyproject.toml`、`__init__.py`、两个 README、双语 release note、O13 测试报告。
 
 - [x] 更新至 Raylight `1.15.0`，说明分块用途、预览开销、`shift_cache` 边界和回退路径。
-- [x] 运行 Director/O11/O12/部署/节点契约测试和 Ruff（`740 passed + 35 subtests`，Ruff 通过）。
-- [ ] 审查 `git diff --check`、绝对路径、敏感信息和无关文件后提交源码。
-- [ ] 运行 `scripts/deploy-to-comfyui.ps1`，确认部署标记等于源码提交。
+- [x] 运行 Director/O11/O12/部署/节点契约测试和 Ruff（`741 passed + 35 subtests`，Ruff 通过）。
+- [x] 审查 `git diff --check`、绝对路径、敏感信息和无关文件后提交源码。
+- [x] 运行 `scripts/deploy-to-comfyui.ps1`，确认部署标记等于源码提交。
 
 ### Task 6: 双 V100 四步实机验收
 
-**Files:** `docs/testing/minimax-h3/O13_MMH3DIRECTOR_ED3CDB0_2026-09.zh-CN.md`
+**Files:** `docs/testing/minimax-h3/O13_MMH3DIRECTOR_19B6A73_2026-09.zh-CN.md`
 
-- [ ] 用正式脚本启动 ComfyUI，确认节点导入正常。
-- [ ] 运行一次4步 Director 工作流，开启逐步预览和2块 Refine。
-- [ ] 验证双卡、有限输出、动态预览、无明显分块接缝和仅一对 worker。
-- [ ] 保存精简证据并停止进程；失败则回到对应 TDD 任务。
+- [x] 用正式脚本启动 ComfyUI，确认节点导入正常。
+- [x] 运行一次4步 Director 工作流，开启逐步预览和2块 Refine。
+- [x] 验证双卡、有限输出、动态预览、无明显分块接缝和仅一对 worker。
+- [x] 保存精简证据并停止进程；首轮失败已回到对应 TDD 任务修复并完成同参复测。

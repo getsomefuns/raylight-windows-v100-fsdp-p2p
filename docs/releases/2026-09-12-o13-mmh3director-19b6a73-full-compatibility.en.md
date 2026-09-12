@@ -12,6 +12,7 @@ This release moves the validated MiniMaxH3Director coordinate from `b8f721c` to 
 - Send previews only from rank 0: at most 16 video-latent frames through a size-one non-blocking Ray queue into Director's original callback. Full queues drop stale intermediate events instead of blocking sampling; disabled preview creates no queue.
 - Accept Director `19b6a73`'s `shift_cache`. It owns local MODEL clones, while real Raylight weights are remote, so the cache is intentionally not serialized across processes.
 - Add regression coverage against the actually installed Director signature and report the validated commit in compatibility errors.
+- Fix Director tile-module discovery inside Ray workers: locate the installed node through ComfyUI's configured custom-node roots and load only its `director` package under a private runtime namespace. Remote failures now retain the final root-cause line in Director warnings.
 
 ## Upstream Director coverage
 
@@ -28,3 +29,4 @@ The `b8f721c..19b6a73` range contains more than Refine and previews: mixed per-s
 
 Automated coverage includes bridge routing, worker remask, spatial tiling, failure restoration, preview transport, the installed Director signature, and legacy routing. Dual-V100 evidence is maintained in the [O13 test record](../testing/minimax-h3/O13_MMH3DIRECTOR_19B6A73_2026-09.zh-CN.md).
 
+The fixed-parameter hardware run (864×480, 124 frames / 5.17 seconds, 4-step first pass plus 2-step Refine, two spatial tiles) completed end to end in 299.85 seconds. The same worker pair completed both Ray operations; both GPUs reached 100% utilization with 9223/9201 MiB peak VRAM. The 124-frame 24-fps H.264 + AAC output had no black frames, random-noise failure, or obvious tile seam in the five-frame inspection, and both GPUs returned to about 10 MiB after shutdown.
