@@ -5,6 +5,7 @@ import copy
 import json
 import logging
 import functools
+import importlib
 import time
 import statistics
 from datetime import timedelta
@@ -333,6 +334,65 @@ def _mmh3director_finite_summary(samples):
             }
         )
     return {"finite": finite, "streams": rows}
+
+
+def _import_mmh3director_module(suffix: str):
+    module_suffix = f".director.{suffix}"
+    for module_name, module in tuple(sys.modules.items()):
+        identity = f"{module_name} {getattr(module, '__file__', '')}".lower()
+        if module_name.endswith(module_suffix) and "minimaxh3_director" in identity:
+            return module
+    return importlib.import_module(f"ComfyUI_MiniMaxH3_Director.director.{suffix}")
+
+
+def _apply_mmh3director_after_shift(model, request):
+    capability = request.get("after_shift_capability")
+    if capability is None:
+        return model
+    if capability != "continue_prefix_remask_v1":
+        raise RuntimeError(f"Unsupported MiniMaxH3Director after_shift capability: {capability}")
+
+    latent = {
+        "samples": request["latent_image"],
+    }
+    if request.get("noise_mask") is not None:
+        latent["noise_mask"] = request["noise_mask"]
+    latent.update(dict(request.get("director_latent_metadata") or {}))
+    module = _import_mmh3director_module("h3_latent_continue")
+    return module.install_continue_prefix_remask(model, latent, request.get("sigmas"))
+
+
+def _sample_mmh3director_spatial_tiles(comfy_sample, model, request, *, callback=None):
+    sigmas = request.get("sigmas")
+    if sigmas is None:
+        raise RuntimeError("MiniMaxH3Director spatial tiling requires an explicit sigma schedule")
+
+    import comfy.samplers as comfy_samplers
+
+    sampler = comfy_samplers.sampler_object(request["sampler_name"])
+    spatial = _import_mmh3director_module("spatial_tiled_sampling")
+    restore = spatial.wrap_sampler_spatial_tiles(
+        sampler,
+        n_tiles=max(1, min(8, int(request.get("tile_count", 2)))),
+        overlap_pixels=max(0, int(request.get("tile_overlap", 128))),
+    )
+    try:
+        return comfy_sample.sample_custom(
+            model,
+            request["noise"],
+            float(request["cfg"]),
+            sampler,
+            sigmas,
+            request["positive"],
+            request["negative"],
+            request["latent_image"],
+            noise_mask=request.get("noise_mask"),
+            callback=callback,
+            disable_pbar=bool(request.get("disable_pbar", False)) or request.get("rank", 0) != 0,
+            seed=request.get("seed"),
+        )
+    finally:
+        restore()
 
 
 # Developer reminder, Checking model parameter outside ray actor is very expensive (e.g Comfy main thread)
@@ -2050,29 +2110,41 @@ class RayWorker:
             )
 
             model_for_sampling = apply_external_acceleration(model_for_sampling)
+            model_for_sampling = _apply_mmh3director_after_shift(model_for_sampling, request)
 
             with torch.no_grad():
-                samples = comfy_sample.sample(
-                    model_for_sampling,
-                    request["noise"],
-                    int(request["steps"]),
-                    float(request["cfg"]),
-                    request["sampler_name"],
-                    request["scheduler"],
-                    positive,
-                    negative,
-                    request["latent_image"],
-                    denoise=float(request.get("denoise", 1.0)),
-                    disable_noise=bool(request.get("disable_noise", False)),
-                    start_step=request.get("start_step"),
-                    last_step=request.get("last_step"),
-                    force_full_denoise=bool(request.get("force_full_denoise", False)),
-                    noise_mask=request.get("noise_mask"),
-                    sigmas=request.get("sigmas"),
-                    callback=None,
-                    disable_pbar=bool(request.get("disable_pbar", False)) or self.local_rank != 0,
-                    seed=request.get("seed"),
-                )
+                if bool(request.get("enable_tiling", False)):
+                    tiled_request = dict(request)
+                    tiled_request["positive"] = positive
+                    tiled_request["negative"] = negative
+                    tiled_request["rank"] = int(self.local_rank)
+                    samples = _sample_mmh3director_spatial_tiles(
+                        comfy_sample,
+                        model_for_sampling,
+                        tiled_request,
+                    )
+                else:
+                    samples = comfy_sample.sample(
+                        model_for_sampling,
+                        request["noise"],
+                        int(request["steps"]),
+                        float(request["cfg"]),
+                        request["sampler_name"],
+                        request["scheduler"],
+                        positive,
+                        negative,
+                        request["latent_image"],
+                        denoise=float(request.get("denoise", 1.0)),
+                        disable_noise=bool(request.get("disable_noise", False)),
+                        start_step=request.get("start_step"),
+                        last_step=request.get("last_step"),
+                        force_full_denoise=bool(request.get("force_full_denoise", False)),
+                        noise_mask=request.get("noise_mask"),
+                        sigmas=request.get("sigmas"),
+                        callback=None,
+                        disable_pbar=bool(request.get("disable_pbar", False)) or self.local_rank != 0,
+                        seed=request.get("seed"),
+                    )
 
             summary = _mmh3director_finite_summary(samples)
             if not summary["finite"]:

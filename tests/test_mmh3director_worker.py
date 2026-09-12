@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import inspect
 from types import SimpleNamespace
 from unittest import mock
@@ -86,6 +87,11 @@ def _request(operation_id="operation-a", samples=None):
         "noise_mask": torch.ones(1, 1, 2, 4, 4),
         "sigmas": None,
         "apply_shift": True,
+        "after_shift_capability": None,
+        "director_latent_metadata": {},
+        "enable_tiling": False,
+        "tile_count": 2,
+        "tile_overlap": 128,
         "disable_pbar": True,
         "seed": 12345,
         "model_options": {
@@ -236,6 +242,124 @@ def test_worker_skips_sigma_shift_when_current_director_disables_it():
     sigma_shift.assert_not_called()
     assert worker.model.clone_calls == 1
     assert sample.call_args.args[0] is not worker.model
+
+
+def test_worker_reconstructs_continue_remask_on_the_real_shifted_model():
+    worker = _worker()
+    request = _request(operation_id="operation-remask")
+    request["sigmas"] = torch.tensor([1.0, 0.5, 0.0])
+    request["after_shift_capability"] = "continue_prefix_remask_v1"
+    request["director_latent_metadata"] = {
+        "_director_continue_prefix_steps": 1,
+        "_director_continue_seam_min": 0.1,
+    }
+    shifted_model = _ModelPatcher()
+    remasked_model = _ModelPatcher()
+    remask = mock.Mock(return_value=remasked_model)
+    director_module = SimpleNamespace(install_continue_prefix_remask=remask)
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            return_value=(shifted_model,),
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch("comfy.sample.sample", return_value=request["latent_image"]) as sample,
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+        mock.patch.object(importlib, "import_module", return_value=director_module),
+    ):
+        _unwrapped_sample(worker, request)
+
+    call = remask.call_args
+    assert call.args[0] is shifted_model
+    assert call.args[1]["samples"] is request["latent_image"]
+    assert call.args[1]["noise_mask"] is request["noise_mask"]
+    assert call.args[1]["_director_continue_prefix_steps"] == 1
+    assert call.args[1]["_director_continue_seam_min"] == 0.1
+    assert call.args[2] is request["sigmas"]
+    assert sample.call_args.args[0] is remasked_model
+
+
+def test_worker_runs_director_spatial_tiles_on_the_real_sampler_and_restores_it():
+    worker = _worker()
+    request = _request(operation_id="operation-tiles")
+    request["sigmas"] = torch.tensor([1.0, 0.5, 0.0])
+    request["enable_tiling"] = True
+    request["tile_count"] = 3
+    request["tile_overlap"] = 96
+    shifted_model = _ModelPatcher()
+    sampler = SimpleNamespace(sampler_function=object())
+    restore = mock.Mock()
+    wrap_tiles = mock.Mock(return_value=restore)
+    director_module = SimpleNamespace(wrap_sampler_spatial_tiles=wrap_tiles)
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            return_value=(shifted_model,),
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch("comfy.samplers.sampler_object", return_value=sampler),
+        mock.patch("comfy.sample.sample") as sample,
+        mock.patch("comfy.sample.sample_custom", return_value=request["latent_image"]) as sample_custom,
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+        mock.patch.object(importlib, "import_module", return_value=director_module),
+    ):
+        _unwrapped_sample(worker, request)
+
+    sample.assert_not_called()
+    wrap_tiles.assert_called_once_with(sampler, n_tiles=3, overlap_pixels=96)
+    call = sample_custom.call_args
+    assert call.args[:8] == (
+        shifted_model,
+        request["noise"],
+        request["cfg"],
+        sampler,
+        request["sigmas"],
+        request["positive"],
+        request["negative"],
+        request["latent_image"],
+    )
+    assert call.kwargs["noise_mask"] is request["noise_mask"]
+    assert call.kwargs["seed"] == request["seed"]
+    restore.assert_called_once_with()
+
+
+def test_worker_restores_spatial_sampler_when_tiled_sampling_fails():
+    worker = _worker()
+    request = _request(operation_id="operation-tiles-fail")
+    request["sigmas"] = torch.tensor([1.0, 0.0])
+    request["enable_tiling"] = True
+    shifted_model = _ModelPatcher()
+    restore = mock.Mock()
+    director_module = SimpleNamespace(
+        wrap_sampler_spatial_tiles=mock.Mock(return_value=restore)
+    )
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            return_value=(shifted_model,),
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch("comfy.samplers.sampler_object", return_value=SimpleNamespace()),
+        mock.patch("comfy.sample.sample_custom", side_effect=RuntimeError("tile failed")),
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+        mock.patch.object(importlib, "import_module", return_value=director_module),
+        pytest.raises(RuntimeError, match="tile failed"),
+    ):
+        _unwrapped_sample(worker, request)
+
+    restore.assert_called_once_with()
 
 
 def test_worker_rejects_callback_in_request_and_clears_failed_status():
