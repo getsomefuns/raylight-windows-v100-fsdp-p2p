@@ -21,7 +21,7 @@ from .external_acceleration import serialize_external_acceleration
 
 
 SUPPORTED_DIRECTOR_VERSION = "main"
-SUPPORTED_DIRECTOR_COMMIT = "b8f721cb145490cb2c13c8944ff90f21551570f8"
+SUPPORTED_DIRECTOR_COMMIT = "ed3cdb0563db71fa5cb7f6861d167a8febf55e6d"
 LEGACY_DIRECTOR_VERSION = "1.0.0"
 LEGACY_DIRECTOR_COMMIT = "d655912262bcd70ad43c3a431879be9539d8e054"
 LEGACY_SAMPLE_SINGLE_STAGE_PARAMETERS = (
@@ -46,6 +46,17 @@ EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS = (
     *LEGACY_SAMPLE_SINGLE_STAGE_PARAMETERS,
     "sigmas",
     "apply_shift",
+    "after_shift",
+    "enable_tiling",
+    "tile_count",
+    "tile_overlap",
+)
+
+_CONTINUE_REMASK_CAPABILITY = "continue_prefix_remask_v1"
+_CONTINUE_REMASK_MODULE_SUFFIX = ".director.h3_latent_continue"
+_DIRECTOR_LATENT_METADATA_KEYS = (
+    "_director_continue_prefix_steps",
+    "_director_continue_seam_min",
 )
 
 _BRIDGE_MARKER = "_raylight_mmh3director_sample_bridge"
@@ -136,6 +147,33 @@ def ensure_mmh3director_compatibility() -> None:
     validate_mmh3director_sample_single_stage(_find_loaded_sample_single_stage())
 
 
+def serialize_director_after_shift(after_shift: Callable | None) -> str | None:
+    """Convert a known Director hook into a stable worker-side capability."""
+
+    if after_shift is None:
+        return None
+    callback = inspect.unwrap(after_shift)
+    module_name = str(getattr(callback, "__module__", ""))
+    callback_name = str(getattr(callback, "__name__", ""))
+    if callback_name == "install_continue_prefix_remask" and (
+        module_name == "director.h3_latent_continue"
+        or module_name.endswith(_CONTINUE_REMASK_MODULE_SUFFIX)
+    ):
+        return _CONTINUE_REMASK_CAPABILITY
+    raise RuntimeError(
+        "Unsupported MiniMaxH3Director after_shift callback "
+        f"{module_name}.{callback_name}; update the Raylight adapter before sampling."
+    )
+
+
+def _director_latent_metadata(latent: dict) -> dict[str, object]:
+    return {
+        key: latent[key]
+        for key in _DIRECTOR_LATENT_METADATA_KEYS
+        if key in latent
+    }
+
+
 def _sample_streams(samples) -> list[torch.Tensor]:
     if getattr(samples, "is_nested", False):
         streams = list(samples.unbind())
@@ -208,6 +246,10 @@ def dispatch_mmh3director_stage(
     phase_name: str = "sample",
     sigmas=None,
     apply_shift: bool = True,
+    after_shift=None,
+    enable_tiling: bool = False,
+    tile_count: int = 2,
+    tile_overlap: int = 128,
 ):
     """Route the current Director stage seam to the existing Ray workers."""
 
@@ -251,6 +293,8 @@ def dispatch_mmh3director_stage(
     elif sigmas is not None:
         normalized_sigmas = torch.tensor([float(value) for value in sigmas], dtype=torch.float32)
 
+    after_shift_capability = serialize_director_after_shift(after_shift)
+
     callback = None
     if on_step_preview is not None:
         every = max(1, int(preview_every))
@@ -280,6 +324,11 @@ def dispatch_mmh3director_stage(
         callback=callback,
         seed=int(seed),
         apply_shift=bool(apply_shift),
+        after_shift_capability=after_shift_capability,
+        director_latent_metadata=_director_latent_metadata(latent),
+        enable_tiling=bool(enable_tiling),
+        tile_count=max(1, min(8, int(tile_count))),
+        tile_overlap=max(0, int(tile_overlap)),
     )
 
     output = latent.copy()
@@ -312,6 +361,11 @@ def dispatch_mmh3director_sample(
     disable_pbar=False,
     seed=None,
     apply_shift=True,
+    after_shift_capability=None,
+    director_latent_metadata=None,
+    enable_tiling=False,
+    tile_count=2,
+    tile_overlap=128,
 ):
     if not isinstance(model, RayMMH3DirectorModelProxy):
         raise TypeError("dispatch_mmh3director_sample requires RayMMH3DirectorModelProxy")
@@ -350,6 +404,11 @@ def dispatch_mmh3director_sample(
         "disable_pbar": bool(disable_pbar),
         "seed": seed,
         "apply_shift": bool(apply_shift),
+        "after_shift_capability": after_shift_capability,
+        "director_latent_metadata": dict(director_latent_metadata or {}),
+        "enable_tiling": bool(enable_tiling),
+        "tile_count": max(1, min(8, int(tile_count))),
+        "tile_overlap": max(0, int(tile_overlap)),
         "model_options": serialize_external_acceleration(model.model_options),
     }
 

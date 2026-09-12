@@ -33,6 +33,10 @@ EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS = (
     "phase_name",
     "sigmas",
     "apply_shift",
+    "after_shift",
+    "enable_tiling",
+    "tile_count",
+    "tile_overlap",
 )
 
 
@@ -56,6 +60,10 @@ def _supported_sample_single_stage(
     phase_name: str = "sample",
     sigmas=None,
     apply_shift: bool = True,
+    after_shift=None,
+    enable_tiling: bool = False,
+    tile_count: int = 2,
+    tile_overlap: int = 128,
 ):
     del (
         model,
@@ -76,7 +84,19 @@ def _supported_sample_single_stage(
         phase_name,
         sigmas,
         apply_shift,
+        after_shift,
+        enable_tiling,
+        tile_count,
+        tile_overlap,
     )
+
+
+def _supported_continue_remask(model, latent, sigmas):
+    del model, latent, sigmas
+
+
+_supported_continue_remask.__name__ = "install_continue_prefix_remask"
+_supported_continue_remask.__module__ = "ComfyUI_MiniMaxH3_Director.director.h3_latent_continue"
 
 
 def _metadata(model_family="minimax_h3"):
@@ -187,14 +207,28 @@ def test_proxy_dispatch_failure_never_falls_back_to_local_sampler(isolated_sampl
 
 def test_supported_director_signature_is_fixed_to_the_accepted_commit():
     assert bridge.EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS == EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS
+    assert bridge.SUPPORTED_DIRECTOR_COMMIT == "ed3cdb0563db71fa5cb7f6861d167a8febf55e6d"
     bridge.validate_mmh3director_sample_single_stage(_supported_sample_single_stage)
+
+
+def test_after_shift_serializes_only_the_supported_continue_remask():
+    assert bridge.serialize_director_after_shift(None) is None
+    assert bridge.serialize_director_after_shift(_supported_continue_remask) == "continue_prefix_remask_v1"
+
+
+def test_after_shift_rejects_unknown_callbacks_instead_of_silently_dropping_them():
+    def unknown_callback(model, latent, sigmas):
+        del model, latent, sigmas
+
+    with pytest.raises(RuntimeError, match="Unsupported MiniMaxH3Director after_shift"):
+        bridge.serialize_director_after_shift(unknown_callback)
 
 
 def test_missing_director_parameter_reports_version_commit_and_field():
     def missing_scheduler(*, model, positive, negative, latent, seed, cfg, steps, sampler_name, **kwargs):
         del model, positive, negative, latent, seed, cfg, steps, sampler_name, kwargs
 
-    with pytest.raises(RuntimeError, match=r"scheduler.*b8f721c"):
+    with pytest.raises(RuntimeError, match=r"scheduler.*ed3cdb0"):
         bridge.validate_mmh3director_sample_single_stage(missing_scheduler)
 
 
@@ -277,6 +311,8 @@ def test_new_director_stage_routes_proxy_before_basic_guider_and_preserves_laten
         "noise_mask": torch.ones(1, 1, 2, 4, 4),
         "batch_index": [7],
         "director_marker": "preserved",
+        "_director_continue_prefix_steps": 3,
+        "_director_continue_seam_min": 0.1,
     }
     sigmas = torch.tensor([[1.0, 0.4, 0.0]])
     prepared_noise = torch.full_like(latent_samples, 0.25)
@@ -310,6 +346,10 @@ def test_new_director_stage_routes_proxy_before_basic_guider_and_preserves_laten
             phase_name="sample",
             sigmas=sigmas,
             apply_shift=True,
+            after_shift=_supported_continue_remask,
+            enable_tiling=True,
+            tile_count=3,
+            tile_overlap=96,
         )
 
     prepare_noise.assert_called_once_with(latent_samples, 12345, [7])
@@ -325,6 +365,14 @@ def test_new_director_stage_routes_proxy_before_basic_guider_and_preserves_laten
         assert request["steps"] == 8
         assert request["sampler_name"] == "res_multistep"
         assert request["scheduler"] == "simple"
+        assert request["after_shift_capability"] == "continue_prefix_remask_v1"
+        assert request["director_latent_metadata"] == {
+            "_director_continue_prefix_steps": 3,
+            "_director_continue_seam_min": 0.1,
+        }
+        assert request["enable_tiling"] is True
+        assert request["tile_count"] == 3
+        assert request["tile_overlap"] == 96
         assert request["model_options"]["transformer_options"] == {
             "minimax_h3_sigma_shift_video": 11.0,
             "minimax_h3_sigma_shift_audio": 2.5,
