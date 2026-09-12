@@ -9,6 +9,7 @@ import importlib
 import time
 import statistics
 from datetime import timedelta
+from pathlib import Path
 
 import torch
 import torch.distributed as dist
@@ -339,10 +340,46 @@ def _mmh3director_finite_summary(samples):
 def _import_mmh3director_module(suffix: str):
     module_suffix = f".director.{suffix}"
     for module_name, module in tuple(sys.modules.items()):
-        identity = f"{module_name} {getattr(module, '__file__', '')}".lower()
+        # Some lazy modules execute imports from __getattr__("__file__").  Reading
+        # the module dictionary keeps this discovery pass side-effect free.
+        module_file = getattr(module, "__dict__", {}).get("__file__", "")
+        identity = f"{module_name} {module_file}".lower()
         if module_name.endswith(module_suffix) and "minimaxh3_director" in identity:
             return module
-    return importlib.import_module(f"ComfyUI_MiniMaxH3_Director.director.{suffix}")
+    try:
+        return importlib.import_module(f"ComfyUI_MiniMaxH3_Director.director.{suffix}")
+    except ModuleNotFoundError as direct_error:
+        # Ray runtime_env packages Raylight itself, not sibling custom nodes.
+        # Resolve Director through ComfyUI's configured custom_nodes roots and
+        # load only its lightweight director package under a private namespace.
+        import folder_paths
+
+        package_name = "_raylight_mmh3director_runtime"
+        for custom_nodes_root in folder_paths.get_folder_paths("custom_nodes"):
+            director_root = Path(custom_nodes_root) / "ComfyUI_MiniMaxH3_Director" / "director"
+            package_init = director_root / "__init__.py"
+            requested_module = director_root / f"{suffix}.py"
+            if not package_init.is_file() or not requested_module.is_file():
+                continue
+            if package_name not in sys.modules:
+                spec = importlib.util.spec_from_file_location(
+                    package_name,
+                    package_init,
+                    submodule_search_locations=[str(director_root)],
+                )
+                if spec is None or spec.loader is None:
+                    continue
+                package = importlib.util.module_from_spec(spec)
+                sys.modules[package_name] = package
+                try:
+                    spec.loader.exec_module(package)
+                except BaseException:
+                    sys.modules.pop(package_name, None)
+                    raise
+            return importlib.import_module(f"{package_name}.{suffix}")
+        raise ModuleNotFoundError(
+            f"MiniMaxH3Director runtime module '{suffix}' was not found in ComfyUI custom_nodes"
+        ) from direct_error
 
 
 def _apply_mmh3director_after_shift(model, request):

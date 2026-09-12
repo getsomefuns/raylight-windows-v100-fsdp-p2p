@@ -449,7 +449,16 @@ def dispatch_mmh3director_sample(
                     forward_preview,
                 )
         except Exception as error:
-            raise RuntimeError(f"MMH3Director remote sampling operation {operation_id} failed before rank validation") from error
+            error_detail = str(error).strip()
+            if "\n" in error_detail:
+                error_detail = next(
+                    (line.strip() for line in reversed(error_detail.splitlines()) if line.strip()),
+                    type(error).__name__,
+                )
+            raise RuntimeError(
+                f"MMH3Director remote sampling operation {operation_id} failed before rank validation: "
+                f"{type(error).__name__}: {error_detail}"
+            ) from error
 
         if not isinstance(results, (list, tuple)) or len(results) != len(workers):
             received = len(results) if isinstance(results, (list, tuple)) else 0

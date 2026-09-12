@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 from unittest import mock
 
@@ -117,6 +119,34 @@ def _contains_tensor(value):
     if isinstance(value, (list, tuple)):
         return any(_contains_tensor(item) for item in value)
     return False
+
+
+def test_director_module_loader_falls_back_to_comfyui_custom_nodes(tmp_path):
+    director_root = tmp_path / "ComfyUI_MiniMaxH3_Director" / "director"
+    director_root.mkdir(parents=True)
+    (director_root / "__init__.py").write_text("", encoding="utf-8")
+    (director_root / "spatial_tiled_sampling.py").write_text(
+        "SOURCE = 'installed-director'\n",
+        encoding="utf-8",
+    )
+    folder_paths = SimpleNamespace(get_folder_paths=lambda name: [str(tmp_path)])
+    real_import_module = importlib.import_module
+
+    def import_without_installed_package(name, package=None):
+        if name.startswith("ComfyUI_MiniMaxH3_Director."):
+            missing = ModuleNotFoundError("No module named 'ComfyUI_MiniMaxH3_Director'")
+            missing.name = "ComfyUI_MiniMaxH3_Director"
+            raise missing
+        return real_import_module(name, package)
+
+    with (
+        mock.patch.dict(sys.modules, {"folder_paths": folder_paths}),
+        mock.patch.object(importlib, "import_module", side_effect=import_without_installed_package),
+    ):
+        module = ray_worker._import_mmh3director_module("spatial_tiled_sampling")
+
+    assert module.SOURCE == "installed-director"
+    assert Path(module.__file__).resolve() == (director_root / "spatial_tiled_sampling.py").resolve()
 
 
 def test_worker_proxy_metadata_is_compact_and_contains_no_weights():

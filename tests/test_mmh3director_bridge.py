@@ -575,7 +575,10 @@ def test_actor_submission_failure_is_reported_without_local_fallback():
 
     with (
         mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
-        pytest.raises(RuntimeError, match="failed before rank validation") as error,
+        pytest.raises(
+            RuntimeError,
+            match="failed before rank validation: RuntimeError: actor is dead",
+        ) as error,
     ):
         bridge.dispatch_mmh3director_sample(proxy, torch.zeros(1), 1, 1.0, "euler", "simple", [], [], torch.zeros(1))
 
