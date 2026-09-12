@@ -248,7 +248,6 @@ def test_proxy_request_preserves_director_inputs_and_uses_every_rank():
     sigmas = torch.tensor([1.0, 0.5, 0.0])
     positive = [["positive", {"pooled": True}]]
     negative = [["negative", {}]]
-    callback = mock.Mock()
 
     with (
         mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
@@ -273,7 +272,7 @@ def test_proxy_request_preserves_director_inputs_and_uses_every_rank():
             force_full_denoise=True,
             noise_mask=noise_mask,
             sigmas=sigmas,
-            callback=callback,
+            callback=None,
             disable_pbar=True,
             seed=12345,
         )
@@ -301,6 +300,75 @@ def test_proxy_request_preserves_director_inputs_and_uses_every_rank():
         assert request["disable_pbar"] is True
         assert request["seed"] == 12345
         assert "callback" not in request
+
+
+def test_proxy_preview_creates_one_queue_and_drains_it_while_workers_run():
+    proxy, actors = _proxy()
+    callback = mock.Mock()
+    preview_queue = mock.Mock()
+
+    with (
+        mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
+        mock.patch.object(bridge, "_release_main_process_models_before_remote_sampling"),
+        mock.patch.object(bridge.preview_transport, "create_preview_queue", return_value=preview_queue) as create_queue,
+        mock.patch.object(
+            bridge.preview_transport,
+            "wait_for_worker_results",
+            side_effect=lambda futures, queue, cb: (bridge.preview_transport.drain_preview_queue(queue, cb), futures)[1],
+        ) as wait_results,
+        mock.patch.object(bridge.preview_transport, "close_preview_queue") as close_queue,
+        mock.patch.object(bridge.preview_transport, "drain_preview_queue", return_value=0),
+        mock.patch.object(bridge.ray, "get", side_effect=lambda value: value),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_device", return_value=torch.device("cpu")),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_dtype", return_value=torch.float32),
+    ):
+        bridge.dispatch_mmh3director_sample(
+            proxy,
+            torch.zeros(1, 24, 2, 2, 2),
+            4,
+            1.0,
+            "euler",
+            "simple",
+            [],
+            [],
+            torch.zeros(1, 24, 2, 2, 2),
+            callback=callback,
+            preview_every=1,
+        )
+
+    create_queue.assert_called_once_with()
+    wait_results.assert_called_once()
+    close_queue.assert_called_once_with(preview_queue)
+    for actor in actors:
+        request = actor.sample_mmh3director_request.requests[0]
+        assert request["preview_queue"] is preview_queue
+        assert request["preview_every"] == 1
+
+
+def test_proxy_without_preview_does_not_create_preview_transport():
+    proxy, _actors = _proxy()
+    with (
+        mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
+        mock.patch.object(bridge, "_release_main_process_models_before_remote_sampling"),
+        mock.patch.object(bridge.preview_transport, "create_preview_queue") as create_queue,
+        mock.patch.object(bridge.ray, "get", side_effect=lambda futures: futures),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_device", return_value=torch.device("cpu")),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_dtype", return_value=torch.float32),
+    ):
+        bridge.dispatch_mmh3director_sample(
+            proxy,
+            torch.zeros(1),
+            1,
+            1.0,
+            "euler",
+            "simple",
+            [],
+            [],
+            torch.zeros(1),
+            callback=None,
+        )
+
+    create_queue.assert_not_called()
 
 
 def test_new_director_stage_routes_proxy_before_basic_guider_and_preserves_latent_metadata():

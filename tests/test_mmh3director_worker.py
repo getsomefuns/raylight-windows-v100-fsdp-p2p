@@ -51,9 +51,9 @@ class _ModelPatcher:
         return cloned
 
 
-def _worker(is_fsdp=False):
+def _worker(is_fsdp=False, local_rank=0):
     worker = ray_worker.RayWorker.__new__(ray_worker.RayWorker)
-    worker.local_rank = 0
+    worker.local_rank = local_rank
     worker.global_world_size = 2
     worker.model = _ModelPatcher()
     worker.is_model_loaded = True
@@ -360,6 +360,67 @@ def test_worker_restores_spatial_sampler_when_tiled_sampling_fails():
         _unwrapped_sample(worker, request)
 
     restore.assert_called_once_with()
+
+
+def test_rank_zero_publishes_step_preview_without_serializing_a_callback():
+    worker = _worker(local_rank=0)
+    request = _request(operation_id="operation-preview")
+    request["preview_queue"] = object()
+    request["preview_every"] = 2
+    shifted_model = _ModelPatcher()
+    event = {"step": 0, "total_steps": 4, "x0": torch.zeros(1)}
+
+    def run_sample(*args, **kwargs):
+        kwargs["callback"](0, request["latent_image"], request["latent_image"], 4)
+        return request["latent_image"]
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            return_value=(shifted_model,),
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch("comfy.sample.sample", side_effect=run_sample),
+        mock.patch(
+            "raylight.integrations.mmh3director.preview_transport.extract_preview_event",
+            return_value=event,
+        ) as extract,
+        mock.patch(
+            "raylight.integrations.mmh3director.preview_transport.publish_preview_nonblocking",
+            return_value=True,
+        ) as publish,
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+    ):
+        _unwrapped_sample(worker, request)
+
+    assert extract.call_args.kwargs["preview_every"] == 2
+    publish.assert_called_once_with(request["preview_queue"], event)
+
+
+def test_nonzero_rank_never_builds_a_step_preview_callback():
+    worker = _worker(local_rank=1)
+    request = _request(operation_id="operation-preview-rank1")
+    request["preview_queue"] = object()
+    shifted_model = _ModelPatcher()
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            return_value=(shifted_model,),
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch("comfy.sample.sample", return_value=request["latent_image"]) as sample,
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+    ):
+        _unwrapped_sample(worker, request)
+
+    assert sample.call_args.kwargs["callback"] is None
 
 
 def test_worker_rejects_callback_in_request_and_clears_failed_status():

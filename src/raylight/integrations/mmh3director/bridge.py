@@ -18,6 +18,7 @@ from raylight.distributed_worker.sampling_lifecycle import clear_ray_worker_vram
 
 from .proxy import RayMMH3DirectorModelProxy
 from .external_acceleration import serialize_external_acceleration
+from . import preview_transport
 
 
 SUPPORTED_DIRECTOR_VERSION = "main"
@@ -322,6 +323,7 @@ def dispatch_mmh3director_stage(
         noise_mask=latent.get("noise_mask"),
         sigmas=normalized_sigmas,
         callback=callback,
+        preview_every=int(preview_every),
         seed=int(seed),
         apply_shift=bool(apply_shift),
         after_shift_capability=after_shift_capability,
@@ -358,6 +360,7 @@ def dispatch_mmh3director_sample(
     noise_mask=None,
     sigmas=None,
     callback=None,
+    preview_every=1,
     disable_pbar=False,
     seed=None,
     apply_shift=True,
@@ -382,6 +385,7 @@ def dispatch_mmh3director_sample(
     ensure_mmh3director_compatibility()
     _release_main_process_models_before_remote_sampling()
     operation_id = uuid.uuid4().hex
+    preview_queue = preview_transport.create_preview_queue() if callback is not None else None
     request = {
         "operation_id": operation_id,
         "session_id": model.session_id,
@@ -411,16 +415,32 @@ def dispatch_mmh3director_sample(
         "tile_overlap": max(0, int(tile_overlap)),
         "model_options": serialize_external_acceleration(model.model_options),
     }
+    if preview_queue is not None:
+        request["preview_queue"] = preview_queue
+        request["preview_every"] = int(preview_every)
 
     print(
         f"[Raylight] MMH3Director remote sampling started operation={operation_id} ranks={len(workers)}",
         flush=True,
     )
     sampling_error = None
+    last_preview_step = [-1]
+
+    def forward_preview(step, x0, x, total_steps):
+        last_preview_step[0] = max(last_preview_step[0], int(step))
+        callback(step, x0, x, total_steps)
+
     try:
         try:
             futures = [worker.sample_mmh3director_request.remote(request) for worker in workers]
-            results = ray.get(futures)
+            if preview_queue is None:
+                results = ray.get(futures)
+            else:
+                results = preview_transport.wait_for_worker_results(
+                    futures,
+                    preview_queue,
+                    forward_preview,
+                )
         except Exception as error:
             raise RuntimeError(f"MMH3Director remote sampling operation {operation_id} failed before rank validation") from error
 
@@ -452,7 +472,7 @@ def dispatch_mmh3director_sample(
             device=comfy.model_management.intermediate_device(),
             dtype=comfy.model_management.intermediate_dtype(),
         )
-        if callback is not None:
+        if callback is not None and last_preview_step[0] < max(0, int(steps) - 1):
             callback(max(0, int(steps) - 1), normalized, normalized, int(steps))
         print(
             f"[Raylight] MMH3Director remote sampling completed operation={operation_id} ranks={len(workers)}",
@@ -467,6 +487,7 @@ def dispatch_mmh3director_sample(
         )
         raise
     finally:
+        preview_transport.close_preview_queue(preview_queue)
         try:
             clear_ray_worker_vram_after_sampling(model.ray_actors)
         except BaseException:

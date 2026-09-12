@@ -2112,6 +2112,29 @@ class RayWorker:
             model_for_sampling = apply_external_acceleration(model_for_sampling)
             model_for_sampling = _apply_mmh3director_after_shift(model_for_sampling, request)
 
+            sampling_callback = None
+            preview_queue = request.get("preview_queue")
+            if preview_queue is not None and int(self.local_rank) == 0:
+                from raylight.integrations.mmh3director.preview_transport import (
+                    extract_preview_event,
+                    publish_preview_nonblocking,
+                )
+
+                def sampling_callback(step, x0, _x, total_steps):
+                    try:
+                        event = extract_preview_event(
+                            x0,
+                            step=int(step),
+                            total_steps=int(total_steps),
+                            preview_every=int(request.get("preview_every", 1)),
+                        )
+                        publish_preview_nonblocking(preview_queue, event)
+                    except Exception as error:
+                        logging.debug(
+                            "MMH3Director rank-0 preview skipped: %s",
+                            error,
+                        )
+
             with torch.no_grad():
                 if bool(request.get("enable_tiling", False)):
                     tiled_request = dict(request)
@@ -2122,6 +2145,7 @@ class RayWorker:
                         comfy_sample,
                         model_for_sampling,
                         tiled_request,
+                        callback=sampling_callback,
                     )
                 else:
                     samples = comfy_sample.sample(
@@ -2141,7 +2165,7 @@ class RayWorker:
                         force_full_denoise=bool(request.get("force_full_denoise", False)),
                         noise_mask=request.get("noise_mask"),
                         sigmas=request.get("sigmas"),
-                        callback=None,
+                        callback=sampling_callback,
                         disable_pbar=bool(request.get("disable_pbar", False)) or self.local_rank != 0,
                         seed=request.get("seed"),
                     )
