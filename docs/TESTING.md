@@ -147,6 +147,10 @@ O12 的详细 MiniMax H3 Director 数据单独维护在 [O12 验收记录](testi
 
 O13 覆盖 Director 自带 Refine、连续段动态 remask、Refine 空间分块、逐步实时预览及新版 `shift_cache` 契约。自动化与双 V100 实机证据单独维护在 [O13 验收记录](testing/minimax-h3/O13_MMH3DIRECTOR_19B6A73_2026-09.zh-CN.md)，不得与 O8/O12 的旧接口结果混算。
 
+## O14 补充：MiniMaxH3Director 576424f / SelfLift
+
+O14 覆盖 `on_step_state`、`zero_noise`、`noise_override`、SelfLift 低清/高清两阶段和后续 Refine，并修复 Ray MODEL facade 遗漏 MiniMaxH3 AV 音频 flow 尺度导致的杂音。固定 864×480、124 帧、24 fps、Turbo4 + SOL + SelfLift + Refine 双卡输出端到端 288.55 秒，音频 NaN/Inf 为 0、124/124 帧唯一。完整控制实验、资源峰值和边界见 [O14 验收记录](testing/minimax-h3/O14_MMH3DIRECTOR_576424F_SELFLIFT_2026-09.zh-CN.md)。
+
 - Python 3.12.10 + Torch 2.12.0+cu126 已通过 Gloo、双 Ray actor、xFuser subgroup、FSDP2 与 CUDA P2P 真机门槛；PyTorch 2.8 Windows Gloo 探针失败，未采用。
 - 同一 864×480、124 帧、24 fps、约 5.17 秒 REF2VA 条件下，Sol-only 将热启动 4/8 步 worker 采样从 85.23/170.90 秒降到 69.28/138.06 秒，均约快 19%。
 - TE-only 在本次短轨迹中没有稳定收益；TE+Sol 的观测端到端为 130.67/200.05 秒，但采样与 Sol-only 相同或略慢，不能把 conditioning 波动误记为 TE 加速。

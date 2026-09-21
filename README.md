@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.16.0（O14）把 MiniMaxH3Director 兼容坐标更新到官方 `576424f`，新增 SelfLift 两阶段状态回传、零噪声/固定噪声转发，并修复“画面正常但音频全是杂音”：Ray MODEL 代理现在完整复刻 MiniMaxH3 AV 的音频 flow 尺度（默认 `12/3=4`）。完整 SelfLift + SOL + Refine 双卡实测为 864×480、124 帧、24 fps，端到端 288.55 秒，音频 NaN/Inf 为 0，124/124 帧唯一。详见 [1.16.0 中文发布说明](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md)和[O14 测试记录](docs/testing/minimax-h3/O14_MMH3DIRECTOR_576424F_SELFLIFT_2026-09.zh-CN.md)。
+
 1.15.0（O13）适配 MiniMaxH3Director `19b6a73`：Director 自带 Refine、连续段逐步 remask、Refine 空间分块与逐步实时预览现在都会进入双 V100 worker，而不是静默丢失。新版 `shift_cache` 参数被显式接收，但主进程代理缓存不会跨进程序列化；远端权重仍由 Raylight 生命周期管理。Refine 分块用于降低显存，显存足够时关闭通常更快；实时预览只由 rank 0 经容量为 1 的非阻塞队列回传，关闭预览时不创建传输通道。详见 [1.15.0 中文发布说明](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.zh-CN.md)和[O13 测试记录](docs/testing/minimax-h3/O13_MMH3DIRECTOR_19B6A73_2026-09.zh-CN.md)。
 
 1.14.0（O12）把推荐运行时升级到 Python 3.12.10 + PyTorch 2.12.0+cu126，并新增对 TE-Speed 3.3 与 Sol-Attn V100 的可选 worker 内重放桥。现有工作流默认不启用任何第三方加速；插入节点后，patch 会从 Director MODEL 代理传到两个真实 FSDP worker。5.17 秒、864×480 REF2VA 热启动矩阵中，Sol 将 4/8 步采样分别从 85.23/170.90 秒降到 69.28/138.06 秒，约快 19%；TE 在该短轨迹中没有稳定独立收益。Python312 全量回归为 `725 passed` 与 `35 subtests passed`。详见 [1.14.0 中文发布说明](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.zh-CN.md)和[O12 测试汇总](docs/testing/minimax-h3/O12_PYTHON312_H3_ACCELERATION_2026-09.zh-CN.md)。
@@ -47,7 +49,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.15.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.16.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -64,6 +66,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - MiniMaxH3Director `b8f721c` 兼容补丁 1.13.1：[中文](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md) / [English](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md)
 - Python3.12/Torch2.12 与 H3 外部加速桥 1.14.0：[中文](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.zh-CN.md) / [English](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.en.md)
 - MiniMaxH3Director `19b6a73` 完整兼容 1.15.0：[中文](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.zh-CN.md) / [English](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.en.md)
+- MiniMaxH3Director `576424f` / SelfLift 1.16.0：[中文](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md) / [English](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -172,7 +175,7 @@ TP2 编码开始前，主进程主动卸载当前 ComfyUI GPU 模型，并向两
 
 代理本身不保存模型权重。它只标记“这个 MODEL 的采样请求交给哪些 Ray Worker”，并只拦截自己的精确类型。旧版 Director 在 `comfy.sample.sample()` 入口被桥接；新版 Director 在 `sample_single_stage()` 进入 `BasicGuider → SamplerCustomAdvanced` 之前被桥接。桥把 conditioning、latent、固定 seed、采样参数和可选 SIGMAS 交给两个 Worker，等待返回 latent，再由 Director 继续 VAE、音频、拼接和保存。因此不存在 Director 本地采样一次、Raylight 再采样一次的重复计算。
 
-普通 ComfyUI `MODEL` 完全透传。代理请求失败时明确报错，不会静默退回 GPU0。MiniMaxH3Director 源码未修改；兼容坐标包括旧版 `d655912`、`b8f721c` 和当前主线 `19b6a73`。
+普通 ComfyUI `MODEL` 完全透传。代理请求失败时明确报错，不会静默退回 GPU0。MiniMaxH3Director 源码未修改；兼容坐标包括旧版 `d655912`、`b8f721c`、`19b6a73` 和当前主线 `576424f`。SelfLift 低清/高清转场会回传最终 step state；代理同时保留 MiniMaxH3 AV 音频 flow 尺度，避免画面正常而音频损坏。
 
 ### 能力边界
 
@@ -972,7 +975,7 @@ O6 同规格本机 FP32 对照组已经锁定：I2V Turbo8 端到端 1463.67 秒
 - LTX/LTXAV 应保持 ComfyUI 默认 BF16/FP32 推理范围；实测强制全局 FP16 会产生全黑视频和音频 NaN/Inf。
 - Text Encoder、Video/Audio VAE 和 Spatial/Temporal Upscaler 当前不做 FSDP 权重分片；仅受支持的 MiniMax H3 Text Encoder 可显式选择独立 TP2。
 - VAE 编解码与文本编码当前不会自动使用两张 GPU。
-- Director 适配器同时保留 MiniMaxH3Director `d655912` 的旧采样桥，并验收 `b8f721c` 与 `19b6a73` 的阶段桥；其他接口坐标必须重新验收，不兼容版本会明确失败。
+- Director 适配器同时保留 MiniMaxH3Director `d655912` 的旧采样桥，并验收 `b8f721c`、`19b6a73` 与 `576424f` 的阶段桥；其他接口坐标必须重新验收，不兼容版本会明确失败。
 - Director 多段复用减少模型重载，但不能消除主进程 CLIP/VAE、中间 latent、RAM 与 commit/pagefile 压力。
 - 远程 Director 逐步预览只传输 rank 0 的稀疏 CPU latent；TAE/WebP 编码和最终解码仍由 Director/ComfyUI 主进程处理。
 - FSDP 仍需要当前完整层、激活、P2P buffer、LoRA 和 CUDA 工作区的临时显存。
