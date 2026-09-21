@@ -64,6 +64,17 @@ def validate_director_prompt(prompt: dict) -> None:
         raise ValueError("Director benchmark requires FSDP=true")
 
 
+def validate_single_gpu_control_prompt(prompt: dict) -> None:
+    if len(_nodes(prompt, "MiniMaxH3Director")) != 1:
+        raise ValueError("single-GPU control requires one MiniMaxH3Director")
+    if _nodes(prompt, "RayInitializer") or _nodes(
+        prompt, "RayMMH3DirectorModelAdapter"
+    ):
+        raise ValueError("single-GPU control must not contain Ray nodes")
+    if not _nodes(prompt, "SaveVideo"):
+        raise ValueError("single-GPU control requires SaveVideo")
+
+
 def prepare_director_prompt(
     template: dict,
     run_index: int,
@@ -312,6 +323,7 @@ def run_workflow(
     diagnostic_steps: int | None = None,
     diffusion_attention: str | None = None,
     cuda_alloc_conf: str | None = None,
+    single_gpu_control: bool = False,
 ) -> Path:
     if p2p_capacity_mib <= 0:
         raise ValueError("p2p_capacity_mib must be positive")
@@ -376,7 +388,10 @@ def run_workflow(
             workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
             prompt = converter.workflow_to_prompt(workflow, object_info)
             base.normalize_prompt_file_selectors(prompt, object_info)
-            validate_director_prompt(prompt)
+            if single_gpu_control:
+                validate_single_gpu_control_prompt(prompt)
+            else:
+                validate_director_prompt(prompt)
             director_id = _nodes(prompt, "MiniMaxH3Director")[0][0]
             for _, node in _nodes(prompt, "RayInitializer"):
                 node["inputs"]["skip_comm_test"] = True
@@ -457,11 +472,23 @@ def run_workflow(
                         text = handle.read(current_end - log_start).decode("utf-8", errors="replace")
                     return text, current_end
 
-                phases, log_segment, log_end = wait_for_director_phases(
-                    read_log_segment,
-                    execution_start_ms=execution_start_ms,
-                    execution_end_ms=execution_end_ms,
-                )
+                if single_gpu_control:
+                    log_segment, log_end = read_log_segment()
+                    phases = {
+                        "invocation_count": 0,
+                        "worker_pids": [],
+                        "worker_pids_by_rank": {},
+                        "sampling_seconds": None,
+                        "prepare_sampling_seconds": None,
+                        "model_to_gpu_seconds": None,
+                        "invocations": [],
+                    }
+                else:
+                    phases, log_segment, log_end = wait_for_director_phases(
+                        read_log_segment,
+                        execution_start_ms=execution_start_ms,
+                        execution_end_ms=execution_end_ms,
+                    )
                 stderr.flush()
                 stderr_end = stderr_path.stat().st_size
                 with stderr_path.open("rb") as handle:
@@ -485,9 +512,13 @@ def run_workflow(
                     "resources": base.summarize_resources(samples),
                     "outputs": history.get("outputs", {}),
                     "p2p_profiles": extract_p2p_profiles(log_segment),
-                    "stderr_progress": base.extract_sampler_progress(
-                        stderr_segment,
-                        phases["worker_pids_by_rank"],
+                    "stderr_progress": (
+                        {}
+                        if single_gpu_control
+                        else base.extract_sampler_progress(
+                            stderr_segment,
+                            phases["worker_pids_by_rank"],
+                        )
                     ),
                     "log_start": log_start,
                     "log_end": log_end,
@@ -522,6 +553,7 @@ def parse_args(argv=None):
     parser.add_argument("--diagnostic-steps", type=int)
     parser.add_argument("--diffusion-attention")
     parser.add_argument("--cuda-alloc-conf")
+    parser.add_argument("--single-gpu-control", action="store_true")
     args = parser.parse_args(argv)
     if args.runs <= 0:
         raise ValueError("runs must be positive")
@@ -546,6 +578,7 @@ def main() -> int:
             diagnostic_steps=args.diagnostic_steps,
             diffusion_attention=args.diffusion_attention,
             cuda_alloc_conf=args.cuda_alloc_conf,
+            single_gpu_control=args.single_gpu_control,
         )
     )
     return 0

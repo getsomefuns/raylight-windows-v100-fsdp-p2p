@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 import torch
+from comfy.nested_tensor import NestedTensor
 
 from comfy.ldm.minimax.model import MiniMaxH3Model
 from comfy.patcher_extension import WrappersMP
@@ -154,3 +155,21 @@ def test_real_minimax_sigma_shift_patches_a_clone_without_mutating_parent():
     }
     assert parent.model_options == {"transformer_options": {}}
     assert parent.get_model_object("model_sampling") is not shifted_sampling
+
+
+def test_proxy_preserves_minimax_av_audio_scale_during_selflift_transition():
+    proxy = _proxy()
+    video = torch.tensor([1.0, 2.0])
+    audio = torch.tensor([3.0, 4.0])
+    samples = NestedTensor((video, audio))
+
+    internal = proxy.model.process_latent_in(samples)
+    internal_video, internal_audio = internal.unbind()
+    restored = proxy.model.process_latent_out(internal)
+    restored_video, restored_audio = restored.unbind()
+
+    assert proxy.model.model_sampling.audio_scale == pytest.approx(4.0)
+    torch.testing.assert_close(internal_video, video)
+    torch.testing.assert_close(internal_audio, audio * 4.0)
+    torch.testing.assert_close(restored_video, video)
+    torch.testing.assert_close(restored_audio, audio)

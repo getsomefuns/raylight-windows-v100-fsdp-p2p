@@ -24,6 +24,12 @@ class _LatentFormatFacade:
     spacial_downscale_ratio: int
     temporal_downscale_ratio: int
 
+    def process_in(self, latent):
+        return latent
+
+    def process_out(self, latent):
+        return latent
+
 
 class _ModelFacade:
     def __init__(self, metadata: MMH3DirectorModelMetadata):
@@ -38,6 +44,37 @@ class _ModelFacade:
         if metadata.noise_scale is not None:
             self.model_sampling.set_noise_scale(metadata.noise_scale)
         self.diffusion_model = _make_weightless_diffusion_model()
+
+    def _scale_audio_stream(self, latent, scale: float):
+        """Mirror ``comfy.model_base.MiniMaxH3._scale_audio_slice``.
+
+        Director SelfLift performs its low-to-high transition in the main
+        process against this weightless facade.  MiniMax H3 carries audio on
+        the video flow schedule, so the second AV stream must use
+        ``shift_video / shift_audio`` just like the real worker model.
+        """
+
+        if scale == 1.0 or not bool(getattr(latent, "is_nested", False)):
+            return latent
+        streams = list(latent.unbind())
+        if len(streams) < 2:
+            return latent
+        import comfy.nested_tensor
+
+        return comfy.nested_tensor.NestedTensor(
+            [streams[0], streams[1] * scale, *streams[2:]]
+        )
+
+    def process_latent_in(self, latent):
+        latent = self.latent_format.process_in(latent)
+        return self._scale_audio_stream(latent, self.model_sampling.audio_scale)
+
+    def process_latent_out(self, latent):
+        latent = self._scale_audio_stream(
+            latent,
+            1.0 / self.model_sampling.audio_scale,
+        )
+        return self.latent_format.process_out(latent)
 
 
 def _make_weightless_diffusion_model() -> MiniMaxH3Model:

@@ -1,0 +1,1680 @@
+{
+  "id": "minimax-h3-director-r2v",
+  "revision": 0,
+  "last_node_id": 19,
+  "last_link_id": 25,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "RayUNETLoader",
+      "pos": [
+        -720,
+        80
+      ],
+      "size": [
+        397.07551141744193,
+        102
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "ray_actors_init",
+          "name": "ray_actors_init",
+          "type": "RAY_ACTORS_INIT",
+          "link": 16
+        },
+        {
+          "localized_name": "lora",
+          "name": "lora",
+          "shape": 7,
+          "type": "RAY_LORA",
+          "link": 15
+        },
+        {
+          "localized_name": "unet_name",
+          "name": "unet_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "unet_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "weight_dtype",
+          "name": "weight_dtype",
+          "type": "COMBO",
+          "widget": {
+            "name": "weight_dtype"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "ray_actors",
+          "name": "ray_actors",
+          "type": "RAY_ACTORS",
+          "links": [
+            17
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RayUNETLoader"
+      },
+      "widgets_values": [
+        "minimax_h3\\ref2va\\minimax_h3_ref2va_pruned_fp8_scaled.safetensors",
+        "default"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "RayMiniMaxH3DualGPUCLIPLoader",
+      "pos": [
+        -720,
+        220
+      ],
+      "size": [
+        401.2045453424514,
+        133.8483980877669
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "ray_actors_init",
+          "name": "ray_actors_init",
+          "type": "RAY_ACTORS_INIT",
+          "link": 14
+        },
+        {
+          "localized_name": "clip_name",
+          "name": "clip_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "clip_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "execution_mode",
+          "name": "execution_mode",
+          "type": "COMBO",
+          "widget": {
+            "name": "execution_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "text_encoder_attention",
+          "name": "text_encoder_attention",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "text_encoder_attention"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "clip",
+          "name": "clip",
+          "type": "CLIP",
+          "links": [
+            2
+          ]
+        },
+        {
+          "localized_name": "ray_actors_init",
+          "name": "ray_actors_init",
+          "type": "RAY_ACTORS_INIT",
+          "links": [
+            16
+          ]
+        }
+      ],
+      "title": "MiniMax H3 Text Encoder (Dual V100 TP2)",
+      "properties": {
+        "Node name for S&R": "RayMiniMaxH3DualGPUCLIPLoader",
+        "models": [
+          {
+            "name": "MMH3\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "directory": "text_encoders"
+          }
+        ]
+      },
+      "widgets_values": [
+        "MMH3\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "tp2",
+        "AUTO"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "VAELoader",
+      "pos": [
+        -720,
+        380
+      ],
+      "size": [
+        360,
+        58
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "Video VAE",
+      "properties": {
+        "Node name for S&R": "VAELoader",
+        "models": [
+          {
+            "name": "MMH3\\minimax_h3_video_vae_fp16.safetensors",
+            "directory": "vae"
+          }
+        ]
+      },
+      "widgets_values": [
+        "MMH3\\minimax_h3_video_vae_fp16.safetensors"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "VAELoader",
+      "pos": [
+        -720,
+        500
+      ],
+      "size": [
+        360,
+        58
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "title": "Audio VAE",
+      "properties": {
+        "Node name for S&R": "VAELoader",
+        "models": [
+          {
+            "name": "MMH3\\minimax_h3_audio_vae_fp32.safetensors",
+            "directory": "vae"
+          }
+        ]
+      },
+      "widgets_values": [
+        "MMH3\\minimax_h3_audio_vae_fp32.safetensors"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "MiniMaxH3Director",
+      "pos": [
+        -280,
+        80
+      ],
+      "size": [
+        1050,
+        900
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 19
+        },
+        {
+          "name": "video_vae",
+          "type": "VAE",
+          "link": 3
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 4
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 2
+        },
+        {
+          "name": "task_type",
+          "type": "COMBO",
+          "widget": {
+            "name": "task_type"
+          },
+          "link": null
+        },
+        {
+          "name": "global_prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "global_prompt"
+          },
+          "link": null
+        },
+        {
+          "name": "bd_grp_sample",
+          "type": "BDGROUP",
+          "widget": {
+            "name": "bd_grp_sample"
+          },
+          "link": null
+        },
+        {
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg"
+          },
+          "link": null
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "name": "frame_rate",
+          "type": "FLOAT",
+          "widget": {
+            "name": "frame_rate"
+          },
+          "link": null
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": null
+        },
+        {
+          "name": "ref_max_size",
+          "type": "INT",
+          "widget": {
+            "name": "ref_max_size"
+          },
+          "link": null
+        },
+        {
+          "name": "total_frames",
+          "type": "INT",
+          "widget": {
+            "name": "total_frames"
+          },
+          "link": null
+        },
+        {
+          "name": "timeline_data",
+          "type": "STRING",
+          "widget": {
+            "name": "timeline_data"
+          },
+          "link": null
+        },
+        {
+          "name": "bd_grp_advanced",
+          "type": "BDGROUP",
+          "widget": {
+            "name": "bd_grp_advanced"
+          },
+          "link": null
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": null
+        },
+        {
+          "name": "sampler",
+          "type": "COMBO",
+          "widget": {
+            "name": "sampler"
+          },
+          "link": null
+        },
+        {
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": {
+            "name": "scheduler"
+          },
+          "link": null
+        },
+        {
+          "name": "shift_video",
+          "type": "FLOAT",
+          "widget": {
+            "name": "shift_video"
+          },
+          "link": null
+        },
+        {
+          "name": "shift_audio",
+          "type": "FLOAT",
+          "widget": {
+            "name": "shift_audio"
+          },
+          "link": null
+        },
+        {
+          "name": "bd_grp_perf",
+          "type": "BDGROUP",
+          "widget": {
+            "name": "bd_grp_perf"
+          },
+          "link": null
+        },
+        {
+          "name": "clear_vram_between_segments",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "clear_vram_between_segments"
+          },
+          "link": null
+        },
+        {
+          "name": "export_source_images",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "export_source_images"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "selflift",
+          "name": "selflift",
+          "type": "MMX_DIR_SELFLIFT",
+          "shape": 7,
+          "link": 25
+        },
+        {
+          "name": "refine",
+          "type": "MMX_DIR_REFINE",
+          "shape": 7,
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            5
+          ],
+          "shape": 6
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            6
+          ],
+          "shape": 6
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": [
+            7,
+            10
+          ]
+        },
+        {
+          "name": "frame_count",
+          "type": "INT",
+          "links": [
+            11
+          ]
+        },
+        {
+          "name": "source_images",
+          "type": "IMAGE",
+          "links": null,
+          "shape": 6
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            8
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3Director"
+      },
+      "widgets_values": [
+        "r2v — 参考主体生视频(Reference to Video)",
+        "<Picture 1> shows three green armored robots. Preserve every robot's identity, armor silhouette, green material and relative position. They walk forward from a violet portal into a rain-soaked neon avenue while the camera performs one slow continuous orbit. Natural synchronized metal footsteps, rain and distant city ambience. No text, logos or watermarks.",
+        "采样设置",
+        1,
+        42,
+        "fixed",
+        24,
+        864,
+        480,
+        864,
+        124,
+        "{\"version\":4,\"editMode\":\"global\",\"timelineMode\":\"gen_blank\",\"totalFrames\":124,\"frameRate\":24,\"width\":864,\"height\":480,\"refMaxSize\":864,\"output\":{\"mode\":\"fixed\",\"longEdge\":864,\"width\":864,\"height\":480,\"maxExportFrames\":0,\"exportMode\":\"all\",\"continuityEnabled\":false,\"continuityOverlapFrames\":22,\"audioMode\":\"generate\"},\"videoClips\":[],\"video\":{\"fileName\":\"\",\"videoFile\":\"\",\"subfolder\":\"\",\"type\":\"input\",\"frames\":[],\"frameMap\":[]},\"global\":{\"taskType\":\"r2v — 参考主体生视频(Reference to Video)\",\"prompt\":\"<Picture 1> shows three green armored robots. Preserve every robot's identity, armor silhouette, green material and relative position. They walk forward from a violet portal into a rain-soaked neon avenue while the camera performs one slow continuous orbit. Natural synchronized metal footsteps, rain and distant city ambience. No text, logos or watermarks.\",\"refs\":[{\"index\":0,\"imageFile\":\"minimax_h3_ref2va_green_robots.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"referenceVideo\":{},\"continuousReference\":false,\"genImage\":{\"imageFile\":\"\"}},\"segments\":[{\"id\":\"s0\",\"start\":0,\"length\":124,\"frameCount\":124,\"durationSec\":5,\"prompt\":\"\",\"taskType\":\"\",\"refs\":[{\"index\":0,\"imageFile\":\"minimax_h3_ref2va_green_robots.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"referenceVideo\":{},\"genImage\":{\"imageFile\":\"\"},\"negativePrompt\":\"\"}],\"gen\":{\"defaultFrameCount\":124},\"runSelectEnabled\":false,\"runSelection\":[],\"liveTaePreview\":true}",
+        "高级采样 Advanced",
+        4,
+        "res_multistep",
+        "simple",
+        12,
+        3,
+        "性能 Performance",
+        true,
+        false
+      ]
+    },
+    {
+      "id": 6,
+      "type": "CreateVideo",
+      "pos": [
+        900,
+        200
+      ],
+      "size": [
+        280,
+        120
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 5
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "widget": {
+            "name": "fps"
+          },
+          "link": 7
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 6
+        },
+        {
+          "name": "bit_depth",
+          "type": "INT",
+          "widget": {
+            "name": "bit_depth"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [
+        24,
+        8
+      ]
+    },
+    {
+      "id": 7,
+      "type": "SaveVideo",
+      "pos": [
+        1240,
+        200
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 9
+        },
+        {
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "name": "format",
+          "type": "COMBO",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "name": "codec",
+          "type": "COMBO",
+          "widget": {
+            "name": "codec"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/raylight_o14/MMH3Director_O14_REF2VA_Turbo4_Sol_SelfLift_Refine2_NoRefine_DefaultDType",
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "PreviewAny",
+      "pos": [
+        900,
+        400
+      ],
+      "size": [
+        640,
+        200
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 8
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "Director 运行报告",
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 9,
+      "type": "PreviewAny",
+      "pos": [
+        900,
+        640
+      ],
+      "size": [
+        210,
+        100
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 10
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "fps",
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 10,
+      "type": "PreviewAny",
+      "pos": [
+        1140,
+        640
+      ],
+      "size": [
+        210,
+        100
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 11
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "frame_count",
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 11,
+      "type": "MarkdownNote",
+      "pos": [
+        -720,
+        760
+      ],
+      "size": [
+        360,
+        320
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "MiniMax H3 Director · r2v",
+      "properties": {},
+      "widgets_values": [
+        "## MiniMax H3 Director — 参考生视频 (r2v)\n\n1. UNET 请使用 **ref2va** 权重（与 fl2va 不同）\n   `minimax_h3_ref2va_pruned_int8_convrot.safetensors`\n2. 在导演台参考图槽位上传 1–N 张参考图\n3. 提示词中使用官方标签：`<Picture 1>` / `<Video 1>` / `<Audio 1>`\n4. Queue Prompt\n"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 12,
+      "type": "RayLoraLoader",
+      "pos": [
+        -720,
+        620
+      ],
+      "size": [
+        394.59148438814134,
+        89.37087733068904
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "prev_ray_lora",
+          "name": "prev_ray_lora",
+          "shape": 7,
+          "type": "RAY_LORA",
+          "link": null
+        },
+        {
+          "localized_name": "lora_name",
+          "name": "lora_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "lora_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "strength_model",
+          "name": "strength_model",
+          "type": "FLOAT",
+          "widget": {
+            "name": "strength_model"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "ray_lora",
+          "name": "ray_lora",
+          "type": "RAY_LORA",
+          "links": [
+            15
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RayLoraLoader"
+      },
+      "widgets_values": [
+        "MMH3\\Ref2va\\lightx2v\\minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+        1
+      ]
+    },
+    {
+      "id": 13,
+      "type": "RayInitializer",
+      "pos": [
+        -1740.0,
+        100.0
+      ],
+      "size": [
+        313.4,
+        370
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "wait_for",
+          "name": "wait_for",
+          "shape": 7,
+          "type": "*",
+          "link": null
+        },
+        {
+          "localized_name": "ray_cluster_address",
+          "name": "ray_cluster_address",
+          "type": "STRING",
+          "widget": {
+            "name": "ray_cluster_address"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ray_cluster_namespace",
+          "name": "ray_cluster_namespace",
+          "type": "STRING",
+          "widget": {
+            "name": "ray_cluster_namespace"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "GPU",
+          "name": "GPU",
+          "type": "INT",
+          "widget": {
+            "name": "GPU"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ulysses_degree",
+          "name": "ulysses_degree",
+          "type": "INT",
+          "widget": {
+            "name": "ulysses_degree"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ring_degree",
+          "name": "ring_degree",
+          "type": "INT",
+          "widget": {
+            "name": "ring_degree"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cfg_degree",
+          "name": "cfg_degree",
+          "type": "INT",
+          "widget": {
+            "name": "cfg_degree"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "dp_degree",
+          "name": "dp_degree",
+          "type": "INT",
+          "widget": {
+            "name": "dp_degree"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sync_ulysses",
+          "name": "sync_ulysses",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "sync_ulysses"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "clear_vram_after_sampling",
+          "name": "clear_vram_after_sampling",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "clear_vram_after_sampling"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "FSDP",
+          "name": "FSDP",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "FSDP"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "FSDP_CPU_OFFLOAD",
+          "name": "FSDP_CPU_OFFLOAD",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "FSDP_CPU_OFFLOAD"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "XFuser_attention",
+          "name": "XFuser_attention",
+          "type": "COMBO",
+          "widget": {
+            "name": "XFuser_attention"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "skip_comm_test",
+          "name": "skip_comm_test",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "skip_comm_test"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "use_mmap",
+          "name": "use_mmap",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "use_mmap"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "ray_actors_init",
+          "name": "ray_actors_init",
+          "type": "RAY_ACTORS_INIT",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RayInitializer"
+      },
+      "widgets_values": [
+        "local",
+        "default",
+        2,
+        2,
+        1,
+        1,
+        1,
+        true,
+        false,
+        true,
+        true,
+        "XFORMERS_MEMORY_EFFICIENT",
+        true,
+        true
+      ]
+    },
+    {
+      "id": 14,
+      "type": "RayMMH3DirectorModelAdapter",
+      "pos": [
+        -650.0,
+        100.0
+      ],
+      "size": [
+        300,
+        78
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "ray_actors",
+          "name": "ray_actors",
+          "type": "RAY_ACTORS",
+          "link": 17
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            18
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RayMMH3DirectorModelAdapter"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 16,
+      "type": "SolAttnV100",
+      "pos": [
+        80.0,
+        80.0
+      ],
+      "size": [
+        330,
+        334
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "MODEL",
+          "link": 18
+        },
+        {
+          "localized_name": "fp16_safe",
+          "name": "fp16_safe",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "fp16_safe"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "tau",
+          "name": "tau",
+          "type": "FLOAT",
+          "widget": {
+            "name": "tau"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "start_percent",
+          "name": "start_percent",
+          "type": "FLOAT",
+          "widget": {
+            "name": "start_percent"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "end_percent",
+          "name": "end_percent",
+          "type": "FLOAT",
+          "widget": {
+            "name": "end_percent"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "min_tokens",
+          "name": "min_tokens",
+          "type": "INT",
+          "widget": {
+            "name": "min_tokens"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "dense_blocks",
+          "name": "dense_blocks",
+          "type": "STRING",
+          "widget": {
+            "name": "dense_blocks"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "h3_prefix_tokens",
+          "name": "h3_prefix_tokens",
+          "type": "INT",
+          "widget": {
+            "name": "h3_prefix_tokens"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "topk_blocks",
+          "name": "topk_blocks",
+          "type": "INT",
+          "widget": {
+            "name": "topk_blocks"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "debug_nan",
+          "name": "debug_nan",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "debug_nan"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "profile",
+          "name": "profile",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "profile"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            19,
+            21
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SolAttnV100"
+      },
+      "widgets_values": [
+        true,
+        0.75,
+        0.2,
+        0.9,
+        1024,
+        "0-1,-1",
+        1024,
+        32,
+        false,
+        false
+      ],
+      "color": "#233",
+      "bgcolor": "#355"
+    },
+    {
+      "id": 17,
+      "type": "BasicScheduler",
+      "pos": [
+        -300,
+        760
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "模型",
+          "name": "model",
+          "type": "MODEL",
+          "link": 21
+        },
+        {
+          "localized_name": "调度器",
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": {
+            "name": "scheduler"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "步数",
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "降噪",
+          "name": "denoise",
+          "type": "FLOAT",
+          "widget": {
+            "name": "denoise"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "Sigmas",
+          "name": "SIGMAS",
+          "type": "SIGMAS",
+          "links": [
+            22
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicScheduler"
+      },
+      "widgets_values": [
+        "simple",
+        2,
+        0.25
+      ],
+      "widgets_values_named": {
+        "scheduler": "simple",
+        "steps": 2,
+        "denoise": 0.25
+      }
+    },
+    {
+      "id": 19,
+      "type": "MiniMaxH3DirectorSelfLift",
+      "pos": [
+        -280,
+        1160
+      ],
+      "size": [
+        420,
+        600
+      ],
+      "flags": {},
+      "order": 19,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "bd_grp_selflift_sample",
+          "name": "bd_grp_selflift_sample",
+          "type": "BDGROUP",
+          "widget": {
+            "name": "bd_grp_selflift_sample"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "split_mode",
+          "name": "split_mode",
+          "type": "COMBO",
+          "widget": {
+            "name": "split_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "highres_steps",
+          "name": "highres_steps",
+          "type": "INT",
+          "widget": {
+            "name": "highres_steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "transition_step",
+          "name": "transition_step",
+          "type": "INT",
+          "widget": {
+            "name": "transition_step"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "lowres_scale",
+          "name": "lowres_scale",
+          "type": "FLOAT",
+          "widget": {
+            "name": "lowres_scale"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sampler_mode",
+          "name": "sampler_mode",
+          "type": "COMBO",
+          "widget": {
+            "name": "sampler_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "native_low_carry",
+          "name": "native_low_carry",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "native_low_carry"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bd_grp_selflift_lift",
+          "name": "bd_grp_selflift_lift",
+          "type": "BDGROUP",
+          "widget": {
+            "name": "bd_grp_selflift_lift"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "latent_upscale_model",
+          "name": "latent_upscale_model",
+          "type": "COMBO",
+          "widget": {
+            "name": "latent_upscale_model"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "latent_upsample",
+          "name": "latent_upsample",
+          "type": "COMBO",
+          "widget": {
+            "name": "latent_upsample"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "rho",
+          "name": "rho",
+          "type": "FLOAT",
+          "widget": {
+            "name": "rho"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "w_min",
+          "name": "w_min",
+          "type": "FLOAT",
+          "widget": {
+            "name": "w_min"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "w_max",
+          "name": "w_max",
+          "type": "FLOAT",
+          "widget": {
+            "name": "w_max"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "enable_latent_chunking",
+          "name": "enable_latent_chunking",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "enable_latent_chunking"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bd_grp_selflift_tile",
+          "name": "bd_grp_selflift_tile",
+          "type": "BDGROUP",
+          "widget": {
+            "name": "bd_grp_selflift_tile"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "enable_tiling",
+          "name": "enable_tiling",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "enable_tiling"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "tile_count",
+          "name": "tile_count",
+          "type": "INT",
+          "widget": {
+            "name": "tile_count"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "tile_overlap",
+          "name": "tile_overlap",
+          "type": "INT",
+          "widget": {
+            "name": "tile_overlap"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "model_hires",
+          "name": "model_hires",
+          "type": "MODEL",
+          "shape": 7,
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "selflift",
+          "name": "selflift",
+          "type": "MMX_DIR_SELFLIFT",
+          "links": [
+            25
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3DirectorSelfLift"
+      },
+      "widgets_values": [
+        "Progressive sample",
+        "highres_steps",
+        2,
+        6,
+        0.5,
+        "euler",
+        true,
+        "Lift / 3D",
+        "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "bilinear",
+        0.0,
+        0.25,
+        0.75,
+        false,
+        "High-res tiles",
+        false,
+        2,
+        128
+      ],
+      "color": "#243447",
+      "bgcolor": "#35536b"
+    }
+  ],
+  "links": [
+    [
+      2,
+      2,
+      0,
+      5,
+      3,
+      "CLIP"
+    ],
+    [
+      3,
+      3,
+      0,
+      5,
+      1,
+      "VAE"
+    ],
+    [
+      4,
+      4,
+      0,
+      5,
+      2,
+      "VAE"
+    ],
+    [
+      5,
+      5,
+      0,
+      6,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      5,
+      1,
+      6,
+      2,
+      "AUDIO"
+    ],
+    [
+      7,
+      5,
+      2,
+      6,
+      1,
+      "FLOAT"
+    ],
+    [
+      8,
+      5,
+      5,
+      8,
+      0,
+      "*"
+    ],
+    [
+      9,
+      6,
+      0,
+      7,
+      0,
+      "VIDEO"
+    ],
+    [
+      10,
+      5,
+      2,
+      9,
+      0,
+      "*"
+    ],
+    [
+      11,
+      5,
+      3,
+      10,
+      0,
+      "*"
+    ],
+    [
+      14,
+      13,
+      0,
+      2,
+      0,
+      "RAY_ACTORS_INIT"
+    ],
+    [
+      15,
+      12,
+      0,
+      1,
+      1,
+      "RAY_LORA"
+    ],
+    [
+      16,
+      2,
+      1,
+      1,
+      0,
+      "RAY_ACTORS_INIT"
+    ],
+    [
+      17,
+      1,
+      0,
+      14,
+      0,
+      "RAY_ACTORS"
+    ],
+    [
+      18,
+      14,
+      0,
+      16,
+      0,
+      "MODEL"
+    ],
+    [
+      19,
+      16,
+      0,
+      5,
+      0,
+      "MODEL"
+    ],
+    [
+      21,
+      16,
+      0,
+      17,
+      0,
+      "MODEL"
+    ],
+    [
+      25,
+      19,
+      0,
+      5,
+      7,
+      "MMX_DIR_SELFLIFT"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "模型加载 (MiniMax H3)",
+      "bounding": [
+        -760,
+        40,
+        440,
+        560
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "MiniMax H3 Director",
+      "bounding": [
+        -320,
+        40,
+        1120,
+        960
+      ],
+      "color": "#8A8",
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "输出",
+      "bounding": [
+        860,
+        40,
+        760,
+        760
+      ],
+      "color": "#b58",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "frontendVersion": "1.23.0",
+    "note": "O8 baseline — Original Director REF2VA Turbo4",
+    "ds": {
+      "scale": 0.85,
+      "offset": [
+        780,
+        40
+      ]
+    }
+  },
+  "version": 0.4
+}
