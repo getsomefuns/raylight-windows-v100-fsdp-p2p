@@ -36,5 +36,5 @@
 
 - [x] Update version, bilingual READMEs, changelog/release notes, and O14 test report.
 - [x] Run focused Director tests, O11/O12/O13 regressions, full pytest, Ruff, and `git diff --check`.
-- [ ] Commit the unique source worktree, deploy through the script, and verify the deployed marker.
+- [x] Commit the unique source worktree, deploy through the script, and verify the deployed marker.
 - [ ] Push GitHub and verify local/remote equality while Director remains a clean upstream checkout.

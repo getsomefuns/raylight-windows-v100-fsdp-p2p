@@ -36,5 +36,5 @@
 
 - [x] 更新版本号、README 中英文、CHANGELOG/双语发布说明和 O14 测试汇总。
 - [x] 运行 Director 定向测试、相关 O11/O12/O13 回归、全量 pytest、Ruff、`git diff --check`。
-- [ ] 提交唯一源码工作树，部署到 `custom_nodes/raylight`，验证部署提交标记与源码一致。
+- [x] 提交唯一源码工作树，部署到 `custom_nodes/raylight`，验证部署提交标记与源码一致。
 - [ ] 推送 GitHub，核对本地分支与远端提交一致；Director 保持官方干净状态。
