@@ -37,6 +37,10 @@ EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS = (
     "enable_tiling",
     "tile_count",
     "tile_overlap",
+    "shift_cache",
+    "on_step_state",
+    "zero_noise",
+    "noise_override",
 )
 
 
@@ -65,6 +69,9 @@ def _supported_sample_single_stage(
     tile_count: int = 2,
     tile_overlap: int = 128,
     shift_cache=None,
+    on_step_state=None,
+    zero_noise: bool = False,
+    noise_override=None,
 ):
     del (
         model,
@@ -90,6 +97,9 @@ def _supported_sample_single_stage(
         tile_count,
         tile_overlap,
         shift_cache,
+        on_step_state,
+        zero_noise,
+        noise_override,
     )
 
 
@@ -123,11 +133,19 @@ class _SampleRemote:
         self.requests.append(request)
         source = request["latent_image"] if self.samples is None else self.samples
         samples = source._copy() if getattr(source, "is_nested", False) else source.clone()
-        return {
+        result = {
             "rank": self.rank,
             "operation_id": request["operation_id"],
             "samples": samples,
         }
+        if request.get("capture_step_state") and self.rank == 0:
+            result["step_state"] = {
+                "step": int(request["steps"]) - 1,
+                "total_steps": int(request["steps"]),
+                "x0": samples,
+                "x": samples + 1,
+            }
+        return result
 
 
 class _ParallelRemote:
@@ -209,7 +227,7 @@ def test_proxy_dispatch_failure_never_falls_back_to_local_sampler(isolated_sampl
 
 def test_supported_director_signature_is_fixed_to_the_accepted_commit():
     assert bridge.EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS == EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS
-    assert bridge.SUPPORTED_DIRECTOR_COMMIT == "19b6a7325b1abdd8706b3c2f7d8ecf70a1126181"
+    assert bridge.SUPPORTED_DIRECTOR_COMMIT == "576424fb252b2b4a538e792027f7db1a5ef376e4"
     bridge.validate_mmh3director_sample_single_stage(_supported_sample_single_stage)
 
 
@@ -230,7 +248,7 @@ def test_missing_director_parameter_reports_version_commit_and_field():
     def missing_scheduler(*, model, positive, negative, latent, seed, cfg, steps, sampler_name, **kwargs):
         del model, positive, negative, latent, seed, cfg, steps, sampler_name, kwargs
 
-    with pytest.raises(RuntimeError, match=r"scheduler.*19b6a73"):
+    with pytest.raises(RuntimeError, match=r"scheduler.*576424f"):
         bridge.validate_mmh3director_sample_single_stage(missing_scheduler)
 
 
@@ -448,6 +466,84 @@ def test_new_director_stage_routes_proxy_before_basic_guider_and_preserves_laten
             "minimax_h3_sigma_shift_video": 11.0,
             "minimax_h3_sigma_shift_audio": 2.5,
         }
+
+
+def test_selflift_stage_preserves_fixed_noise_and_returns_final_full_state():
+    proxy, actors = _proxy()
+    latent_samples = torch.zeros(1, 32, 2, 4, 4)
+    fixed_noise = torch.full_like(latent_samples, 0.75)
+    states = []
+
+    with (
+        mock.patch.object(bridge.comfy.sample, "prepare_noise") as prepare_noise,
+        mock.patch.object(bridge.comfy.sample, "fix_empty_latent_channels", return_value=latent_samples),
+        mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
+        mock.patch.object(bridge, "_release_main_process_models_before_remote_sampling"),
+        mock.patch.object(bridge.ray, "get", side_effect=lambda futures: futures),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_device", return_value=torch.device("cpu")),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_dtype", return_value=torch.float32),
+    ):
+        bridge.dispatch_mmh3director_stage(
+            model=proxy,
+            positive=[["positive", {}]],
+            negative=[],
+            latent={"samples": latent_samples},
+            seed=123,
+            cfg=1.0,
+            steps=3,
+            sampler_name="euler",
+            scheduler="simple",
+            apply_shift=False,
+            on_step_state=lambda step, total, x0, x: states.append((step, total, x0, x)),
+            noise_override=fixed_noise,
+        )
+
+    prepare_noise.assert_not_called()
+    assert len(states) == 1
+    step, total, x0, x = states[0]
+    assert (step, total) == (2, 3)
+    assert torch.equal(x0, latent_samples)
+    assert torch.equal(x, latent_samples + 1)
+    for actor in actors:
+        request = actor.sample_mmh3director_request.requests[0]
+        assert request["noise"] is fixed_noise
+        assert request["capture_step_state"] is True
+
+
+def test_selflift_zero_noise_uses_exact_latent_structure():
+    proxy, actors = _proxy()
+    video = torch.ones(1, 24, 2, 4, 4)
+    audio = torch.ones(1, 32, 2, 10)
+    nested = comfy.nested_tensor.NestedTensor((video, audio))
+
+    with (
+        mock.patch.object(bridge.comfy.sample, "prepare_noise") as prepare_noise,
+        mock.patch.object(bridge.comfy.sample, "fix_empty_latent_channels", return_value=nested),
+        mock.patch.object(bridge, "ensure_mmh3director_compatibility"),
+        mock.patch.object(bridge, "_release_main_process_models_before_remote_sampling"),
+        mock.patch.object(bridge.ray, "get", side_effect=lambda futures: futures),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_device", return_value=torch.device("cpu")),
+        mock.patch.object(bridge.comfy.model_management, "intermediate_dtype", return_value=torch.float32),
+    ):
+        bridge.dispatch_mmh3director_stage(
+            model=proxy,
+            positive=[["positive", {}]],
+            negative=[],
+            latent={"samples": nested},
+            seed=123,
+            cfg=1.0,
+            steps=1,
+            sampler_name="euler",
+            scheduler="simple",
+            apply_shift=False,
+            zero_noise=True,
+        )
+
+    prepare_noise.assert_not_called()
+    for actor in actors:
+        parts = actor.sample_mmh3director_request.requests[0]["noise"].unbind()
+        assert len(parts) == 2
+        assert all(torch.count_nonzero(part).item() == 0 for part in parts)
 
 
 def test_new_director_stage_accepts_real_minimax_av_nested_latent():

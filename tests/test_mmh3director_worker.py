@@ -430,6 +430,63 @@ def test_rank_zero_publishes_step_preview_without_serializing_a_callback():
     publish.assert_called_once_with(request["preview_queue"], event)
 
 
+def test_rank_zero_returns_final_full_selflift_step_state():
+    worker = _worker(local_rank=0)
+    request = _request(operation_id="operation-selflift-state")
+    request["capture_step_state"] = True
+    shifted_model = _ModelPatcher()
+    final_x0 = request["latent_image"] + 3
+    final_x = request["latent_image"] + 4
+
+    def run_sample(*args, **kwargs):
+        kwargs["callback"](6, final_x0, final_x, 8)
+        return request["latent_image"] + 5
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            return_value=(shifted_model,),
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch("comfy.sample.sample", side_effect=run_sample),
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+    ):
+        result = _unwrapped_sample(worker, request)
+
+    state = result["step_state"]
+    assert (state["step"], state["total_steps"]) == (6, 8)
+    assert state["x0"].device.type == "cpu"
+    assert state["x"].device.type == "cpu"
+    assert torch.equal(state["x0"], final_x0)
+    assert torch.equal(state["x"], final_x)
+
+
+def test_nonzero_rank_does_not_return_duplicate_selflift_state():
+    worker = _worker(local_rank=1)
+    request = _request(operation_id="operation-selflift-state-rank1")
+    request["capture_step_state"] = True
+    shifted_model = _ModelPatcher()
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            return_value=(shifted_model,),
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch("comfy.sample.sample", return_value=request["latent_image"]),
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+    ):
+        result = _unwrapped_sample(worker, request)
+
+    assert "step_state" not in result
+
+
 def test_nonzero_rank_never_builds_a_step_preview_callback():
     worker = _worker(local_rank=1)
     request = _request(operation_id="operation-preview-rank1")

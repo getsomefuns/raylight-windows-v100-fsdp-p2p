@@ -78,4 +78,7 @@ def test_installed_director_matches_the_current_stage_contract():
     spec.loader.exec_module(module)
 
     assert "shift_cache" in inspect.signature(module.sample_single_stage).parameters
+    assert "on_step_state" in inspect.signature(module.sample_single_stage).parameters
+    assert "zero_noise" in inspect.signature(module.sample_single_stage).parameters
+    assert "noise_override" in inspect.signature(module.sample_single_stage).parameters
     assert bridge.validate_mmh3director_sample_single_stage(module.sample_single_stage) == "stage"

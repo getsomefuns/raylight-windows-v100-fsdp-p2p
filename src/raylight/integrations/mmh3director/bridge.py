@@ -22,7 +22,7 @@ from . import preview_transport
 
 
 SUPPORTED_DIRECTOR_VERSION = "main"
-SUPPORTED_DIRECTOR_COMMIT = "19b6a7325b1abdd8706b3c2f7d8ecf70a1126181"
+SUPPORTED_DIRECTOR_COMMIT = "576424fb252b2b4a538e792027f7db1a5ef376e4"
 LEGACY_DIRECTOR_VERSION = "1.0.0"
 LEGACY_DIRECTOR_COMMIT = "d655912262bcd70ad43c3a431879be9539d8e054"
 LEGACY_SAMPLE_SINGLE_STAGE_PARAMETERS = (
@@ -51,6 +51,10 @@ EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS = (
     "enable_tiling",
     "tile_count",
     "tile_overlap",
+    "shift_cache",
+    "on_step_state",
+    "zero_noise",
+    "noise_override",
 )
 
 _CONTINUE_REMASK_CAPABILITY = "continue_prefix_remask_v1"
@@ -175,6 +179,20 @@ def _director_latent_metadata(latent: dict) -> dict[str, object]:
     }
 
 
+def _zero_noise_like(samples):
+    """Match Director's ZeroNoise behavior for tensor and AV nested latents."""
+
+    if getattr(samples, "is_nested", False) and callable(getattr(samples, "unbind", None)):
+        import comfy.nested_tensor
+
+        return comfy.nested_tensor.NestedTensor(
+            tuple(torch.zeros_like(stream) for stream in samples.unbind())
+        )
+    if isinstance(samples, torch.Tensor):
+        return torch.zeros_like(samples)
+    raise TypeError(f"Cannot build MMH3Director zero noise for {type(samples).__name__}")
+
+
 def _sample_streams(samples) -> list[torch.Tensor]:
     if getattr(samples, "is_nested", False):
         streams = list(samples.unbind())
@@ -252,6 +270,9 @@ def dispatch_mmh3director_stage(
     tile_count: int = 2,
     tile_overlap: int = 128,
     shift_cache=None,
+    on_step_state=None,
+    zero_noise: bool = False,
+    noise_override=None,
 ):
     """Route the current Director stage seam to the existing Ray workers."""
 
@@ -290,11 +311,16 @@ def dispatch_mmh3director_stage(
         latent.get("downscale_ratio_spacial"),
         latent.get("downscale_ratio_temporal"),
     )
-    noise = comfy.sample.prepare_noise(
-        latent_image,
-        int(seed),
-        latent.get("batch_index"),
-    )
+    if noise_override is not None:
+        noise = noise_override
+    elif zero_noise:
+        noise = _zero_noise_like(latent_image)
+    else:
+        noise = comfy.sample.prepare_noise(
+            latent_image,
+            int(seed),
+            latent.get("batch_index"),
+        )
     normalized_sigmas = sigmas
     if isinstance(sigmas, torch.Tensor):
         normalized_sigmas = sigmas.detach().float().cpu().reshape(-1)
@@ -330,6 +356,7 @@ def dispatch_mmh3director_stage(
         noise_mask=latent.get("noise_mask"),
         sigmas=normalized_sigmas,
         callback=callback,
+        step_state_callback=on_step_state,
         preview_every=int(preview_every),
         seed=int(seed),
         apply_shift=bool(apply_shift),
@@ -367,6 +394,7 @@ def dispatch_mmh3director_sample(
     noise_mask=None,
     sigmas=None,
     callback=None,
+    step_state_callback=None,
     preview_every=1,
     disable_pbar=False,
     seed=None,
@@ -422,6 +450,8 @@ def dispatch_mmh3director_sample(
         "tile_overlap": max(0, int(tile_overlap)),
         "model_options": serialize_external_acceleration(model.model_options),
     }
+    if step_state_callback is not None:
+        request["capture_step_state"] = True
     if preview_queue is not None:
         request["preview_queue"] = preview_queue
         request["preview_every"] = int(preview_every)
@@ -465,6 +495,7 @@ def dispatch_mmh3director_sample(
             raise RuntimeError(f"MMH3Director operation {operation_id} returned {received}/{len(workers)} rank results")
 
         reference_samples = None
+        final_step_state = None
         for expected_rank, result in enumerate(results):
             if result is None:
                 raise RuntimeError(f"MMH3Director operation {operation_id} missing result for rank {expected_rank}")
@@ -483,11 +514,35 @@ def dispatch_mmh3director_sample(
                 reference_samples = samples
             else:
                 _assert_rank_samples_equal(reference_samples, samples, expected_rank)
+            if expected_rank == 0:
+                final_step_state = result.get("step_state")
+            elif result.get("step_state") is not None:
+                raise ValueError(
+                    f"rank {expected_rank} returned duplicate MMH3Director step state"
+                )
 
         normalized = reference_samples.to(
             device=comfy.model_management.intermediate_device(),
             dtype=comfy.model_management.intermediate_dtype(),
         )
+        if step_state_callback is not None:
+            if not isinstance(final_step_state, dict):
+                raise RuntimeError(
+                    f"MMH3Director operation {operation_id} did not return final step state"
+                )
+            required_state = ("step", "total_steps", "x0", "x")
+            missing_state = [name for name in required_state if name not in final_step_state]
+            if missing_state:
+                raise RuntimeError(
+                    "MMH3Director final step state missing field(s): "
+                    + ", ".join(missing_state)
+                )
+            step_state_callback(
+                int(final_step_state["step"]),
+                int(final_step_state["total_steps"]),
+                final_step_state["x0"],
+                final_step_state["x"],
+            )
         if callback is not None and last_preview_step[0] < max(0, int(steps) - 1):
             callback(max(0, int(steps) - 1), normalized, normalized, int(steps))
         print(

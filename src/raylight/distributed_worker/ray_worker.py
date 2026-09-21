@@ -337,6 +337,26 @@ def _mmh3director_finite_summary(samples):
     return {"finite": finite, "streams": rows}
 
 
+def _mmh3director_state_to_cpu(value):
+    """Detach one final Director callback state without duplicating every step."""
+
+    if getattr(value, "is_nested", False) and callable(getattr(value, "unbind", None)):
+        import comfy.nested_tensor
+
+        return comfy.nested_tensor.NestedTensor(
+            tuple(_mmh3director_state_to_cpu(stream) for stream in value.unbind())
+        )
+    if isinstance(value, torch.Tensor):
+        return value.detach().to(device="cpu", copy=True)
+    if isinstance(value, dict):
+        return {key: _mmh3director_state_to_cpu(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_mmh3director_state_to_cpu(item) for item in value)
+    if isinstance(value, list):
+        return [_mmh3director_state_to_cpu(item) for item in value]
+    return value
+
+
 def _import_mmh3director_module(suffix: str):
     module_suffix = f".director.{suffix}"
     for module_name, module in tuple(sys.modules.items()):
@@ -2151,26 +2171,36 @@ class RayWorker:
 
             sampling_callback = None
             preview_queue = request.get("preview_queue")
-            if preview_queue is not None and int(self.local_rank) == 0:
-                from raylight.integrations.mmh3director.preview_transport import (
-                    extract_preview_event,
-                    publish_preview_nonblocking,
-                )
-
-                def sampling_callback(step, x0, _x, total_steps):
-                    try:
-                        event = extract_preview_event(
-                            x0,
+            capture_step_state = bool(request.get("capture_step_state")) and int(self.local_rank) == 0
+            step_state_holder = {}
+            if (preview_queue is not None or capture_step_state) and int(self.local_rank) == 0:
+                def sampling_callback(step, x0, x, total_steps):
+                    if capture_step_state:
+                        step_state_holder.update(
                             step=int(step),
                             total_steps=int(total_steps),
-                            preview_every=int(request.get("preview_every", 1)),
+                            x0=x0,
+                            x=x,
                         )
-                        publish_preview_nonblocking(preview_queue, event)
-                    except Exception as error:
-                        logging.debug(
-                            "MMH3Director rank-0 preview skipped: %s",
-                            error,
+                    if preview_queue is not None:
+                        from raylight.integrations.mmh3director.preview_transport import (
+                            extract_preview_event,
+                            publish_preview_nonblocking,
                         )
+
+                        try:
+                            event = extract_preview_event(
+                                x0,
+                                step=int(step),
+                                total_steps=int(total_steps),
+                                preview_every=int(request.get("preview_every", 1)),
+                            )
+                            publish_preview_nonblocking(preview_queue, event)
+                        except Exception as error:
+                            logging.debug(
+                                "MMH3Director rank-0 preview skipped: %s",
+                                error,
+                            )
 
             with torch.no_grad():
                 if bool(request.get("enable_tiling", False)):
@@ -2218,6 +2248,12 @@ class RayWorker:
                 "finite": True,
                 "streams": summary["streams"],
             }
+            if capture_step_state:
+                if not step_state_holder:
+                    raise RuntimeError(
+                        "MMH3Director sampler did not report the requested final step state"
+                    )
+                result["step_state"] = _mmh3director_state_to_cpu(step_state_holder)
             self._mmh3director_last_status = {
                 "operation_id": operation_id,
                 "rank": int(self.local_rank),
