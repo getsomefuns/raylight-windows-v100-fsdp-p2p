@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from collections import OrderedDict
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -583,6 +584,102 @@ def test_failed_segment_does_not_pollute_the_next_hot_operation():
     assert worker._mmh3director_active_operation is None
     assert worker.get_mmh3director_sample_status("operation-next")["state"] == "completed"
     assert worker.get_mmh3director_sample_status("operation-failed")["state"] == "unknown"
+
+
+def test_worker_segment_loras_are_request_scoped_across_hot_operations():
+    worker = _worker(is_fsdp=True)
+    requests = [
+        _request(operation_id="segment-a"),
+        _request(operation_id="segment-none"),
+        _request(operation_id="segment-b"),
+    ]
+    requests[0]["segment_loras"] = [
+        {"path": "A.safetensors", "strength_model": 0.8}
+    ]
+    requests[1]["segment_loras"] = []
+    requests[2]["segment_loras"] = [
+        {"path": "B.safetensors", "strength_model": 0.6}
+    ]
+    shifted_models = [_ModelPatcher(), _ModelPatcher(), _ModelPatcher()]
+    patched_a = _ModelPatcher()
+    patched_b = _ModelPatcher()
+    sampled_models = []
+
+    def apply_segment(model, descriptors, **_kwargs):
+        if not descriptors:
+            return model
+        return patched_a if descriptors[0]["path"] == "A.safetensors" else patched_b
+
+    def sample(model, *_args, **_kwargs):
+        sampled_models.append(model)
+        return requests[len(sampled_models) - 1]["latent_image"]
+
+    with (
+        mock.patch(
+            "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
+            side_effect=[(model,) for model in shifted_models],
+        ),
+        mock.patch.object(ray_worker, "_restore_controlnet_refs"),
+        mock.patch.object(ray_worker, "_remap_conditioning_devices"),
+        mock.patch.object(ray_worker, "_prepare_control_models"),
+        mock.patch(
+            "raylight.integrations.mmh3director.segment_lora.apply_worker_segment_loras",
+            side_effect=apply_segment,
+        ) as apply,
+        mock.patch("comfy.sample.sample", side_effect=sample),
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+    ):
+        for request in requests:
+            _unwrapped_sample(worker, request)
+
+    assert sampled_models == [patched_a, shifted_models[1], patched_b]
+    assert [call.args[1] for call in apply.call_args_list] == [
+        requests[0]["segment_loras"],
+        (),
+        requests[2]["segment_loras"],
+    ]
+    assert worker.model is not patched_a
+    assert worker.model is not patched_b
+
+
+def test_segment_lora_state_cache_clears_on_global_lora_change_and_model_reset():
+    worker = _worker()
+    worker._mmh3director_segment_lora_cache = OrderedDict(
+        [(('A.safetensors', 1, 1), {"A": 1})]
+    )
+
+    worker.set_lora_list([{"path": "global.safetensors", "strength_model": 1.0}])
+    assert worker._mmh3director_segment_lora_cache == OrderedDict()
+
+    worker._mmh3director_segment_lora_cache[("B.safetensors", 1, 1)] = {"B": 1}
+    worker.model = None
+    with (
+        mock.patch("comfy.model_management.soft_empty_cache"),
+        mock.patch.object(ray_worker.gc, "collect"),
+    ):
+        worker._reset_active_model()
+    assert worker._mmh3director_segment_lora_cache == OrderedDict()
+
+
+def test_segment_lora_state_cache_clears_before_worker_exit():
+    worker = _worker()
+    worker._mmh3director_segment_lora_cache = OrderedDict(
+        [(('A.safetensors', 1, 1), {"A": 1})]
+    )
+    worker._free_cached_aux_models = mock.Mock()
+    worker._invalidate_non_fsdp_cache = mock.Mock()
+    worker._free_current_model = mock.Mock()
+    worker.disable_windows_p2p = mock.Mock()
+    worker._windows_p2p = None
+
+    with (
+        mock.patch.object(ray_worker.dist, "destroy_process_group"),
+        mock.patch.object(ray_worker.ray.actor, "exit_actor"),
+    ):
+        worker.kill()
+
+    assert worker._mmh3director_segment_lora_cache == OrderedDict()
 
 
 def test_existing_common_ksampler_public_signature_is_unchanged():

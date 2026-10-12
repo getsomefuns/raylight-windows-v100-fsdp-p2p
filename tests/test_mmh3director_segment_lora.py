@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections import OrderedDict
 from types import ModuleType
 from unittest import mock
 
@@ -9,7 +10,11 @@ import pytest
 from raylight.integrations.mmh3director import bridge
 from raylight.integrations.mmh3director.metadata import MMH3DirectorModelMetadata
 from raylight.integrations.mmh3director.proxy import RayMMH3DirectorModelProxy
-from raylight.integrations.mmh3director.segment_lora import make_segment_lora_wrapper
+from raylight.integrations.mmh3director import segment_lora
+from raylight.integrations.mmh3director.segment_lora import (
+    apply_worker_segment_loras,
+    make_segment_lora_wrapper,
+)
 
 
 def _proxy():
@@ -128,3 +133,56 @@ def test_installer_patches_only_exact_director_aliases_and_restores_them():
             assert executor.apply_segment_loras is original
     finally:
         bridge.uninstall_mmh3director_sample_bridge_for_test()
+
+
+def test_worker_segment_lora_applies_to_temporary_sampling_clone_only():
+    base = object()
+    patched = object()
+
+    with (
+        mock.patch.object(segment_lora, "_load_lora_state", return_value={"lora": 1}),
+        mock.patch(
+            "raylight.comfy_dist.sd.load_lora_for_models_quantized",
+            return_value=patched,
+        ) as load,
+    ):
+        result = apply_worker_segment_loras(
+            base,
+            [{"path": "x.safetensors", "strength_model": 0.8}],
+            is_fsdp=True,
+            is_quant=True,
+            dynamic_sidecar=False,
+        )
+
+    assert result is patched
+    assert result is not base
+    load.assert_called_once_with(
+        base,
+        {"lora": 1},
+        0.8,
+        dynamic_sidecar=False,
+        defer_device_move=True,
+        fallback_to_patches=False,
+    )
+
+
+def test_worker_segment_lora_state_cache_is_lru_bounded_to_two_files(tmp_path):
+    paths = []
+    for name in ("a", "b", "c"):
+        path = tmp_path / f"{name}.safetensors"
+        path.write_bytes(name.encode("ascii"))
+        paths.append(path)
+    cache = OrderedDict()
+
+    with mock.patch(
+        "comfy.utils.load_torch_file",
+        side_effect=lambda path, safe_load: {"path": path, "safe": safe_load},
+    ) as load:
+        first = segment_lora._load_lora_state(str(paths[0]), state_cache=cache)
+        assert segment_lora._load_lora_state(str(paths[0]), state_cache=cache) is first
+        segment_lora._load_lora_state(str(paths[1]), state_cache=cache)
+        segment_lora._load_lora_state(str(paths[2]), state_cache=cache)
+
+    assert load.call_count == 3
+    assert len(cache) == 2
+    assert {key[0] for key in cache} == {str(paths[1]), str(paths[2])}

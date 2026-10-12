@@ -8,6 +8,7 @@ import functools
 import importlib
 import time
 import statistics
+from collections import OrderedDict
 from datetime import timedelta
 from pathlib import Path
 
@@ -816,6 +817,7 @@ class RayWorker:
         self._sampler_invocation = 0
         self._mmh3director_active_operation = None
         self._mmh3director_last_status = None
+        self._mmh3director_segment_lora_cache = OrderedDict()
 
         self.is_model_loaded = False
         self.is_cpu_offload = self.parallel_dict.get("fsdp_cpu_offload", False)
@@ -1298,6 +1300,9 @@ class RayWorker:
                 print(f"[Rank {self.local_rank}] model.cleanup() failed in _reset_active_model: {e}")
 
         self.model = None
+        segment_lora_cache = getattr(self, "_mmh3director_segment_lora_cache", None)
+        if segment_lora_cache is not None:
+            segment_lora_cache.clear()
         self.overwrite_cast_dtype = None
         self.active_request_key = None
         gc.collect()
@@ -1712,6 +1717,9 @@ class RayWorker:
         self.is_model_loaded = True
 
     def set_lora_list(self, lora):
+        segment_lora_cache = getattr(self, "_mmh3director_segment_lora_cache", None)
+        if segment_lora_cache is not None:
+            segment_lora_cache.clear()
         self.lora_list = lora
 
     def get_lora_list(
@@ -1759,6 +1767,9 @@ class RayWorker:
             del lora_model
 
     def kill(self):
+        segment_lora_cache = getattr(self, "_mmh3director_segment_lora_cache", None)
+        if segment_lora_cache is not None:
+            segment_lora_cache.clear()
         self._free_cached_aux_models()
         self._invalidate_non_fsdp_cache()
         self._free_current_model()
@@ -2161,6 +2172,30 @@ class RayWorker:
                 if name != "transformer_options":
                     merged_options[name] = copy.deepcopy(value)
             model_for_sampling.model_options = merged_options
+
+            import comfy.memory_management as comfy_memory_management
+            from raylight.integrations.mmh3director.segment_lora import (
+                apply_worker_segment_loras,
+            )
+
+            segment_lora_cache = getattr(
+                self,
+                "_mmh3director_segment_lora_cache",
+                None,
+            )
+            if segment_lora_cache is None:
+                segment_lora_cache = OrderedDict()
+                self._mmh3director_segment_lora_cache = segment_lora_cache
+            model_for_sampling = apply_worker_segment_loras(
+                model_for_sampling,
+                request.get("segment_loras") or (),
+                is_fsdp=bool(self.parallel_dict.get("is_fsdp")),
+                is_quant=bool(self.parallel_dict.get("is_quant")),
+                dynamic_sidecar=bool(
+                    getattr(comfy_memory_management, "aimdo_enabled", False)
+                ),
+                state_cache=segment_lora_cache,
+            )
 
             from raylight.integrations.mmh3director.external_acceleration import (
                 apply_external_acceleration,
