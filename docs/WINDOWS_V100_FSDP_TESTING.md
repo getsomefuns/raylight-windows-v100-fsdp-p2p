@@ -2,7 +2,7 @@
 
 本文只维护 `windows-v100-fsdp-p2p` 分支的 FSDP 计划、诊断、失败记录与验收结果。旧版 Windows P2P/Ulysses 项目的数据继续保留在 [TESTING.md](TESTING.md)，两者不再混写。
 
-- 最近更新：2026-08-16
+- 最近更新：2026-10-12
 - 精简数据附件：[windows-v100-fsdp-test-results-2026-08.csv](windows-v100-fsdp-test-results-2026-08.csv)
 - 当前状态：FSDP 显存分片、CUDA P2P 数据面和 LTX 5 秒视觉输出已通过；性能优化目标尚未通过
 - 历史阶段：F0 方案评估、F2 合成模型门禁、F3/F4 LTX 集成与输出修复
@@ -108,6 +108,21 @@ O9 同时覆盖 FSDP `all_gather_into_tensor` 与 Ulysses `all_to_all_single` �
 | 热 | 386.36 s | 14.9 s/it | 47.8 s/it | 16234 / 16156 | 54942 | 70055 | 765 |
 
 最大完整 FSDP all-gather payload 为 302,063,616 字节，profile 明确记录 `chunks > calls`。媒体为 1280×704、121 帧、25 FPS；每个输出 121/121 唯一帧、0 黑屏区间、音频 NaN/Inf=0。两张卡采样利用率均达到 100%，退出后均回到 10 MiB且 worker 不存在。该结果证明更大的 FSDP shard 不再要求扩大持久 buffer，也没有通过 CPU/Gloo 或 pagefile 中转正式 CUDA payload。完整跨工作流数据见 [O9 自适应分块验收](testing/windows-p2p/ADAPTIVE_CHUNKING_2026-08.zh-CN.md)。
+
+## 1.16.1 回归：多段 Director patcher 生命周期
+
+故障工作流连续选择 10 段，前 5 段完成后，第 6 个被选片段（时间线第 20 段）在 SelfLift 高清阶段进入 ComfyUI sampler 前失败：共享模型的 `current_patcher` 已被置空。该故障发生在 FaceRefine 之前，不是 OOM，也不是 FaceRefine 未连接。
+
+根因是多个 FSDP `ModelPatcher` 克隆共享同一个底层模型。旧克隆的 `cleanup()` 或 `__del__()` 无条件清空 `model.current_patcher`，可能覆盖新一段刚安装的活动 patcher。1.16.1 改为只有当前引用仍指向自身时才允许清空。
+
+| ID | 验证目标 | 修复前 | 修复后 | 状态 |
+|---|---|---|---|---|
+| FSDP-LIFE-001 | 旧克隆显式 cleanup 不得清除活动 patcher | 活动引用变成 `None` | 活动引用保持不变 | `PASS` |
+| FSDP-LIFE-002 | 旧克隆 finalizer 不得清除活动 patcher | 活动引用变成 `None` | 活动引用保持不变 | `PASS` |
+| FSDP-LIFE-003 | FSDP 混合精度/克隆回归 | 两个故障测试修复前失败 | `22 passed`，另有 `2 subtests passed`；同时验证活动所有者仍可释放自身引用 | `PASS` |
+| FSDP-LIFE-004 | 全项目自动化回归 | 不适用 | `757 passed`，另有 `35 subtests passed` | `PASS` |
+
+本补丁不改变模型权重、Safe-FP16、collective、P2P staging 或采样公式。`confirm_first_pass=true` 时，Director 官方流程会先保存首采缓存并等待确认，Refine 与 FaceRefine 在确认后的下一次执行才运行；这不是 Raylight 跳过节点。
 
 ## 证据与测试入口
 

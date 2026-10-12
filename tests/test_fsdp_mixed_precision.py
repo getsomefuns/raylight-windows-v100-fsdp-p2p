@@ -278,6 +278,64 @@ class FSDPMixedPrecisionTests(unittest.TestCase):
         self.assertEqual(cloned.rank, 0)
         self.assertIs(cloned.fsdp_state_dict, patcher.fsdp_state_dict)
 
+    def test_stale_clone_cleanup_preserves_the_active_current_patcher(self):
+        stale = object.__new__(FSDPModelPatcher)
+        active = object()
+        model = types.SimpleNamespace(current_patcher=active)
+        stale.model = model
+        stale.clean_hooks = mock.Mock()
+        stale.callbacks = {}
+
+        FSDPModelPatcher.cleanup(stale)
+
+        self.assertIs(model.current_patcher, active)
+
+    def test_active_patcher_cleanup_clears_its_current_patcher_reference(self):
+        active = object.__new__(FSDPModelPatcher)
+        model = types.SimpleNamespace(current_patcher=active)
+        active.model = model
+        active.clean_hooks = mock.Mock()
+        active.callbacks = {}
+
+        FSDPModelPatcher.cleanup(active)
+
+        self.assertIsNone(model.current_patcher)
+
+    def test_stale_clone_finalizer_preserves_the_active_current_patcher(self):
+        stale = object.__new__(FSDPModelPatcher)
+        active = object()
+        model = types.SimpleNamespace(current_patcher=active)
+        stale.model = model
+        stale.detach = mock.Mock()
+
+        with (
+            mock.patch(
+                "raylight.comfy_dist.model_patcher.close_fsdp_cpu_offload_host_memory"
+            ),
+            mock.patch("comfy.model_management.soft_empty_cache"),
+            mock.patch("raylight.comfy_dist.model_patcher.gc.collect"),
+        ):
+            FSDPModelPatcher.__del__(stale)
+
+        self.assertIs(model.current_patcher, active)
+
+    def test_active_patcher_finalizer_clears_its_current_patcher_reference(self):
+        active = object.__new__(FSDPModelPatcher)
+        model = types.SimpleNamespace(current_patcher=active)
+        active.model = model
+        active.detach = mock.Mock()
+
+        with (
+            mock.patch(
+                "raylight.comfy_dist.model_patcher.close_fsdp_cpu_offload_host_memory"
+            ),
+            mock.patch("comfy.model_management.soft_empty_cache"),
+            mock.patch("raylight.comfy_dist.model_patcher.gc.collect"),
+        ):
+            FSDPModelPatcher.__del__(active)
+
+        self.assertIsNone(model.current_patcher)
+
 
     def test_dense_meta_parameters_keep_checkpoint_bf16_but_quant_weight_stays_logical(self):
         class Tiny(torch.nn.Module):

@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.16.1 fixes a lifecycle race in multi-segment MiniMaxH3Director runs. Cleanup or finalization of an old FSDP `ModelPatcher` clone could clear the newer segment's active `current_patcher`, typically failing in the SelfLift high-resolution stage before `prepare_state`. Cleanup now releases that reference only when the clone is still its owner. Model precision, FSDP/P2P transport, and sampling math are unchanged. Director's `confirm_first_pass=true` still intentionally defers Refine/FaceRefine until the confirmed follow-up execution. See the [1.16.1 English release note](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.en.md).
+
 Version 1.16.0 (O14) moves MiniMaxH3Director compatibility to upstream `576424f`, adds SelfLift final-state, zero-noise, and fixed-noise forwarding, and fixes valid video with broadband-noise audio. The Ray MODEL facade now mirrors MiniMaxH3's AV audio-flow scale (`12/3=4` by default). The full dual-V100 SelfLift + SOL + Refine run produces 864x480, 124 frames at 24 fps in 288.55 seconds, with zero audio NaN/Inf and 124/124 unique frames. See the [1.16.0 English release note](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.en.md) and [O14 acceptance record](docs/testing/minimax-h3/O14_MMH3DIRECTOR_576424F_SELFLIFT_2026-09.en.md).
 
 Version 1.15.0 (O13) adapts MiniMaxH3Director `19b6a73`. Director-native Refine, continuity remasking, Refine spatial tiling, and step-wise live previews now execute through the dual-V100 workers instead of being silently dropped. The new `shift_cache` argument is accepted explicitly, but the main-process proxy cache is not serialized; Raylight retains lifecycle ownership of the real remote weights. Refine tiling is a VRAM feature and the untiled path is normally faster when memory permits. Preview events come only from rank 0 through a size-one non-blocking queue, and disabling preview creates no transport. See the [1.15.0 English release note](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.en.md) and [O13 test record](docs/testing/minimax-h3/O13_MMH3DIRECTOR_19B6A73_2026-09.zh-CN.md).
@@ -39,7 +41,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.16.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.16.1; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -56,6 +58,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - MiniMaxH3Director `b8f721c` compatibility patch 1.13.1: [English](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md) / [中文](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md)
 - Python 3.12/Torch 2.12 and H3 external accelerator bridge 1.14.0: [English](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.en.md) / [中文](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.zh-CN.md)
 - MiniMaxH3Director `19b6a73` full compatibility 1.15.0: [English](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.en.md) / [中文](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.zh-CN.md)
+- Multi-segment FSDP patcher lifecycle fix 1.16.1: [English](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.en.md) / [中文](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.zh-CN.md)
 - MiniMaxH3Director `576424f` / SelfLift 1.16.0: [English](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.en.md) / [中文](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.

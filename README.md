@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.16.1 修复 MiniMaxH3Director 多段生成中，旧 FSDP `ModelPatcher` 克隆在清理或 Python 回收时误删新一段活动 `current_patcher` 的生命周期竞争。典型症状是前几段成功，到后续 SelfLift 高清阶段在 `prepare_state` 前报 `NoneType`。清理逻辑现在只允许当前所有者解除自身引用；模型精度、FSDP/P2P 数据路径和采样数学均未改变。Director 的 `confirm_first_pass=true` 仍按官方语义推迟 Refine/FaceRefine 到确认后的下一次执行。详见 [1.16.1 中文发布说明](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.zh-CN.md)。
+
 1.16.0（O14）把 MiniMaxH3Director 兼容坐标更新到官方 `576424f`，新增 SelfLift 两阶段状态回传、零噪声/固定噪声转发，并修复“画面正常但音频全是杂音”：Ray MODEL 代理现在完整复刻 MiniMaxH3 AV 的音频 flow 尺度（默认 `12/3=4`）。完整 SelfLift + SOL + Refine 双卡实测为 864×480、124 帧、24 fps，端到端 288.55 秒，音频 NaN/Inf 为 0，124/124 帧唯一。详见 [1.16.0 中文发布说明](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md)和[O14 测试记录](docs/testing/minimax-h3/O14_MMH3DIRECTOR_576424F_SELFLIFT_2026-09.zh-CN.md)。
 
 1.15.0（O13）适配 MiniMaxH3Director `19b6a73`：Director 自带 Refine、连续段逐步 remask、Refine 空间分块与逐步实时预览现在都会进入双 V100 worker，而不是静默丢失。新版 `shift_cache` 参数被显式接收，但主进程代理缓存不会跨进程序列化；远端权重仍由 Raylight 生命周期管理。Refine 分块用于降低显存，显存足够时关闭通常更快；实时预览只由 rank 0 经容量为 1 的非阻塞队列回传，关闭预览时不创建传输通道。详见 [1.15.0 中文发布说明](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.zh-CN.md)和[O13 测试记录](docs/testing/minimax-h3/O13_MMH3DIRECTOR_19B6A73_2026-09.zh-CN.md)。
@@ -49,7 +51,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.16.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.16.1；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -66,6 +68,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - MiniMaxH3Director `b8f721c` 兼容补丁 1.13.1：[中文](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.zh-CN.md) / [English](docs/releases/2026-09-03-mmh3director-b8f721c-compatibility.en.md)
 - Python3.12/Torch2.12 与 H3 外部加速桥 1.14.0：[中文](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.zh-CN.md) / [English](docs/releases/2026-09-10-o12-python312-torch212-h3-acceleration.en.md)
 - MiniMaxH3Director `19b6a73` 完整兼容 1.15.0：[中文](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.zh-CN.md) / [English](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.en.md)
+- 多段 FSDP patcher 生命周期修复 1.16.1：[中文](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.zh-CN.md) / [English](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.en.md)
 - MiniMaxH3Director `576424f` / SelfLift 1.16.0：[中文](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md) / [English](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和

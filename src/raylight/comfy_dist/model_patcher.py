@@ -845,7 +845,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
 
     def cleanup(self):
         self.clean_hooks()
-        if hasattr(self.model, "current_patcher"):
+        if getattr(self.model, "current_patcher", None) is self:
             self.model.current_patcher = None
         for callback in self.get_all_callbacks(CallbacksMP.ON_CLEANUP):
             callback(self)
@@ -916,7 +916,7 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
         if model is not None:
             close_fsdp_cpu_offload_host_memory(model)
             # Break reference cycle so the inner model can be collected
-            if hasattr(model, "current_patcher"):
+            if getattr(model, "current_patcher", None) is self:
                 model.current_patcher = None
 
         self.model = None
