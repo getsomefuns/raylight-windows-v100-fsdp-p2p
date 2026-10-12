@@ -177,26 +177,37 @@ def summarize_director_phases(
             and start_ns <= profile_time_ns <= end_ns
         ):
             timed_profiles.append(profile)
-    timed_profiles.sort(key=lambda profile: int(profile["time_ns"]))
-    profile_groups: list[dict[int, dict]] = []
-    profile_group_last_ns: list[int] = []
-    pair_window_ns = 2_000_000_000
-    for profile in timed_profiles:
+    # Ray forwards each actor's stdout independently, so two profile lines for
+    # one operation can reach the driver several seconds apart.  Pairing by a
+    # wall-clock window therefore invents extra operations under load.  Anchor
+    # each profile to the latest preparation begin from the same rank.  This
+    # also prevents a missing earlier log line from shifting every later
+    # profile into the wrong operation.
+    profile_groups: list[dict[int, dict]] = [dict() for _ in range(counts[0])]
+    for profile in sorted(timed_profiles, key=lambda item: int(item["time_ns"])):
         rank = int(profile["rank"])
         profile_time_ns = int(profile["time_ns"])
-        if (
-            not profile_groups
-            or rank in profile_groups[-1]
-            or profile_time_ns - profile_group_last_ns[-1] > pair_window_ns
-        ):
-            profile_groups.append({rank: profile})
-            profile_group_last_ns.append(profile_time_ns)
-        else:
-            profile_groups[-1][rank] = profile
-            profile_group_last_ns[-1] = profile_time_ns
-    if len(profile_groups) != counts[0]:
+        operation_index = -1
+        for index, sequence in enumerate(sequences_by_rank[rank]):
+            begin_ns = int(sequence["prepare_sampling_begin"]["time_ns"])
+            if begin_ns <= profile_time_ns:
+                operation_index = index
+            else:
+                break
+        if operation_index < 0:
+            continue
+        if rank in profile_groups[operation_index]:
+            raise RuntimeError(
+                "Director P2P profiles contain duplicate rank entries: "
+                f"operation={operation_index} rank={rank}"
+            )
+        profile_groups[operation_index][rank] = profile
+
+    missing_operations = [index for index, group in enumerate(profile_groups) if not group]
+    if missing_operations:
         raise RuntimeError(
-            f"Director P2P profiles do not match preparation sequences: profiles={len(profile_groups)} preparations={counts[0]}"
+            "Director P2P profiles do not cover preparation sequences: "
+            f"missing operations={missing_operations} preparations={counts[0]}"
         )
 
     rows = []

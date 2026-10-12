@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.17.0（O15）把 MiniMaxH3Director 兼容坐标从官方 `576424f` 更新到 `8151b29`。新版 Director 的 Refine 对齐、FL2V 选择运行/续接修复、FFV1 无损缓存、自定义缓存目录、真实音频采样率、分段清理和 UI 更新均可与现有双卡代理共存。Raylight 额外实现了分段 LoRA 描述符桥：主进程不加载权重，当前片段的 LoRA 栈会传给两个 FSDP worker 并只应用于本次临时模型克隆，不污染下一片段或基础模型。两段真机测试完成 864×480、24 fps、146 帧输出，146/146 帧唯一；详见 [1.17.0 中文发布说明](docs/releases/2026-10-12-o15-mmh3director-8151b29.zh-CN.md)和[O15 测试记录](docs/testing/minimax-h3/O15_MMH3DIRECTOR_8151B29_2026-10.zh-CN.md)。
+
 1.16.1 修复 MiniMaxH3Director 多段生成中，旧 FSDP `ModelPatcher` 克隆在清理或 Python 回收时误删新一段活动 `current_patcher` 的生命周期竞争。典型症状是前几段成功，到后续 SelfLift 高清阶段在 `prepare_state` 前报 `NoneType`。清理逻辑现在只允许当前所有者解除自身引用；模型精度、FSDP/P2P 数据路径和采样数学均未改变。Director 的 `confirm_first_pass=true` 仍按官方语义推迟 Refine/FaceRefine 到确认后的下一次执行。详见 [1.16.1 中文发布说明](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.zh-CN.md)。
 
 1.16.0（O14）把 MiniMaxH3Director 兼容坐标更新到官方 `576424f`，新增 SelfLift 两阶段状态回传、零噪声/固定噪声转发，并修复“画面正常但音频全是杂音”：Ray MODEL 代理现在完整复刻 MiniMaxH3 AV 的音频 flow 尺度（默认 `12/3=4`）。完整 SelfLift + SOL + Refine 双卡实测为 864×480、124 帧、24 fps，端到端 288.55 秒，音频 NaN/Inf 为 0，124/124 帧唯一。详见 [1.16.0 中文发布说明](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md)和[O14 测试记录](docs/testing/minimax-h3/O14_MMH3DIRECTOR_576424F_SELFLIFT_2026-09.zh-CN.md)。
@@ -51,7 +53,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.16.1；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.17.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -70,6 +72,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - MiniMaxH3Director `19b6a73` 完整兼容 1.15.0：[中文](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.zh-CN.md) / [English](docs/releases/2026-09-12-o13-mmh3director-19b6a73-full-compatibility.en.md)
 - 多段 FSDP patcher 生命周期修复 1.16.1：[中文](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.zh-CN.md) / [English](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.en.md)
 - MiniMaxH3Director `576424f` / SelfLift 1.16.0：[中文](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md) / [English](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.en.md)
+- MiniMaxH3Director `8151b29` / 分段 LoRA 1.17.0：[中文](docs/releases/2026-10-12-o15-mmh3director-8151b29.zh-CN.md) / [English](docs/releases/2026-10-12-o15-mmh3director-8151b29.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -178,12 +181,14 @@ TP2 编码开始前，主进程主动卸载当前 ComfyUI GPU 模型，并向两
 
 代理本身不保存模型权重。它只标记“这个 MODEL 的采样请求交给哪些 Ray Worker”，并只拦截自己的精确类型。旧版 Director 在 `comfy.sample.sample()` 入口被桥接；新版 Director 在 `sample_single_stage()` 进入 `BasicGuider → SamplerCustomAdvanced` 之前被桥接。桥把 conditioning、latent、固定 seed、采样参数和可选 SIGMAS 交给两个 Worker，等待返回 latent，再由 Director 继续 VAE、音频、拼接和保存。因此不存在 Director 本地采样一次、Raylight 再采样一次的重复计算。
 
-普通 ComfyUI `MODEL` 完全透传。代理请求失败时明确报错，不会静默退回 GPU0。MiniMaxH3Director 源码未修改；兼容坐标包括旧版 `d655912`、`b8f721c`、`19b6a73` 和当前主线 `576424f`。SelfLift 低清/高清转场会回传最终 step state；代理同时保留 MiniMaxH3 AV 音频 flow 尺度，避免画面正常而音频损坏。
+普通 ComfyUI `MODEL` 完全透传。代理请求失败时明确报错，不会静默退回 GPU0。MiniMaxH3Director 源码未修改；兼容坐标包括旧版 `d655912`、`b8f721c`、`19b6a73`、`576424f` 和当前已验证的 `8151b29`。SelfLift 低清/高清转场会回传最终 step state；代理同时保留 MiniMaxH3 AV 音频 flow 尺度，避免画面正常而音频损坏。
 
 ### 能力边界
 
 - 已验证 t2v、i2v、fl2v、r2v、v2v、rv2v、同 checkpoint Refine 和多段 R2V。
 - 每个 Director pass 对应一个远程 operation；多段按段调用但复用相同 Worker、Gloo 组和 FSDP shard。
+- Director `8151b29` 的分段 LoRA 可直接使用：全局 `RayLoraLoader` 仍构成基础栈，每段最多 8 个 active、非零 LoRA 由两个 worker 临时叠加；切换到空栈或不同栈时不会继承上一段补丁。
+- 自定义缓存目录、raw/FFV1 缓存、选择运行/分段导出、真实音频采样率和段间 prefetch 清理属于 Director 主进程能力；Raylight 不加速这些步骤，但已验证它们的接口不会破坏远程采样。
 - Director 仍负责并保留所有生成参数；Raylight 只负责 GPU 数量、并行度、FSDP、CPU offload、attention 和 Worker 生命周期。
 - 只有 Diffusion Model 被 FSDP 分片。显式 O10 节点可让受支持 Text Encoder 的语言主干使用独立 TP2；其视觉塔、Video VAE、Audio VAE、拼接和保存仍在 ComfyUI 主进程。
 - 主进程预处理模型会在远程采样前卸载出 GPU，避免与 rank 0 抢显存；可重载权重仍可能占用物理内存/commit，多段与长视频必须同时监控 RAM 和 pagefile。

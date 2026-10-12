@@ -69,6 +69,90 @@ def test_summarize_director_phases_keeps_repeated_zero_invocations():
     assert summary["worker_pids_by_rank"] == {"0": 1000, "1": 1001}
 
 
+def test_summarize_director_phases_pairs_profiles_to_preparation_despite_log_skew():
+    events = []
+    required = (
+        "prepare_sampling_begin",
+        "load_models_gpu_begin",
+        "load_models_gpu_end",
+        "prepare_sampling_end",
+    )
+    for operation_index, operation_base in enumerate((1_000_000_000, 60_000_000_000)):
+        for rank in (0, 1):
+            base = operation_base + rank * 10_000_000
+            for offset, name in enumerate(required):
+                events.append(
+                    _event(
+                        rank,
+                        0,
+                        name,
+                        base + offset * 100_000_000,
+                        base + offset * 100_000_000,
+                    )
+                )
+
+    # Ray may flush the two ranks' log lines several seconds apart.  These
+    # timestamps reproduce the O15 hardware run where the old two-second
+    # grouping window incorrectly turned two operations into three groups.
+    profiles = [
+        _profile(1, 4_000_000_000, 200, 1_400_000_000),
+        _profile(0, 5_000_000_000, 200, 4_700_000_000),
+        _profile(1, 2_000_000_000, 200, 70_000_000_000),
+    ]
+
+    summary = benchmark.summarize_director_phases(
+        events,
+        profiles,
+        execution_start_ms=0,
+        execution_end_ms=80_000,
+    )
+
+    assert summary["invocation_count"] == 2
+    assert summary["invocations"][0]["profiled_ranks"] == [0, 1]
+    assert summary["invocations"][1]["profiled_ranks"] == [1]
+    assert summary["sampling_seconds"] == pytest.approx(7.0)
+
+
+def test_summarize_director_phases_does_not_shift_later_profile_into_missing_slot():
+    events = []
+    required = (
+        "prepare_sampling_begin",
+        "load_models_gpu_begin",
+        "load_models_gpu_end",
+        "prepare_sampling_end",
+    )
+    for operation_base in (1_000_000_000, 60_000_000_000):
+        for rank in (0, 1):
+            base = operation_base + rank * 10_000_000
+            for offset, name in enumerate(required):
+                events.append(
+                    _event(
+                        rank,
+                        0,
+                        name,
+                        base + offset * 100_000_000,
+                        base + offset * 100_000_000,
+                    )
+                )
+
+    profiles = [
+        _profile(1, 4_000_000_000, 200, 1_400_000_000),
+        _profile(0, 2_000_000_000, 200, 70_000_000_000),
+        _profile(1, 3_000_000_000, 200, 71_000_000_000),
+    ]
+
+    summary = benchmark.summarize_director_phases(
+        events,
+        profiles,
+        execution_start_ms=0,
+        execution_end_ms=80_000,
+    )
+
+    assert summary["invocations"][0]["profiled_ranks"] == [1]
+    assert summary["invocations"][1]["profiled_ranks"] == [0, 1]
+    assert summary["sampling_seconds"] == pytest.approx(7.0)
+
+
 def test_summarize_director_phases_rejects_missing_peer_rank():
     names = (
         "prepare_sampling_begin",
