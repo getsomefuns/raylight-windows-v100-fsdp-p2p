@@ -18,6 +18,11 @@ from raylight.distributed_worker.sampling_lifecycle import clear_ray_worker_vram
 
 from .proxy import RayMMH3DirectorModelProxy
 from .external_acceleration import serialize_external_acceleration
+from .segment_lora import (
+    SEGMENT_LORA_BRIDGE_MARKER,
+    SEGMENT_LORA_ORIGINAL_MARKER,
+    make_segment_lora_wrapper,
+)
 from . import preview_transport
 
 
@@ -73,6 +78,9 @@ _installed_wrapper: Callable | None = None
 _original_director_stage: Callable | None = None
 _installed_stage_wrapper: Callable | None = None
 _patched_stage_targets: list[tuple[object, Callable]] = []
+_original_segment_lora_apply: Callable | None = None
+_installed_segment_lora_wrapper: Callable | None = None
+_patched_segment_lora_targets: list[tuple[object, Callable]] = []
 _LOG = logging.getLogger("raylight.mmh3director")
 
 
@@ -146,6 +154,36 @@ def _find_loaded_sample_single_stage(*, import_if_missing: bool = True) -> Calla
         ) from error
     sample_single_stage = module.sample_single_stage
     return getattr(sample_single_stage, _STAGE_ORIGINAL_MARKER, sample_single_stage)
+
+
+def _find_loaded_segment_lora_apply(*, import_if_missing: bool = True) -> Callable | None:
+    for module_name, module in tuple(sys.modules.items()):
+        if not _director_module_identity(module_name, module) or not module_name.endswith("director.segment_loras"):
+            continue
+        apply_segment_loras = getattr(module, "apply_segment_loras", None)
+        if callable(apply_segment_loras):
+            return getattr(
+                apply_segment_loras,
+                SEGMENT_LORA_ORIGINAL_MARKER,
+                apply_segment_loras,
+            )
+
+    if not import_if_missing:
+        return None
+
+    try:
+        module = importlib.import_module("ComfyUI_MiniMaxH3_Director.director.segment_loras")
+    except Exception as error:
+        raise RuntimeError(
+            "Ray MODEL Adapter (MMH3Director) requires Director's segment LoRA module. "
+            f"Validated target: Director {SUPPORTED_DIRECTOR_VERSION}, commit {SUPPORTED_DIRECTOR_COMMIT[:7]}."
+        ) from error
+    apply_segment_loras = module.apply_segment_loras
+    return getattr(
+        apply_segment_loras,
+        SEGMENT_LORA_ORIGINAL_MARKER,
+        apply_segment_loras,
+    )
 
 
 def ensure_mmh3director_compatibility() -> None:
@@ -449,6 +487,7 @@ def dispatch_mmh3director_sample(
         "tile_count": max(1, min(8, int(tile_count))),
         "tile_overlap": max(0, int(tile_overlap)),
         "model_options": serialize_external_acceleration(model.model_options),
+        "segment_loras": [dict(item) for item in model.segment_loras],
     }
     if step_state_callback is not None:
         request["capture_step_state"] = True
@@ -624,6 +663,39 @@ def _install_mmh3director_stage_bridge(*, require_director: bool) -> bool:
     return changed
 
 
+def _install_mmh3director_segment_lora_bridge(*, require_director: bool) -> bool:
+    global _installed_segment_lora_wrapper, _original_segment_lora_apply
+
+    # Director releases before per-segment LoRA do not provide this module.
+    # A current Director imports it before the MODEL adapter executes, so do
+    # not turn an optional compatibility seam into a legacy startup failure.
+    del require_director
+    original = _find_loaded_segment_lora_apply(import_if_missing=False)
+    if original is None:
+        return False
+
+    wrapper = _installed_segment_lora_wrapper
+    if wrapper is None or getattr(wrapper, SEGMENT_LORA_ORIGINAL_MARKER, None) is not original:
+        wrapper = make_segment_lora_wrapper(original)
+        _installed_segment_lora_wrapper = wrapper
+        _original_segment_lora_apply = original
+
+    changed = False
+    recorded_modules = {id(module) for module, _original in _patched_segment_lora_targets}
+    for module_name, module in tuple(sys.modules.items()):
+        if not _director_module_identity(module_name, module):
+            continue
+        current = getattr(module, "apply_segment_loras", None)
+        if current is not original:
+            continue
+        setattr(module, "apply_segment_loras", wrapper)
+        if id(module) not in recorded_modules:
+            _patched_segment_lora_targets.append((module, original))
+            recorded_modules.add(id(module))
+        changed = True
+    return changed
+
+
 def install_mmh3director_sample_bridge(*, require_director: bool = False) -> bool:
     global _installed_wrapper, _original_comfy_sample
 
@@ -640,12 +712,17 @@ def install_mmh3director_sample_bridge(*, require_director: bool = False) -> boo
         _installed_wrapper = _raylight_sample_dispatch
         changed = True
 
-    return _install_mmh3director_stage_bridge(require_director=require_director) or changed
+    stage_changed = _install_mmh3director_stage_bridge(require_director=require_director)
+    segment_lora_changed = _install_mmh3director_segment_lora_bridge(
+        require_director=require_director
+    )
+    return segment_lora_changed or stage_changed or changed
 
 
 def uninstall_mmh3director_sample_bridge_for_test() -> None:
     global _installed_stage_wrapper, _installed_wrapper
     global _original_comfy_sample, _original_director_stage
+    global _installed_segment_lora_wrapper, _original_segment_lora_apply
 
     current = comfy.sample.sample
     if getattr(current, _BRIDGE_MARKER, False) is True:
@@ -655,7 +732,14 @@ def uninstall_mmh3director_sample_bridge_for_test() -> None:
         if getattr(current_stage, _STAGE_BRIDGE_MARKER, False) is True:
             module.sample_single_stage = original
     _patched_stage_targets.clear()
+    for module, original in reversed(_patched_segment_lora_targets):
+        current_apply = getattr(module, "apply_segment_loras", None)
+        if getattr(current_apply, SEGMENT_LORA_BRIDGE_MARKER, False) is True:
+            module.apply_segment_loras = original
+    _patched_segment_lora_targets.clear()
     _installed_stage_wrapper = None
     _original_director_stage = None
+    _installed_segment_lora_wrapper = None
+    _original_segment_lora_apply = None
     _installed_wrapper = None
     _original_comfy_sample = None

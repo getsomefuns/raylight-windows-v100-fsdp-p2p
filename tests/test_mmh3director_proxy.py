@@ -126,6 +126,21 @@ def test_clone_isolates_model_options_and_object_patch_maps():
         parent.get_model_object("child_only")
 
 
+def test_segment_lora_descriptors_are_clone_local():
+    parent = _proxy()
+
+    child = parent.with_segment_loras(
+        [{"path": "a.safetensors", "strength_model": 0.7}]
+    )
+
+    assert parent.segment_loras == ()
+    assert child.segment_loras == (
+        {"path": "a.safetensors", "strength_model": 0.7},
+    )
+    child.segment_loras[0]["strength_model"] = 0.1
+    assert parent.segment_loras == ()
+
+
 def test_proxy_exposes_only_supported_model_objects():
     proxy = _proxy()
 

@@ -262,6 +262,9 @@ def test_renamed_director_parameter_reports_actionable_error():
 
 def test_proxy_request_preserves_director_inputs_and_uses_every_rank():
     proxy, actors = _proxy()
+    proxy = proxy.with_segment_loras(
+        [{"path": "C:/models/loras/shot.safetensors", "strength_model": 0.75}]
+    )
     noise = torch.randn(1, 32, 2, 4, 4)
     latent = torch.randn_like(noise)
     noise_mask = torch.ones(1, 1, 2, 4, 4)
@@ -318,6 +321,9 @@ def test_proxy_request_preserves_director_inputs_and_uses_every_rank():
         assert request["last_step"] == 7
         assert request["force_full_denoise"] is True
         assert request["disable_pbar"] is True
+        assert request["segment_loras"] == [
+            {"path": "C:/models/loras/shot.safetensors", "strength_model": 0.75}
+        ]
         assert request["seed"] == 12345
         assert "callback" not in request
 

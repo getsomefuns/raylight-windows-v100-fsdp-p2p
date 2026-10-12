@@ -106,6 +106,7 @@ class RayMMH3DirectorModelProxy:
         self.load_device = torch.device("cpu")
         self._object_patches: dict[str, object] = {}
         self.wrappers: dict[str, dict[str | None, list[Any]]] = {}
+        self.segment_loras: tuple[dict[str, object], ...] = ()
 
     def clone(self) -> "RayMMH3DirectorModelProxy":
         cloned = type(self)(
@@ -116,12 +117,18 @@ class RayMMH3DirectorModelProxy:
         )
         cloned.model_options = copy.deepcopy(self.model_options)
         cloned._object_patches = self._object_patches.copy()
+        cloned.segment_loras = tuple(copy.deepcopy(self.segment_loras))
         cloned.wrappers = {
             wrapper_type: {
                 key: values.copy() for key, values in keyed_wrappers.items()
             }
             for wrapper_type, keyed_wrappers in self.wrappers.items()
         }
+        return cloned
+
+    def with_segment_loras(self, descriptors) -> "RayMMH3DirectorModelProxy":
+        cloned = self.clone()
+        cloned.segment_loras = tuple(copy.deepcopy(tuple(descriptors)))
         return cloned
 
     def get_model_object(self, name: str):
