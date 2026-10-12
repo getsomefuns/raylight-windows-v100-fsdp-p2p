@@ -227,7 +227,7 @@ def test_proxy_dispatch_failure_never_falls_back_to_local_sampler(isolated_sampl
 
 def test_supported_director_signature_is_fixed_to_the_accepted_commit():
     assert bridge.EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS == EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS
-    assert bridge.SUPPORTED_DIRECTOR_COMMIT == "576424fb252b2b4a538e792027f7db1a5ef376e4"
+    assert bridge.SUPPORTED_DIRECTOR_COMMIT == "8151b291fcacee5ddb70c6493eaed4f831bc6867"
     bridge.validate_mmh3director_sample_single_stage(_supported_sample_single_stage)
 
 
@@ -248,7 +248,7 @@ def test_missing_director_parameter_reports_version_commit_and_field():
     def missing_scheduler(*, model, positive, negative, latent, seed, cfg, steps, sampler_name, **kwargs):
         del model, positive, negative, latent, seed, cfg, steps, sampler_name, kwargs
 
-    with pytest.raises(RuntimeError, match=r"scheduler.*576424f"):
+    with pytest.raises(RuntimeError, match=r"scheduler.*8151b29"):
         bridge.validate_mmh3director_sample_single_stage(missing_scheduler)
 
 
@@ -615,6 +615,9 @@ def test_new_director_stage_installer_patches_only_exact_imported_aliases(isolat
     executor = ModuleType("ComfyUI_MiniMaxH3_Director.director.executor_core")
     executor.__file__ = "C:/nodes/ComfyUI_MiniMaxH3_Director/director/executor_core.py"
     executor.sample_single_stage = original
+    refine = ModuleType("ComfyUI_MiniMaxH3_Director.director.refine_sampling")
+    refine.__file__ = "C:/nodes/ComfyUI_MiniMaxH3_Director/director/refine_sampling.py"
+    refine.sample_single_stage = original
     unrelated = ModuleType("unrelated.executor_core")
     unrelated.__file__ = "C:/nodes/unrelated/executor_core.py"
     unrelated.sample_single_stage = original
@@ -624,19 +627,21 @@ def test_new_director_stage_installer_patches_only_exact_imported_aliases(isolat
         {
             core.__name__: core,
             executor.__name__: executor,
+            refine.__name__: refine,
             unrelated.__name__: unrelated,
         },
         clear=False,
     ):
         bridge.install_mmh3director_sample_bridge(require_director=True)
 
-        assert core.sample_single_stage is executor.sample_single_stage
+        assert core.sample_single_stage is executor.sample_single_stage is refine.sample_single_stage
         assert core.sample_single_stage is not original
         assert unrelated.sample_single_stage is original
 
         bridge.uninstall_mmh3director_sample_bridge_for_test()
         assert core.sample_single_stage is original
         assert executor.sample_single_stage is original
+        assert refine.sample_single_stage is original
 
 
 @pytest.mark.parametrize(
