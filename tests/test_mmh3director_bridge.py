@@ -227,7 +227,7 @@ def test_proxy_dispatch_failure_never_falls_back_to_local_sampler(isolated_sampl
 
 def test_supported_director_signature_is_fixed_to_the_accepted_commit():
     assert bridge.EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS == EXPECTED_SAMPLE_SINGLE_STAGE_PARAMETERS
-    assert bridge.SUPPORTED_DIRECTOR_COMMIT == "8151b291fcacee5ddb70c6493eaed4f831bc6867"
+    assert bridge.SUPPORTED_DIRECTOR_COMMIT == "4c6245e518dd8a494f3afc4f3cccd53f22d82d10"
     bridge.validate_mmh3director_sample_single_stage(_supported_sample_single_stage)
 
 
@@ -248,7 +248,7 @@ def test_missing_director_parameter_reports_version_commit_and_field():
     def missing_scheduler(*, model, positive, negative, latent, seed, cfg, steps, sampler_name, **kwargs):
         del model, positive, negative, latent, seed, cfg, steps, sampler_name, kwargs
 
-    with pytest.raises(RuntimeError, match=r"scheduler.*8151b29"):
+    with pytest.raises(RuntimeError, match=r"scheduler.*4c6245e"):
         bridge.validate_mmh3director_sample_single_stage(missing_scheduler)
 
 
