@@ -32,6 +32,7 @@ class FakeMiniMaxVAE(torch.nn.Module):
         self.register_buffer("pixel_mean", torch.zeros(1, 3, 1, 1, 1))
         self.register_buffer("pixel_std", torch.ones(1, 3, 1, 1, 1))
         self.decoded_starts: list[int] = []
+        self.inference_modes: list[bool] = []
 
     def _decode_temporal_chunks(self, z_len: int) -> tuple[int, int]:
         pseudo_total_tokens = z_len + self.token_drop
@@ -55,6 +56,7 @@ class FakeMiniMaxVAE(torch.nn.Module):
         )
 
     def _adaptive_decode(self, clip: torch.Tensor) -> torch.Tensor:
+        self.inference_modes.append(torch.is_inference_mode_enabled())
         start = int(clip[0, 0, 0, 0, 0].item())
         self.decoded_starts.append(start)
         return torch.full((clip.shape[0], 3, 28, 1, 1), float(start), dtype=clip.dtype)
@@ -107,6 +109,7 @@ def test_selected_chunk_decode_only_runs_requested_temporal_chunk() -> None:
         result = decode_mmh3_temporal_chunks(vae, latent, [1])
 
     assert model.decoded_starts == [5]
+    assert model.inference_modes == [True]
     assert result["input_shape"] == (1, 24, 12, 1, 1)
     assert result["chunks"][0]["chunk_index"] == 1
     assert result["chunks"][0]["main"].shape == (1, 3, 17, 1, 1)
@@ -295,7 +298,7 @@ def test_director_execute_wrapper_preloads_rank1_and_clears_context_on_error() -
     assert vae_decode.current_mmh3_vae_context() is None
 
 
-def test_hybrid_decode_clears_both_sampling_workers_before_loading_vaes() -> None:
+def test_hybrid_decode_clears_sampling_workers_once_then_reuses_resident_vaes() -> None:
     from raylight.integrations.mmh3director import vae_decode
 
     clear0 = _RemoteCall(True)
@@ -334,10 +337,36 @@ def test_hybrid_decode_clears_both_sampling_workers_before_loading_vaes() -> Non
             torch.zeros(1, 24, 12, 1, 1),
             context,
         )
+        second = vae_decode.hybrid_decode_mmh3_video(
+            vae,
+            torch.zeros(1, 24, 12, 1, 1),
+            context,
+        )
 
     assert output.shape == (1, 39, 1, 1, 3)
+    assert second.shape == output.shape
     assert clear0.calls == [()]
     assert clear1.calls == [()]
+    assert context.needs_gpu_cleanup is False
+
+
+def test_sampling_marks_remote_vae_for_cleanup_before_the_next_decode() -> None:
+    from raylight.integrations.mmh3director import vae_decode
+
+    clear = _RemoteCall(True)
+    context = vae_decode.DirectorVaeDecodeContext(
+        remote_worker=SimpleNamespace(clear_sampling_vram=clear),
+        vae_path="video.safetensors",
+        needs_gpu_cleanup=False,
+    )
+
+    with vae_decode.activate_mmh3_vae_context(context), patch.object(
+        vae_decode.ray, "get", side_effect=lambda value: value
+    ):
+        assert vae_decode.prepare_remote_vae_for_sampling() is True
+
+    assert clear.calls == [()]
+    assert context.needs_gpu_cleanup is True
 
 
 def test_director_execute_wrapper_leaves_non_proxy_execution_untouched() -> None:

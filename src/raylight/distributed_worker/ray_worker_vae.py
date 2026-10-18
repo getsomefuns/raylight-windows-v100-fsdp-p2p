@@ -205,7 +205,7 @@ def decode_mmh3_temporal_chunks(vae, samples, chunk_indices):
     )
 
     results = []
-    with model_management.cuda_device_context(vae.device):
+    with torch.inference_mode(), model_management.cuda_device_context(vae.device):
         z = samples.to(device=vae.device, dtype=vae.vae_dtype)
         mean = model.latents_mean.view(1, -1, 1, 1, 1).to(z)
         std = model.latents_std.view(1, -1, 1, 1, 1).to(z)
@@ -669,7 +669,7 @@ def combine_dist_vae_partials(worker_partials):
                     div_slice.add_(weight)
 
                 elif spatial_dims == 2:
-                    y, x, y_out, x_out = tile[0], tile[1], tile[2], tile[3]
+                    _y, _x, y_out, x_out = tile[0], tile[1], tile[2], tile[3]
 
                     if decoded_tile.ndim != 4:
                         raise ValueError(f"Distributed VAE decode returned invalid 2D tile shape {tuple(decoded_tile.shape)}.")
@@ -697,7 +697,7 @@ def combine_dist_vae_partials(worker_partials):
                     div_slice.add_(weight)
 
                 elif spatial_dims == 3:
-                    y, x, y_out, x_out = tile[0], tile[1], tile[2], tile[3]
+                    _y, _x, y_out, x_out = tile[0], tile[1], tile[2], tile[3]
 
                     if decoded_tile.ndim != 5:
                         raise ValueError(f"Distributed VAE decode returned invalid 3D tile shape {tuple(decoded_tile.shape)}.")

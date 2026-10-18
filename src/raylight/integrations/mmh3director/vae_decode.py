@@ -30,12 +30,13 @@ _DECODE_MARKER = "_raylight_mmh3_vae_decode_bridge"
 _DECODE_ORIGINAL = "_raylight_mmh3_vae_original_decode"
 
 
-@dataclass(frozen=True)
+@dataclass
 class DirectorVaeDecodeContext:
     remote_worker: object
     vae_path: str
     vae_identity: int | None = None
     workers: tuple[object, ...] = ()
+    needs_gpu_cleanup: bool = True
 
 
 _ACTIVE_CONTEXT: contextvars.ContextVar[DirectorVaeDecodeContext | None] = (
@@ -150,7 +151,8 @@ def hybrid_decode_mmh3_video(vae, samples, context: DirectorVaeDecodeContext):
 
     started = time.perf_counter()
     workers = context.workers or (context.remote_worker,)
-    ray.get([worker.clear_sampling_vram.remote() for worker in workers])
+    if context.needs_gpu_cleanup:
+        ray.get([worker.clear_sampling_vram.remote() for worker in workers])
     remote_future = context.remote_worker.ray_mmh3_vae_decode_chunks.remote(
         video,
         remote_indices,
@@ -162,6 +164,7 @@ def hybrid_decode_mmh3_video(vae, samples, context: DirectorVaeDecodeContext):
         raise ValueError("MiniMax H3 VideoVAE ranks returned different input shapes.")
     chunks = list(local["chunks"]) + list(remote.get("chunks", ()))
     merged = merge_mmh3_temporal_chunks(model, local["input_shape"], chunks)
+    context.needs_gpu_cleanup = False
     elapsed = time.perf_counter() - started
     print(
         "[Raylight] MMH3Director dual-V100 VideoVAE decode completed "
@@ -203,6 +206,7 @@ def prepare_remote_vae_for_sampling() -> bool:
     if context is None:
         return False
     ray.get(context.remote_worker.clear_sampling_vram.remote())
+    context.needs_gpu_cleanup = True
     return True
 
 
