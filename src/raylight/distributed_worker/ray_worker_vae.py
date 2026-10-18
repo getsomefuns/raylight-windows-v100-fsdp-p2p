@@ -1,4 +1,96 @@
+import threading
+
 import torch
+
+
+class BackgroundVaePreloader:
+    """Load one CPU VAE object without occupying the actor's GPU."""
+
+    def __init__(self, loader):
+        self._loader = loader
+        self._lock = threading.Lock()
+        self._path = None
+        self._state = "empty"
+        self._value = None
+        self._error = None
+        self._thread = None
+
+    def _run(self, path):
+        try:
+            value = self._loader(path)
+        except BaseException as error:
+            with self._lock:
+                if self._path == path:
+                    self._value = None
+                    self._error = error
+                    self._state = "failed"
+            return
+        with self._lock:
+            if self._path == path:
+                self._value = value
+                self._error = None
+                self._state = "ready"
+
+    def start(self, path):
+        path = str(path)
+        while True:
+            with self._lock:
+                if self._path == path and self._state in {"loading", "ready", "failed"}:
+                    return self._state
+                active = self._thread if self._thread is not None and self._thread.is_alive() else None
+            if active is None:
+                break
+            active.join()
+
+        with self._lock:
+            self._path = path
+            self._state = "loading"
+            self._value = None
+            self._error = None
+            thread = threading.Thread(
+                target=self._run,
+                args=(path,),
+                name="raylight-mmh3-vae-preload",
+                daemon=True,
+            )
+            self._thread = thread
+            thread.start()
+        return "started"
+
+    def wait(self, path):
+        path = str(path)
+        state = self.start(path)
+        del state
+        with self._lock:
+            thread = self._thread
+        if thread is not None:
+            thread.join()
+        with self._lock:
+            if self._path != path:
+                raise RuntimeError(f"MiniMax H3 VAE preload switched away from {path}.")
+            if self._error is not None:
+                raise RuntimeError(
+                    f"MiniMax H3 VAE preload failed for {path}: {self._error}"
+                ) from self._error
+            if self._state != "ready" or self._value is None:
+                raise RuntimeError(f"MiniMax H3 VAE preload did not produce a model for {path}.")
+            return self._value
+
+    def clear(self):
+        with self._lock:
+            thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join()
+        with self._lock:
+            self._path = None
+            self._state = "empty"
+            self._value = None
+            self._error = None
+            self._thread = None
+
+    def snapshot(self):
+        with self._lock:
+            return {"path": self._path, "state": self._state}
 
 
 def load_vae_model(vae_path):

@@ -48,6 +48,8 @@ from raylight.distributed_worker.ray_worker_controlnet import (
     _restore_controlnet_refs,
 )
 from raylight.distributed_worker.ray_worker_vae import (
+    BackgroundVaePreloader,
+    decode_mmh3_temporal_chunks,
     load_vae_model,
     ray_vae_decode_finalize_impl,
     ray_vae_decode_partial_impl,
@@ -787,6 +789,7 @@ class RayWorker:
         worker_cli_args = _apply_worker_comfy_cli_args_from_env()
         self.model = None
         self.vae_model = None
+        self._vae_preloader = BackgroundVaePreloader(load_vae_model)
         self.model_type = None
         self.state_dict = None
         self.cached_controlnet = None  # (path, controlnet_object) cache
@@ -1797,12 +1800,28 @@ class RayWorker:
             self._cached_vae_path = None
             torch.cuda.empty_cache()
 
-        vae_model = load_vae_model(vae_path)
+        preloader = getattr(self, "_vae_preloader", None)
+        if preloader is None:
+            preloader = BackgroundVaePreloader(load_vae_model)
+            self._vae_preloader = preloader
+        vae_model = preloader.wait(vae_path)
 
         if self.local_rank == 0:
             print(f"VAE loaded in {self.global_world_size} GPUs")
         self.vae_model = vae_model
         self._cached_vae_path = vae_path
+
+    def start_mmh3_vae_preload(self, vae_path):
+        preloader = getattr(self, "_vae_preloader", None)
+        if preloader is None:
+            preloader = BackgroundVaePreloader(load_vae_model)
+            self._vae_preloader = preloader
+        return preloader.start(vae_path)
+
+    @worker_gpu_activity("sampling")
+    def ray_mmh3_vae_decode_chunks(self, samples, chunk_indices, vae_path):
+        self.ray_vae_loader(vae_path)
+        return decode_mmh3_temporal_chunks(self.vae_model, samples, chunk_indices)
 
     @worker_gpu_activity("sampling")
     @patch_ray_tqdm
@@ -2076,6 +2095,9 @@ class RayWorker:
 
     def free_cached_vae(self):
         """Explicitly free the cached VAE (e.g. when switching workflows)."""
+        preloader = getattr(self, "_vae_preloader", None)
+        if preloader is not None:
+            preloader.clear()
         if self.vae_model is not None:
             del self.vae_model
             self.vae_model = None

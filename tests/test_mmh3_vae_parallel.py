@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -8,6 +9,7 @@ import pytest
 import torch
 
 from raylight.distributed_worker.ray_worker_vae import (
+    BackgroundVaePreloader,
     build_mmh3_temporal_plan,
     decode_mmh3_temporal_chunks,
     merge_mmh3_temporal_chunks,
@@ -153,3 +155,81 @@ def test_merge_rejects_non_finite_chunk_output() -> None:
     chunks[1]["main"][0, 0, 0, 0, 0] = torch.nan
     with pytest.raises(ValueError, match="non-finite"):
         merge_mmh3_temporal_chunks(FakeMiniMaxVAE(), (1, 24, 12, 1, 1), chunks)
+
+
+def test_background_preloader_returns_immediately_and_deduplicates_same_path() -> None:
+    entered = Event()
+    release = Event()
+    calls = []
+
+    def loader(path: str):
+        calls.append(path)
+        entered.set()
+        assert release.wait(2)
+        return {"path": path}
+
+    cache = BackgroundVaePreloader(loader)
+    assert cache.start("a.safetensors") == "started"
+    assert entered.wait(2)
+    assert cache.start("a.safetensors") == "loading"
+    assert calls == ["a.safetensors"]
+    release.set()
+    assert cache.wait("a.safetensors") == {"path": "a.safetensors"}
+    assert cache.start("a.safetensors") == "ready"
+    assert calls == ["a.safetensors"]
+
+
+def test_background_preloader_replaces_path_and_clear_drops_cached_object() -> None:
+    cache = BackgroundVaePreloader(lambda path: {"path": path})
+    cache.start("a.safetensors")
+    first = cache.wait("a.safetensors")
+    cache.start("b.safetensors")
+    second = cache.wait("b.safetensors")
+
+    assert first == {"path": "a.safetensors"}
+    assert second == {"path": "b.safetensors"}
+    assert second is not first
+    cache.clear()
+    assert cache.snapshot() == {"path": None, "state": "empty"}
+
+
+def test_background_preloader_surfaces_loader_error_at_wait_boundary() -> None:
+    def fail(_path: str):
+        raise RuntimeError("broken VAE")
+
+    cache = BackgroundVaePreloader(fail)
+    cache.start("broken.safetensors")
+    with pytest.raises(RuntimeError, match="broken VAE"):
+        cache.wait("broken.safetensors")
+    assert cache.snapshot()["state"] == "failed"
+
+
+def test_ray_worker_preload_and_decode_delegate_to_shared_helpers() -> None:
+    from raylight.distributed_worker.ray_worker import RayWorker
+
+    cache = SimpleNamespace(
+        start=lambda path: f"started:{path}",
+        wait=lambda path: f"vae:{path}",
+        clear=lambda: None,
+    )
+    worker = object.__new__(RayWorker)
+    worker._vae_preloader = cache
+    worker.vae_model = None
+    worker._cached_vae_path = None
+    worker.local_rank = 1
+    worker.device = torch.device("cpu")
+
+    assert worker.start_mmh3_vae_preload("video.safetensors") == "started:video.safetensors"
+    with patch(
+        "raylight.distributed_worker.ray_worker.decode_mmh3_temporal_chunks",
+        return_value={"chunks": []},
+    ) as decode:
+        result = worker.ray_mmh3_vae_decode_chunks(
+            torch.zeros(1, 24, 12, 1, 1),
+            [1],
+            "video.safetensors",
+        )
+
+    assert result == {"chunks": []}
+    assert worker.vae_model == "vae:video.safetensors"
+    decode.assert_called_once()
