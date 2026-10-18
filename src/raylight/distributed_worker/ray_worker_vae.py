@@ -646,7 +646,7 @@ def combine_dist_vae_partials(worker_partials):
                 decoded_tile = tile[-1]
 
                 if spatial_dims == 1:
-                    x, x_out = tile[0], tile[1]
+                    _x, x_out = tile[0], tile[1]
 
                     if decoded_tile.ndim != 3:
                         raise ValueError(f"Distributed VAE decode returned invalid 1D tile shape {tuple(decoded_tile.shape)}.")
