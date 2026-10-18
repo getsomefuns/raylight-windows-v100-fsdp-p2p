@@ -31,6 +31,188 @@ def _is_nested_tensor(latent):
     return getattr(latent, "is_nested", False)
 
 
+def _require_mmh3_temporal_model(model):
+    required = (
+        "tokens_chunk_size",
+        "token_overlap",
+        "token_drop",
+        "vae_ratio_t",
+        "frame_pre_padding",
+        "frame_overlap",
+        "_decode_temporal_chunks",
+        "_decode_temporal_frame_plan",
+        "decode_output_shape",
+        "_adaptive_decode",
+        "_finalize_pixels",
+        "blend",
+        "latents_mean",
+        "latents_std",
+    )
+    missing = [name for name in required if not hasattr(model, name)]
+    if missing:
+        raise TypeError(
+            "MiniMax H3 temporal VAE support requires model attribute(s): "
+            + ", ".join(missing)
+        )
+    return model
+
+
+def build_mmh3_temporal_plan(model, latent_tokens):
+    """Describe the exact temporal chunks used by ComfyUI's MiniMax H3 VAE."""
+
+    model = _require_mmh3_temporal_model(model)
+    latent_tokens = int(latent_tokens)
+    if latent_tokens < 2:
+        raise ValueError("MiniMax H3 parallel temporal decode requires at least two latent tokens.")
+
+    pad_tokens, num_chunks = model._decode_temporal_chunks(latent_tokens)
+    if num_chunks < 1:
+        raise ValueError("MiniMax H3 temporal plan produced no chunks.")
+    padded_tokens = latent_tokens + int(pad_tokens)
+    chunk_size = int(model.tokens_chunk_size)
+    chunk_overlap = int(model.token_overlap)
+    chunks = []
+    for index in range(int(num_chunks)):
+        start = index * chunk_size
+        end = min(start + chunk_size + chunk_overlap, padded_tokens)
+        chunks.append({"index": index, "start": start, "end": end})
+
+    output_frames = int(
+        model._decode_temporal_frame_plan(padded_tokens, int(num_chunks), int(pad_tokens))
+    )
+    return {
+        "latent_tokens": latent_tokens,
+        "pad_tokens": int(pad_tokens),
+        "num_chunks": int(num_chunks),
+        "output_frames": output_frames,
+        "chunks": chunks,
+    }
+
+
+def decode_mmh3_temporal_chunks(vae, samples, chunk_indices):
+    """Decode selected MiniMax H3 temporal chunks and return raw CPU tensors."""
+
+    import comfy.model_management as model_management
+
+    if not isinstance(samples, torch.Tensor) or samples.ndim != 5:
+        raise TypeError("MiniMax H3 temporal decode expects a 5-D tensor shaped B,C,T,H,W.")
+    model = _require_mmh3_temporal_model(vae.first_stage_model)
+    plan = build_mmh3_temporal_plan(model, samples.shape[2])
+    selected = [int(index) for index in chunk_indices]
+    if len(selected) != len(set(selected)):
+        raise ValueError("MiniMax H3 temporal decode received duplicate chunk indices.")
+    invalid = [index for index in selected if not 0 <= index < plan["num_chunks"]]
+    if invalid:
+        raise ValueError(f"MiniMax H3 temporal decode received invalid chunk indices: {invalid}.")
+
+    memory_used = vae.memory_used_decode(samples.shape, vae.vae_dtype)
+    model_management.load_models_gpu(
+        [vae.patcher],
+        memory_required=memory_used,
+        force_full_load=vae.disable_offload,
+    )
+
+    results = []
+    with model_management.cuda_device_context(vae.device):
+        z = samples.to(device=vae.device, dtype=vae.vae_dtype)
+        mean = model.latents_mean.view(1, -1, 1, 1, 1).to(z)
+        std = model.latents_std.view(1, -1, 1, 1, 1).to(z)
+        z = z * std + mean
+        if plan["pad_tokens"]:
+            pad = z[:, :, -1:, :, :].repeat(1, 1, plan["pad_tokens"], 1, 1)
+            z = torch.cat((z, pad), dim=2)
+
+        chunk_dec = int(model.tokens_chunk_size) * int(model.vae_ratio_t)
+        split_count = int(int(model.token_drop) > 0) + 1
+        for index in selected:
+            chunk = plan["chunks"][index]
+            clip_z = z[:, :, chunk["start"] : chunk["end"], :, :]
+            clip_dec = model._adaptive_decode(clip_z)
+            parts = []
+            for split_index in range(split_count):
+                start = split_index * chunk_dec
+                end = min(start + chunk_dec, clip_dec.shape[2])
+                part = clip_dec[:, :, start:end, :, :]
+                part = part[:, :, int(model.frame_pre_padding) :, :, :]
+                parts.append(part.to(device="cpu", copy=True))
+            main = parts[0]
+            overlap = parts[1].contiguous() if len(parts) > 1 else None
+            if not bool(torch.isfinite(main).all().item()) or (
+                overlap is not None and not bool(torch.isfinite(overlap).all().item())
+            ):
+                raise ValueError(f"MiniMax H3 temporal chunk {index} contains non-finite values.")
+            results.append(
+                {
+                    "chunk_index": index,
+                    "main": main,
+                    "overlap": overlap,
+                }
+            )
+            del clip_dec, clip_z, parts
+
+    return {
+        "input_shape": tuple(int(value) for value in samples.shape),
+        "output_shape": tuple(int(value) for value in model.decode_output_shape(samples.shape)),
+        "chunks": results,
+    }
+
+
+def merge_mmh3_temporal_chunks(model, input_shape, chunks, *, finalize=True):
+    """Merge independently decoded chunks with the official temporal overlap rule."""
+
+    model = _require_mmh3_temporal_model(model)
+    input_shape = tuple(int(value) for value in input_shape)
+    plan = build_mmh3_temporal_plan(model, input_shape[2])
+    by_index = {}
+    for item in chunks:
+        index = int(item["chunk_index"])
+        if index in by_index:
+            raise ValueError(f"MiniMax H3 temporal merge received duplicate chunk {index}.")
+        by_index[index] = item
+    expected = set(range(plan["num_chunks"]))
+    missing = sorted(expected - set(by_index))
+    unexpected = sorted(set(by_index) - expected)
+    if missing:
+        raise ValueError(f"MiniMax H3 temporal merge is missing chunk(s): {missing}.")
+    if unexpected:
+        raise ValueError(f"MiniMax H3 temporal merge received unexpected chunk(s): {unexpected}.")
+
+    output_shape = tuple(int(value) for value in model.decode_output_shape(input_shape))
+    output = torch.empty(output_shape, dtype=torch.float32, device="cpu")
+    write_pos = 0
+    previous_overlap = None
+
+    def write_part(part):
+        nonlocal write_pos
+        if part is None or part.shape[2] <= 0:
+            return
+        if not bool(torch.isfinite(part).all().item()):
+            raise ValueError("MiniMax H3 temporal merge received non-finite chunk output.")
+        part = model._finalize_pixels(part) if finalize else part.float()
+        count = min(int(part.shape[2]), max(0, int(output.shape[2]) - write_pos))
+        if count:
+            output[:, :, write_pos : write_pos + count].copy_(part[:, :, :count])
+            write_pos += count
+
+    for index in range(plan["num_chunks"]):
+        item = by_index[index]
+        main = item.get("main")
+        overlap = item.get("overlap")
+        if not isinstance(main, torch.Tensor) or main.ndim != 5:
+            raise ValueError(f"MiniMax H3 temporal chunk {index} has an invalid main tensor.")
+        if previous_overlap is not None:
+            main = model.blend(previous_overlap, main, int(model.frame_overlap), dim=-3)
+        write_part(main)
+        previous_overlap = overlap.contiguous() if isinstance(overlap, torch.Tensor) else None
+
+    write_part(previous_overlap)
+    if write_pos != int(output.shape[2]):
+        raise RuntimeError(
+            f"MiniMax H3 temporal merge wrote {write_pos}/{int(output.shape[2])} frames."
+        )
+    return output
+
+
 def _compute_1d_tile_ranges(latent_size, tile_size, overlap):
     tile_size = max(1, int(tile_size))
     overlap = min(max(0, int(overlap)), tile_size - 1)
