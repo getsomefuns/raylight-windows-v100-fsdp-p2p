@@ -905,6 +905,12 @@ class RayWorker:
 
                 @functools.wraps(original_model_load)
                 def synchronized_load(loaded_model, lowvram_model_memory=0, force_patch_weights=False):
+                    if getattr(self, "_raylight_unilateral_aux_model_load", False):
+                        return original_model_load(
+                            loaded_model,
+                            lowvram_model_memory,
+                            force_patch_weights=force_patch_weights,
+                        )
                     if not comfy_model_management.is_device_cuda(loaded_model.device):
                         return original_model_load(
                             loaded_model,
@@ -1820,8 +1826,13 @@ class RayWorker:
 
     @worker_gpu_activity("sampling")
     def ray_mmh3_vae_decode_chunks(self, samples, chunk_indices, vae_path):
-        self.ray_vae_loader(vae_path)
-        return decode_mmh3_temporal_chunks(self.vae_model, samples, chunk_indices)
+        previous_scope = getattr(self, "_raylight_unilateral_aux_model_load", False)
+        self._raylight_unilateral_aux_model_load = True
+        try:
+            self.ray_vae_loader(vae_path)
+            return decode_mmh3_temporal_chunks(self.vae_model, samples, chunk_indices)
+        finally:
+            self._raylight_unilateral_aux_model_load = previous_scope
 
     @worker_gpu_activity("sampling")
     @patch_ray_tqdm

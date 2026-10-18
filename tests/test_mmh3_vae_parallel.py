@@ -210,12 +210,18 @@ def test_background_preloader_surfaces_loader_error_at_wait_boundary() -> None:
 def test_ray_worker_preload_and_decode_delegate_to_shared_helpers() -> None:
     from raylight.distributed_worker.ray_worker import RayWorker
 
+    worker = object.__new__(RayWorker)
+    worker._raylight_unilateral_aux_model_load = False
+
+    def wait(path):
+        assert worker._raylight_unilateral_aux_model_load is True
+        return f"vae:{path}"
+
     cache = SimpleNamespace(
         start=lambda path: f"started:{path}",
-        wait=lambda path: f"vae:{path}",
+        wait=wait,
         clear=lambda: None,
     )
-    worker = object.__new__(RayWorker)
     worker._vae_preloader = cache
     worker.vae_model = None
     worker._cached_vae_path = None
@@ -223,9 +229,13 @@ def test_ray_worker_preload_and_decode_delegate_to_shared_helpers() -> None:
     worker.device = torch.device("cpu")
 
     assert worker.start_mmh3_vae_preload("video.safetensors") == "started:video.safetensors"
+    def decode_chunks(*_args):
+        assert worker._raylight_unilateral_aux_model_load is True
+        return {"chunks": []}
+
     with patch(
         "raylight.distributed_worker.ray_worker.decode_mmh3_temporal_chunks",
-        return_value={"chunks": []},
+        side_effect=decode_chunks,
     ) as decode:
         result = worker.ray_mmh3_vae_decode_chunks(
             torch.zeros(1, 24, 12, 1, 1),
@@ -235,7 +245,36 @@ def test_ray_worker_preload_and_decode_delegate_to_shared_helpers() -> None:
 
     assert result == {"chunks": []}
     assert worker.vae_model == "vae:video.safetensors"
+    assert worker._raylight_unilateral_aux_model_load is False
     decode.assert_called_once()
+
+
+def test_ray_worker_decode_restores_unilateral_load_scope_after_error() -> None:
+    from raylight.distributed_worker.ray_worker import RayWorker
+
+    worker = object.__new__(RayWorker)
+    worker._raylight_unilateral_aux_model_load = False
+    worker._vae_preloader = SimpleNamespace(
+        wait=lambda _path: "vae",
+        clear=lambda: None,
+    )
+    worker.vae_model = None
+    worker._cached_vae_path = None
+    worker.local_rank = 1
+    worker.device = torch.device("cpu")
+
+    with patch(
+        "raylight.distributed_worker.ray_worker.decode_mmh3_temporal_chunks",
+        side_effect=RuntimeError("decode failed"),
+    ):
+        with pytest.raises(RuntimeError, match="decode failed"):
+            worker.ray_mmh3_vae_decode_chunks(
+                torch.zeros(1, 24, 12, 1, 1),
+                [1],
+                "video.safetensors",
+            )
+
+    assert worker._raylight_unilateral_aux_model_load is False
 
 
 class _RemoteCall:
