@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.17.1 (O15.1) moves the validated MiniMaxH3Director coordinate to upstream `4c6245e`. The one commit since `8151b29` is frontend-only: Director-pack import/export now reports upload, extract, pack, download, save, and timeline-apply progress. Sampling, Refine, SelfLift, FaceRefine, VAE, and cache contracts are unchanged, so Raylight adds no new sampling branch. The local two-segment hardware regression produced 146 frames at 864x480 and 24 fps with 99%/97% peak GPU utilization; the full suite reports `769 passed, 35 subtests passed`. This release does not speed up neural VideoVAE decode: PR #182 optimizes only post-decode continuity opening-grade matching. See the [1.17.1 English release note](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.en.md) and [O15.1 test record](docs/testing/minimax-h3/O15_1_MMH3DIRECTOR_4C6245E_2026-10.en.md).
+
 Version 1.17.0 (O15) moves the validated MiniMaxH3Director coordinate from upstream `576424f` to `8151b29`. Director's Refine realignment, FL2V selected-run/continuity fixes, lossless FFV1 cache, custom cache namespaces, decoded-audio sample-rate preservation, segment cleanup, and UI changes coexist with the existing dual-GPU proxy. Raylight additionally bridges per-segment LoRA descriptors to both FSDP workers: the main process loads no weights, and each segment's stack is applied only to a temporary worker model clone, never the next segment or base model. The two-segment hardware acceptance produced 146 unique frames at 864x480 and 24 fps. See the [1.17.0 English release note](docs/releases/2026-10-12-o15-mmh3director-8151b29.en.md) and [O15 test record](docs/testing/minimax-h3/O15_MMH3DIRECTOR_8151B29_2026-10.en.md).
 
 Version 1.16.1 fixes a lifecycle race in multi-segment MiniMaxH3Director runs. Cleanup or finalization of an old FSDP `ModelPatcher` clone could clear the newer segment's active `current_patcher`, typically failing in the SelfLift high-resolution stage before `prepare_state`. Cleanup now releases that reference only when the clone is still its owner. Model precision, FSDP/P2P transport, and sampling math are unchanged. Director's `confirm_first_pass=true` still intentionally defers Refine/FaceRefine until the confirmed follow-up execution. See the [1.16.1 English release note](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.en.md).
@@ -43,7 +45,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.17.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.17.1; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -63,6 +65,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - Multi-segment FSDP patcher lifecycle fix 1.16.1: [English](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.en.md) / [中文](docs/releases/2026-10-12-multisegment-patcher-lifecycle-fix.zh-CN.md)
 - MiniMaxH3Director `576424f` / SelfLift 1.16.0: [English](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.en.md) / [中文](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md)
 - MiniMaxH3Director `8151b29` / per-segment LoRA 1.17.0: [English](docs/releases/2026-10-12-o15-mmh3director-8151b29.en.md) / [中文](docs/releases/2026-10-12-o15-mmh3director-8151b29.zh-CN.md)
+- MiniMaxH3Director `4c6245e` compatibility certification 1.17.1: [English](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.en.md) / [中文](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -162,7 +165,7 @@ Before TP2 encoding, the main process unloads current ComfyUI GPU models and acq
 
 The proxy carries no weights. It only marks which Ray workers must execute this MODEL's sampling request. Legacy Director is intercepted at `comfy.sample.sample()`; current Director is intercepted at `sample_single_stage()` before `BasicGuider → SamplerCustomAdvanced`. Conditioning, latent, fixed seed, sampling controls, and optional SIGMAS are executed by both workers and returned as latent so Director can continue VAE, audio, mux, and save. Director therefore does not sample locally and then sample again in Raylight.
 
-Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is explicit and never silently falls back to GPU 0. MiniMaxH3Director source is unmodified; validated coordinates include legacy `d655912`, `b8f721c`, `19b6a73`, `576424f`, and current `8151b29`. SelfLift returns final step state across its low/high transition, while the proxy preserves MiniMaxH3 AV audio-flow scaling.
+Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is explicit and never silently falls back to GPU 0. MiniMaxH3Director source is unmodified; validated coordinates include legacy `d655912`, `b8f721c`, `19b6a73`, `576424f`, `8151b29`, and current `4c6245e`. SelfLift returns final step state across its low/high transition, while the proxy preserves MiniMaxH3 AV audio-flow scaling.
 
 ### Boundaries
 

@@ -23,29 +23,29 @@
 - Modify: `tests/test_mmh3director_bridge.py`
 - Modify: `src/raylight/integrations/mmh3director/bridge.py`
 
-- [ ] 先把契约测试期望提交改为 `4c6245e518dd8a494f3afc4f3cccd53f22d82d10`，运行单测并确认 RED。
-- [ ] 最小更新 `SUPPORTED_DIRECTOR_COMMIT` 和错误信息测试，运行 bridge 测试并确认 GREEN。
-- [ ] 不改采样参数、worker 请求、FSDP、P2P 或精度路径。
+- [x] 先把契约测试期望提交改为 `4c6245e518dd8a494f3afc4f3cccd53f22d82d10`，运行单测并确认 RED。
+- [x] 最小更新 `SUPPORTED_DIRECTOR_COMMIT` 和错误信息测试，运行 bridge 测试并确认 GREEN。
+- [x] 不改采样参数、worker 请求、FSDP、P2P 或精度路径。
 
 ### Task 2：升级官方 Director 并验证上游边界
 
-- [ ] 确认 Director 工作树干净，记录旧提交 `8151b29`，执行 `git pull --ff-only` 到 `4c6245e`。
-- [ ] 验证差异仍只有 `web/js/minimax_i18n.js` 与 `web/js/minimax_pack.js`。
-- [ ] 运行 Director 官方测试、Python 编译检查和真实 `sample_single_stage` 签名检查。
-- [ ] 启动 ComfyUI，确认 Director、Refine、SelfLift、FaceRefine、Semantic Bridge 和 Ray MODEL Adapter 节点均可加载。
+- [x] 确认 Director 工作树干净，记录旧提交 `8151b29`，执行 `git pull --ff-only` 到 `4c6245e`。
+- [x] 验证差异仍只有 `web/js/minimax_i18n.js` 与 `web/js/minimax_pack.js`。
+- [x] 运行 Director 官方测试、Python 编译检查和真实 `sample_single_stage` 签名检查。
+- [x] 启动 ComfyUI，确认 Director、Refine、SelfLift、FaceRefine、Semantic Bridge 和 Ray MODEL Adapter 节点均可加载。
 
 ### Task 3：回归 Raylight 并实机验收
 
-- [ ] 运行 MMH3Director bridge、worker、分段 LoRA、生命周期、SOL/TE 和部署测试。
-- [ ] 运行 Raylight 全量测试；任何失败必须分类为回归、环境或既有问题。
-- [ ] 从已提交源码部署到 `ComfyUI/custom_nodes/raylight`，确认部署副本与工作树一致。
-- [ ] 运行一次短 Director 双卡工作流；要求两个 rank 完成同一个远程 operation、无本地重复采样、输出媒体可解码、无 NaN/Inf。
+- [x] 运行 MMH3Director bridge、worker、分段 LoRA、生命周期、SOL/TE 和部署测试。
+- [x] 运行 Raylight 全量测试；任何失败必须分类为回归、环境或既有问题。
+- [x] 从已提交源码部署到 `ComfyUI/custom_nodes/raylight`，确认部署副本与工作树一致。
+- [x] 运行一次短 Director 双卡工作流；要求两个 rank 完成同一个远程 operation、无本地重复采样、输出媒体可解码、无 NaN/Inf。
 
 ### Task 4：版本、文档与发布
 
-- [ ] 版本升至 `1.17.1`，更新中英文 README、发布说明和测试记录。
-- [ ] 明确本版新增的是 Director `4c6245e` 兼容认证和导演包进度 UI，不是 VAE 解码提速。
-- [ ] 审查 Git diff、运行最终验证、提交并推送 GitHub `fsdp/main`。
+- [x] 版本升至 `1.17.1`，更新中英文 README、发布说明和测试记录。
+- [x] 明确本版新增的是 Director `4c6245e` 兼容认证和导演包进度 UI，不是 VAE 解码提速。
+- [x] 审查 Git diff、运行最终验证、提交并推送 GitHub `fsdp/main`。
 
 ## 验收标准
 
