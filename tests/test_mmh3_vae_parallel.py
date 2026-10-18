@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gc
+import weakref
 from contextlib import nullcontext
 from threading import Event
 from types import SimpleNamespace
@@ -277,6 +279,26 @@ def test_ray_worker_decode_restores_unilateral_load_scope_after_error() -> None:
     assert worker._raylight_unilateral_aux_model_load is False
 
 
+def test_common_aux_cleanup_clears_background_vae_cache() -> None:
+    from raylight.distributed_worker.ray_worker import RayWorker
+
+    preloader = SimpleNamespace(clear=Mock())
+    worker = object.__new__(RayWorker)
+    worker.cached_controlnet = None
+    worker.vae_model = object()
+    worker._cached_vae_path = "video.safetensors"
+    worker._vae_preloader = preloader
+
+    with patch.object(torch.cuda, "empty_cache"), patch(
+        "raylight.distributed_worker.ray_worker.gc.collect"
+    ):
+        worker._free_cached_aux_models()
+
+    preloader.clear.assert_called_once_with()
+    assert worker.vae_model is None
+    assert worker._cached_vae_path is None
+
+
 class _RemoteCall:
     def __init__(self, result=None):
         self.result = result
@@ -458,3 +480,35 @@ def test_vae_decode_wrapper_falls_back_to_native_on_parallel_failure() -> None:
         assert wrapped(object(), object(), {"samples": torch.zeros(1, 24, 12, 1, 1)}) == ("native",)
 
     native.assert_called_once()
+
+
+def test_vae_decode_wrapper_releases_failed_traceback_before_native_fallback() -> None:
+    from raylight.integrations.mmh3director import vae_decode
+
+    class Scratch:
+        pass
+
+    scratch_ref = None
+
+    def fail_hybrid(*_args):
+        nonlocal scratch_ref
+        scratch = Scratch()
+        scratch_ref = weakref.ref(scratch)
+        raise RuntimeError("CUDA out of memory")
+
+    def native(*_args):
+        gc.collect()
+        assert scratch_ref is not None
+        assert scratch_ref() is None
+        return ("native",)
+
+    wrapped = vae_decode.make_vae_decode_wrapper(native)
+    context = vae_decode.DirectorVaeDecodeContext(object(), "video.safetensors")
+    with vae_decode.activate_mmh3_vae_context(context), patch.object(
+        vae_decode,
+        "hybrid_decode_mmh3_video",
+        side_effect=fail_hybrid,
+    ):
+        assert wrapped(object(), object(), {"samples": torch.zeros(1, 24, 12, 1, 1)}) == (
+            "native",
+        )

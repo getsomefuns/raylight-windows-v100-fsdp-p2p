@@ -107,10 +107,21 @@ def build_report(*, native: dict, dual_runs: list[dict], quality: dict, threshol
             float(gpu["peak_memory_mib"])
             for gpu in run.get("resources", {}).get("gpus", {}).values()
         )
+    recorded_qualities = [run.get("quality") for run in dual_runs]
+    if all(isinstance(item, dict) for item in recorded_qualities):
+        run_qualities = recorded_qualities
+    else:
+        run_qualities = [quality]
     gates = {
-        "finite": bool(quality["finite"]),
-        "psnr": float(quality["psnr_db"]) >= float(thresholds["minimum_psnr_db"]),
-        "max_abs_error": float(quality["max_abs_error"]) <= float(thresholds["maximum_abs_error"]),
+        "finite": all(bool(item["finite"]) for item in run_qualities),
+        "psnr": all(
+            float(item["psnr_db"]) >= float(thresholds["minimum_psnr_db"])
+            for item in run_qualities
+        ),
+        "max_abs_error": all(
+            float(item["max_abs_error"]) <= float(thresholds["maximum_abs_error"])
+            for item in run_qualities
+        ),
         "warm_seconds": warm_seconds <= float(thresholds["maximum_warm_seconds"]),
         "improvement": improvement >= float(thresholds["minimum_improvement_percent"]),
         "gpu_peak": bool(dual_gpu_peaks)
@@ -383,7 +394,14 @@ def _main(args: argparse.Namespace) -> int:
                 lambda: hybrid_decode_mmh3_video(vae, video, context).movedim(-1, 1),
                 args.sample_interval,
             )
-            record.update({"kind": "dual_gpu_temporal", "run_index": run_index})
+            run_quality = quality_metrics(baseline, decoded)
+            record.update(
+                {
+                    "kind": "dual_gpu_temporal",
+                    "run_index": run_index,
+                    "quality": run_quality,
+                }
+            )
             dual_runs.append(record)
             candidate = decoded
             gc.collect()

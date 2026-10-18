@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.18.0 (O15.2) parallelizes standard MiniMax H3 Director `VAEDecode` VideoVAE temporal chunks between the GPU0 main process and the GPU1 Ray worker. The official ComfyUI `vae.decode()` reference for 107 frames at 1920x1088 falls from 66.73 to 40.51 seconds warm (1.647x, 39.30% lower), with all five dual-GPU runs passing and element-exact output. A two-segment Director hardware regression decoded in 9.723/9.282 seconds and produced 146 frames at 864x480 and 24 fps. The bridge is automatic only inside a Ray MODEL proxy Director execution and falls back to native decode for unsupported or failed paths. AudioVAE and direct internal SelfLift decode remain native. The full suite reports `797 passed, 35 subtests passed`. See the [1.18.0 English release note](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.en.md) and [O15.2 test record](docs/testing/minimax-h3/O15_2_DUAL_V100_VAE_DECODE_2026-10.en.md).
+
 Version 1.17.1 (O15.1) moves the validated MiniMaxH3Director coordinate to upstream `4c6245e`. The one commit since `8151b29` is frontend-only: Director-pack import/export now reports upload, extract, pack, download, save, and timeline-apply progress. Sampling, Refine, SelfLift, FaceRefine, VAE, and cache contracts are unchanged, so Raylight adds no new sampling branch. The local two-segment hardware regression produced 146 frames at 864x480 and 24 fps with 99%/97% peak GPU utilization; the full suite reports `769 passed, 35 subtests passed`. This release does not speed up neural VideoVAE decode: PR #182 optimizes only post-decode continuity opening-grade matching. See the [1.17.1 English release note](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.en.md) and [O15.1 test record](docs/testing/minimax-h3/O15_1_MMH3DIRECTOR_4C6245E_2026-10.en.md).
 
 Version 1.17.0 (O15) moves the validated MiniMaxH3Director coordinate from upstream `576424f` to `8151b29`. Director's Refine realignment, FL2V selected-run/continuity fixes, lossless FFV1 cache, custom cache namespaces, decoded-audio sample-rate preservation, segment cleanup, and UI changes coexist with the existing dual-GPU proxy. Raylight additionally bridges per-segment LoRA descriptors to both FSDP workers: the main process loads no weights, and each segment's stack is applied only to a temporary worker model clone, never the next segment or base model. The two-segment hardware acceptance produced 146 unique frames at 864x480 and 24 fps. See the [1.17.0 English release note](docs/releases/2026-10-12-o15-mmh3director-8151b29.en.md) and [O15 test record](docs/testing/minimax-h3/O15_MMH3DIRECTOR_8151B29_2026-10.en.md).
@@ -45,7 +47,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.17.1; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.18.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -66,6 +68,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - MiniMaxH3Director `576424f` / SelfLift 1.16.0: [English](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.en.md) / [中文](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md)
 - MiniMaxH3Director `8151b29` / per-segment LoRA 1.17.0: [English](docs/releases/2026-10-12-o15-mmh3director-8151b29.en.md) / [中文](docs/releases/2026-10-12-o15-mmh3director-8151b29.zh-CN.md)
 - MiniMaxH3Director `4c6245e` compatibility certification 1.17.1: [English](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.en.md) / [中文](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.zh-CN.md)
+- Dual-V100 MiniMax H3 VideoVAE decode 1.18.0: [English](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.en.md) / [中文](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 
@@ -174,11 +177,13 @@ Ordinary ComfyUI `MODEL` objects pass through unchanged. A proxy failure is expl
 - Director `8151b29` per-segment LoRAs are supported. The global `RayLoraLoader` remains the base stack; up to eight active non-zero LoRAs per segment are temporarily stacked in both workers. An empty or different next-segment stack does not inherit previous patches.
 - Custom cache namespaces, raw/FFV1 cache, selected-run/segment export, decoded-audio sample rate, and segment prefetch cleanup remain Director main-process features. Raylight does not accelerate those stages, but their interfaces are validated to coexist with remote sampling.
 - Director owns all generation arguments. Raylight owns GPU count, parallel degrees, FSDP, CPU offload, attention, and worker lifecycle.
-- Only the Diffusion Model is FSDP-sharded. The explicit O10 node can use separate TP2 for the supported Text Encoder language backbone; its vision tower, Video VAE, Audio VAE, mux, and save remain in the ComfyUI main process.
+- Only the Diffusion Model is FSDP-sharded. The explicit O10 node can use separate TP2 for the supported Text Encoder language backbone, while its vision tower stays on GPU0. Version 1.18.0 Director standard VideoVAE decode is temporal parallelism between main-process GPU0 and rank1 GPU1, not FSDP. AudioVAE, mux, and save remain in the ComfyUI main process.
 - Main-process preprocessing models are released from GPU before remote sampling to avoid rank-0 overlap. Reloadable weights can remain in RAM/commit, so multi-segment and long jobs must be sized against host memory and pagefile too.
 - Director-native same-model Refine stays on both workers, including spatial tiling on each real worker sampler. Tiling saves transient VRAM but adds kernel launches, so leave it off when memory permits.
 - Continuity remasking is reconstructed on both real worker models. Unknown callbacks fail explicitly instead of silently degrading.
 - With Director live preview enabled, rank 0 sends at most 16 video-latent frames through a non-blocking single-slot queue to Director's original callback. Disabled preview creates no queue or preview traffic.
+- Version 1.18.0 automatically parallelizes standard `VAEDecode` only inside a Ray MODEL proxy Director `execute` scope. Rank 1 preloads the VAE on CPU while sampling, then splits temporal chunks with GPU0 and merges them with the official five-frame overlap semantics. Repeated standard decodes reuse the loaded VAE; GPU1 VAE memory is released before the next diffusion sample. Failure, unknown VAE, single-GPU, and non-proxy calls use native decode.
+- The bridge does not intercept AudioVAE or SelfLift paths that call `vae.decode()` directly instead of using `VAEDecode`; those remain native. Standard-node primary, Refine, and FaceRefine decodes can use the bridge.
 - Custom Refine requiring another checkpoint, different weights, or bypassing `sample_single_stage()`/legacy `comfy.sample.sample()` is outside the guarantee.
 
 ## Current FSDP capability
@@ -199,7 +204,8 @@ The whole workflow is not dual-GPU at every moment:
 | Diffusion sampler 1 | high load | high load | two-rank FSDP sampling |
 | Latent upscale | primary | mostly idle | ordinary upscaler node |
 | Diffusion sampler 2 | high load | high load | two-rank FSDP sampling |
-| Video/audio VAE decode | primary | mostly idle | ordinary VAE nodes |
+| Director standard VideoVAE decode | temporal chunks | temporal chunks | automatic in 1.18.0 proxy scope; excludes AudioVAE/direct SelfLift decode |
+| Audio VAE decode | primary | mostly idle | native Director/ComfyUI path |
 
 The precise claim is: **both GPUs compute during the FSDP diffusion stages; the entire workflow is not continuously dual-GPU.**
 
@@ -223,7 +229,7 @@ The validated LTX model registered 2,999 FSDP wrappers and 2,620 DTensors. Each 
 | MiniMax H3 Diffusion Model | Yes | validated FP8-scaled I2V/REF2VA checkpoints |
 | Video/audio transformers inside LTXAV | Yes | part of the Diffusion Model |
 | Text Encoder | No FSDP; experimental TP2 | ordinary CLIP remains unsharded; O10 supports only MiniMax H3 Qwen3-VL-32B NVFP4 and keeps vision on GPU 0 |
-| Video VAE | No | ordinary `VAELoader` / tiled decode path |
+| Video VAE | No FSDP; temporal parallelism for standard Director decode | 1.18.0 splits chunks across GPU0/GPU1; unknown/failing paths fall back natively |
 | Audio VAE | No | ordinary audio VAE decode path |
 | Spatial latent upscaler | No | ordinary loader/node |
 | Temporal upscaler | No by default | would require separate integration and validation |

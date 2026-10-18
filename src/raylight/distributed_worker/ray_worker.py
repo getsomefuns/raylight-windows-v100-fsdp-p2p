@@ -1134,10 +1134,14 @@ class RayWorker:
                 del old_model
             self.cached_controlnet = None
 
+        preloader = getattr(self, "_vae_preloader", None)
+        if preloader is not None:
+            preloader.clear()
+
         if self.vae_model is not None:
             del self.vae_model
             self.vae_model = None
-            self._cached_vae_path = None
+        self._cached_vae_path = None
 
         torch.cuda.empty_cache()
         gc.collect()

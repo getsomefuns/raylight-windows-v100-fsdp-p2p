@@ -186,15 +186,24 @@ def make_vae_decode_wrapper(original: Callable) -> Callable:
         try:
             images = hybrid_decode_mmh3_video(vae, latent, context)
         except Exception as error:
-            _LOG.warning(
-                "MiniMax H3 dual-V100 VideoVAE decode failed; retrying native decode: %s: %s",
-                type(error).__name__,
-                error,
-            )
-            return original(self, vae, samples)
-        if images.ndim == 5:
-            images = images.reshape(-1, images.shape[-3], images.shape[-2], images.shape[-1])
-        return (images,)
+            error_name = type(error).__name__
+            error_message = str(error)
+        else:
+            if images.ndim == 5:
+                images = images.reshape(
+                    -1,
+                    images.shape[-3],
+                    images.shape[-2],
+                    images.shape[-1],
+                )
+            return (images,)
+
+        _LOG.warning(
+            "MiniMax H3 dual-V100 VideoVAE decode failed; retrying native decode: %s: %s",
+            error_name,
+            error_message,
+        )
+        return original(self, vae, samples)
 
     setattr(wrapped, _DECODE_MARKER, True)
     setattr(wrapped, _DECODE_ORIGINAL, original)

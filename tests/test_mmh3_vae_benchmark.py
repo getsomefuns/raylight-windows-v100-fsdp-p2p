@@ -155,3 +155,43 @@ def test_build_report_fails_when_any_gpu_exceeds_memory_gate() -> None:
 
     assert report["gates"]["gpu_peak"] is False
     assert report["passed"] is False
+
+
+def test_build_report_rejects_any_bad_dual_run_quality() -> None:
+    module = _load_script()
+    good = {"psnr_db": 60.0, "max_abs_error": 0.001, "mse": 1e-7, "finite": True}
+    bad = {"psnr_db": 40.0, "max_abs_error": 0.1, "mse": 1e-2, "finite": True}
+    report = module.build_report(
+        native={"seconds": 64.0, "resources": {"gpus": {}}},
+        dual_runs=[
+            {
+                "seconds": 39.0,
+                "quality": bad,
+                "resources": {
+                    "end_physical_used_mib": 1000,
+                    "gpus": {"0": {"peak_memory_mib": 6900}, "1": {"peak_memory_mib": 6800}},
+                },
+            },
+            {
+                "seconds": 39.0,
+                "quality": good,
+                "resources": {
+                    "end_physical_used_mib": 1000,
+                    "gpus": {"0": {"peak_memory_mib": 6900}, "1": {"peak_memory_mib": 6800}},
+                },
+            },
+        ],
+        quality=good,
+        thresholds={
+            "minimum_psnr_db": 58.0,
+            "maximum_abs_error": 0.003,
+            "maximum_warm_seconds": 42.0,
+            "minimum_improvement_percent": 35.0,
+            "maximum_gpu_peak_mib": 7168.0,
+            "maximum_dual_ram_growth_mib": 4096.0,
+        },
+    )
+
+    assert report["gates"]["psnr"] is False
+    assert report["gates"]["max_abs_error"] is False
+    assert report["passed"] is False

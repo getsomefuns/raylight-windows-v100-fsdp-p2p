@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.18.0（O15.2）把 MiniMax H3 Director 的标准 `VAEDecode` VideoVAE 时间块分配给 GPU0 主进程与 GPU1 Ray worker 并行执行。107 帧、1920×1088 的官方 ComfyUI `vae.decode()` 对照从 66.73 秒降到热态 40.51 秒（1.647×、减少 39.30%），五次双卡运行均通过；输出与原生结果逐元素一致。Director 两段实机回归的两次解码为 9.723/9.282 秒，输出 864×480、24 fps、146 帧。功能在 Ray MODEL 代理的 Director 执行作用域内自动启用，异常或不支持路径原生回退；AudioVAE 和 SelfLift 内部直接解码仍保持原生路径。全量测试为 `797 passed, 35 subtests passed`。详见 [1.18.0 中文发布说明](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.zh-CN.md)和[O15.2 测试记录](docs/testing/minimax-h3/O15_2_DUAL_V100_VAE_DECODE_2026-10.zh-CN.md)。
+
 1.17.1（O15.1）把已验证的 MiniMaxH3Director 坐标更新到官方 `4c6245e`。上游相对 `8151b29` 只有一个前端提交：导演包导入/导出现在显示上传、解压、打包、下载和写入时间轴进度；采样、Refine、SelfLift、FaceRefine、VAE 和缓存契约均未改变，因此 Raylight 不增加新的采样分支。本机两段双卡回归完成 146 帧、864×480、24 fps 输出，两卡峰值利用率 99%/97%，全量测试为 `769 passed, 35 subtests passed`。本版不缩短 VideoVAE 神经网络解码；PR #182 只优化解码后的段间 opening-grade 匹配。详见 [1.17.1 中文发布说明](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.zh-CN.md)和[O15.1 测试记录](docs/testing/minimax-h3/O15_1_MMH3DIRECTOR_4C6245E_2026-10.zh-CN.md)。
 
 1.17.0（O15）把 MiniMaxH3Director 兼容坐标从官方 `576424f` 更新到 `8151b29`。新版 Director 的 Refine 对齐、FL2V 选择运行/续接修复、FFV1 无损缓存、自定义缓存目录、真实音频采样率、分段清理和 UI 更新均可与现有双卡代理共存。Raylight 额外实现了分段 LoRA 描述符桥：主进程不加载权重，当前片段的 LoRA 栈会传给两个 FSDP worker 并只应用于本次临时模型克隆，不污染下一片段或基础模型。两段真机测试完成 864×480、24 fps、146 帧输出，146/146 帧唯一；详见 [1.17.0 中文发布说明](docs/releases/2026-10-12-o15-mmh3director-8151b29.zh-CN.md)和[O15 测试记录](docs/testing/minimax-h3/O15_MMH3DIRECTOR_8151B29_2026-10.zh-CN.md)。
@@ -55,7 +57,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.17.1；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.18.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -76,6 +78,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - MiniMaxH3Director `576424f` / SelfLift 1.16.0：[中文](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.zh-CN.md) / [English](docs/releases/2026-09-21-o14-mmh3director-576424f-selflift.en.md)
 - MiniMaxH3Director `8151b29` / 分段 LoRA 1.17.0：[中文](docs/releases/2026-10-12-o15-mmh3director-8151b29.zh-CN.md) / [English](docs/releases/2026-10-12-o15-mmh3director-8151b29.en.md)
 - MiniMaxH3Director `4c6245e` 兼容认证 1.17.1：[中文](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.zh-CN.md) / [English](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.en.md)
+- 双 V100 MiniMax H3 VideoVAE 解码 1.18.0：[中文](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.zh-CN.md) / [English](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
@@ -193,11 +196,13 @@ TP2 编码开始前，主进程主动卸载当前 ComfyUI GPU 模型，并向两
 - Director `8151b29` 的分段 LoRA 可直接使用：全局 `RayLoraLoader` 仍构成基础栈，每段最多 8 个 active、非零 LoRA 由两个 worker 临时叠加；切换到空栈或不同栈时不会继承上一段补丁。
 - 自定义缓存目录、raw/FFV1 缓存、选择运行/分段导出、真实音频采样率和段间 prefetch 清理属于 Director 主进程能力；Raylight 不加速这些步骤，但已验证它们的接口不会破坏远程采样。
 - Director 仍负责并保留所有生成参数；Raylight 只负责 GPU 数量、并行度、FSDP、CPU offload、attention 和 Worker 生命周期。
-- 只有 Diffusion Model 被 FSDP 分片。显式 O10 节点可让受支持 Text Encoder 的语言主干使用独立 TP2；其视觉塔、Video VAE、Audio VAE、拼接和保存仍在 ComfyUI 主进程。
+- 只有 Diffusion Model 被 FSDP 分片。显式 O10 节点可让受支持 Text Encoder 的语言主干使用独立 TP2；其视觉塔仍在 GPU0。1.18.0 的 Director 标准 VideoVAE 解码不是 FSDP，而是主进程 GPU0 与 rank1 GPU1 的时间块并行；AudioVAE、拼接和保存仍在 ComfyUI 主进程。
 - 主进程预处理模型会在远程采样前卸载出 GPU，避免与 rank 0 抢显存；可重载权重仍可能占用物理内存/commit，多段与长视频必须同时监控 RAM 和 pagefile。
 - Director 自带同模型 Refine 会继续交给双 worker；新版空间分块在每个 worker 的真实 sampler 上执行。分块降低瞬时显存但增加 kernel 调用，显存足够时建议关闭。
 - 连续模式的动态 remask 会在两个真实 worker MODEL 上重建；未知回调明确失败，不静默退化。
 - 开启 Director 实时预览时，仅 rank 0 抽取最多 16 个视频 latent 帧，经非阻塞单槽队列回传给 Director 的原预览回调；关闭预览时没有该队列或额外预览传输。
+- 1.18.0 会在 Ray MODEL 代理的 Director `execute` 作用域中自动并行标准 `VAEDecode`：rank1 采样期间仅在 CPU 后台预载 VAE，采样结束后与 GPU0 各解一半时间块并按官方 5 帧重叠语义融合。连续多次标准解码会复用已加载 VAE；下一次扩散采样前会释放 GPU1 VAE 显存。失败、未知 VAE、单卡或非代理调用均回到原生解码。
+- 该桥不拦截 AudioVAE，也不拦截 SelfLift 内部绕过 `VAEDecode` 而直接调用 `vae.decode()` 的路径；这些仍由 Director/ComfyUI 原生执行。标准节点形式的主解码、Refine/FaceRefine 解码可进入本路径。
 - 需要另一 checkpoint、不同权重或绕过 `sample_single_stage()`/旧 `comfy.sample.sample()` 接口的自定义 Refine 不作保证。
 
 ## 当前 FSDP 实现与能力边界
@@ -231,7 +236,8 @@ TP2 编码开始前，主进程主动卸载当前 ComfyUI GPU 模型，并向两
 | Diffusion Sampler 1 | 高负载 | 高负载 | FSDP 双 rank 采样 |
 | Latent Upscale | 主要工作 | 多数空闲 | 普通 Upscaler 节点 |
 | Diffusion Sampler 2 | 高负载 | 高负载 | FSDP 双 rank 采样 |
-| Video/Audio VAE 解码 | 主要工作 | 多数空闲 | 当前工作流使用普通 VAE 节点 |
+| Director 标准 VideoVAE 解码 | 时间块并行 | 时间块并行 | 1.18.0 在代理作用域自动启用；AudioVAE/SelfLift 直接解码除外 |
+| Audio VAE 解码 | 主要工作 | 多数空闲 | 保持 Director/ComfyUI 原生路径 |
 
 MiniMax H3 I2V 和 REF2VA 的已验收运行同样证明两个 rank 完成采样且两卡达到高利用率。
 所以准确表述是：**FSDP 扩散采样阶段双卡共同运算；整个工作流并非始终双卡满载。**
@@ -260,7 +266,7 @@ LTX 2.3 实测注册了 2,999 个 FSDP wrapper、2,620 个 DTensor；每个 rank
 | MiniMax H3 Diffusion Model | 是 | FP8-scaled I2V/REF2VA checkpoint 已通过双 rank FSDP/P2P 验收 |
 | Diffusion Model 内的视频/音频 Transformer | 是 | 属于 LTXAV Diffusion Model 本体 |
 | Text Encoder | 否（FSDP）；实验性 TP2 | 普通 CLIP 默认不分片；O10 节点仅支持 MiniMax H3 Qwen3-VL-32B NVFP4，视觉塔仍在 GPU0 |
-| Video VAE | 否 | 当前使用普通 `VAELoader + VAEDecodeTiled` |
+| Video VAE | 不做 FSDP；Director 标准解码可时间并行 | 1.18.0 由 GPU0/GPU1 分配时间块；未知/失败路径原生回退 |
 | Audio VAE | 否 | 当前使用普通 `VAELoader + LTXVAudioVAEDecode` |
 | Spatial Latent Upscaler | 否 | 当前使用普通 `LatentUpscaleModelLoader` |
 | Temporal Upscaler | 默认否 | 只有未来作为 Diffusion Model 单独接入并验证后才可能分片 |
