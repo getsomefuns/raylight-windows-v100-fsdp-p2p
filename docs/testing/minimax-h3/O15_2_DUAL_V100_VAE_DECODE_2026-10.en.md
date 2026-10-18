@@ -10,18 +10,18 @@ The validated host uses native Windows 11 23H2, driver 577.00, two V100-SXM2-16G
 
 | Path | Seconds | GPU0 peak | GPU1 peak | Peak utilization |
 |---|---:|---:|---:|---:|
-| Official ComfyUI native | 66.734 | 6993 MiB | 316 MiB | 99% / 0% |
-| Dual run 1 | 42.066 | 6993 MiB | 6513 MiB | 99% / 100% |
-| Dual run 2 | 40.117 | 6993 MiB | 6513 MiB | 99% / 100% |
-| Dual run 3 | 40.660 | 6993 MiB | 6513 MiB | 99% / 100% |
-| Dual run 4 | 39.885 | 6993 MiB | 6513 MiB | 99% / 100% |
-| Dual run 5 / warm | 40.508 | 6993 MiB | 6513 MiB | 99% / 100% |
+| Official ComfyUI native | 65.777 | 6993 MiB | 316 MiB | 99% / 0% |
+| Dual run 1 | 42.069 | 6993 MiB | 6513 MiB | 99% / 100% |
+| Dual run 2 | 39.601 | 6993 MiB | 6513 MiB | 99% / 100% |
+| Dual run 3 | 39.665 | 6993 MiB | 6513 MiB | 99% / 100% |
+| Dual run 4 | 40.400 | 6993 MiB | 6513 MiB | 99% / 100% |
+| Dual run 5 / warm | 39.790 | 6993 MiB | 6513 MiB | 99% / 100% |
 
-Warm speedup is `1.647x`, or `39.30%` lower time. MSE and maximum absolute error are zero, PSNR is infinite, and every value is finite. Rank-1 CPU preload takes 15.527 seconds and overlaps sampling without loading the GPU. End physical-RAM growth from dual run 1 to run 5 is 2621.74 MiB, below the 4096 MiB gate; pagefile use is zero. Every configured gate passes.
+Warm speedup is `1.653x`, or `39.51%` lower time. Every one of the five runs has zero MSE and maximum absolute error, infinite PSNR, and finite values. Rank-1 CPU preload takes 15.898 seconds and overlaps sampling without loading the GPU. End physical-RAM growth from dual run 1 to run 5 is 2506.16 MiB, below the 4096 MiB gate; pagefile use is zero. Every configured gate passes.
 
 ## Director integration result
 
-The two-segment one-step R2V regression completes in 211.675 seconds at the harness level and 209.66 seconds at the ComfyUI prompt level. Worker samples take 41.764/17.722 seconds and dual VideoVAE decodes take 9.723/9.282 seconds. Board peaks are 9431/9409 MiB with 99%/100% utilization. The output is a valid 864x480, 24 fps, 146-frame, 6.083-second MP4. Both operations report two ranks; the next diffusion segment reloads after VAE decode; no native fallback, Gloo timeout, actor death, or residual process remains.
+The two-segment one-step R2V regression completes in 209.095 seconds at the harness level and 207.64 seconds at the ComfyUI prompt level. Worker samples take 42.024/18.134 seconds and dual VideoVAE decodes take 9.191/9.210 seconds. Board peaks are 9431/9409 MiB with 100%/100% utilization. The output is a valid 864x480, 24 fps, 146-frame, 6.083-second MP4. Both operations report two ranks; the next diffusion segment reloads after VAE decode; no native fallback, Gloo timeout, actor death, or residual process remains.
 
 The complete automated suite reports `797 passed, 235 warnings, 35 subtests passed`. Every Python file changed since the O15.1 baseline passes Ruff. A repository-wide Ruff scan still exposes 27 historical unused imports/variables in untouched Wan, GGUF, debug, and legacy SeedVR2 files; this feature release does not mechanically alter those unrelated paths.
 
