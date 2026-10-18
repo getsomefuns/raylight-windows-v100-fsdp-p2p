@@ -456,6 +456,9 @@ def dispatch_mmh3director_sample(
         raise RuntimeError(f"MMH3Director proxy world_size={configured_world_size} but has {len(workers)} live Ray workers")
 
     ensure_mmh3director_compatibility()
+    from .vae_decode import prepare_remote_vae_for_sampling
+
+    prepare_remote_vae_for_sampling()
     _release_main_process_models_before_remote_sampling()
     operation_id = uuid.uuid4().hex
     preview_queue = preview_transport.create_preview_queue() if callback is not None else None
@@ -716,7 +719,12 @@ def install_mmh3director_sample_bridge(*, require_director: bool = False) -> boo
     segment_lora_changed = _install_mmh3director_segment_lora_bridge(
         require_director=require_director
     )
-    return segment_lora_changed or stage_changed or changed
+    from .vae_decode import install_mmh3director_vae_decode_bridge
+
+    vae_changed = install_mmh3director_vae_decode_bridge(
+        require_director=require_director
+    )
+    return vae_changed or segment_lora_changed or stage_changed or changed
 
 
 def uninstall_mmh3director_sample_bridge_for_test() -> None:
@@ -724,6 +732,9 @@ def uninstall_mmh3director_sample_bridge_for_test() -> None:
     global _original_comfy_sample, _original_director_stage
     global _installed_segment_lora_wrapper, _original_segment_lora_apply
 
+    from .vae_decode import uninstall_mmh3director_vae_decode_bridge_for_test
+
+    uninstall_mmh3director_vae_decode_bridge_for_test()
     current = comfy.sample.sample
     if getattr(current, _BRIDGE_MARKER, False) is True:
         comfy.sample.sample = getattr(current, _ORIGINAL_MARKER)

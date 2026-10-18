@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 from threading import Event
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -233,3 +233,160 @@ def test_ray_worker_preload_and_decode_delegate_to_shared_helpers() -> None:
     assert result == {"chunks": []}
     assert worker.vae_model == "vae:video.safetensors"
     decode.assert_called_once()
+
+
+class _RemoteCall:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    def remote(self, *args):
+        self.calls.append(args)
+        return self.result
+
+
+def _proxy_without_init(worker):
+    from raylight.integrations.mmh3director.proxy import RayMMH3DirectorModelProxy
+
+    proxy = object.__new__(RayMMH3DirectorModelProxy)
+    proxy.ray_actors = {"workers": [object(), worker], "world_size": 2}
+    return proxy
+
+
+def _source_vae(path="video.safetensors"):
+    return SimpleNamespace(
+        patcher=SimpleNamespace(cached_patcher_init=(object(), (path, {"meta": 1}, None)))
+    )
+
+
+def test_extract_vae_source_path_uses_comfy_reload_factory() -> None:
+    from raylight.integrations.mmh3director.vae_decode import extract_vae_source_path
+
+    assert extract_vae_source_path(_source_vae()) == "video.safetensors"
+    assert extract_vae_source_path(SimpleNamespace(patcher=SimpleNamespace())) is None
+
+
+def test_director_execute_wrapper_preloads_rank1_and_clears_context_on_error() -> None:
+    from raylight.integrations.mmh3director import vae_decode
+
+    preload = _RemoteCall("started")
+    clear = _RemoteCall(True)
+    worker = SimpleNamespace(
+        start_mmh3_vae_preload=preload,
+        clear_sampling_vram=clear,
+    )
+    proxy = _proxy_without_init(worker)
+    seen = []
+
+    def original(_self, model, video_vae):
+        seen.append(vae_decode.current_mmh3_vae_context())
+        assert model is proxy
+        assert video_vae is not None
+        raise RuntimeError("director stopped")
+
+    wrapped = vae_decode.make_director_execute_wrapper(original)
+    with patch.object(vae_decode.ray, "get", side_effect=lambda value: value):
+        with pytest.raises(RuntimeError, match="director stopped"):
+            wrapped(object(), proxy, _source_vae())
+
+    assert preload.calls == [("video.safetensors",)]
+    assert clear.calls == [()]
+    assert seen[0].remote_worker is worker
+    assert vae_decode.current_mmh3_vae_context() is None
+
+
+def test_hybrid_decode_clears_both_sampling_workers_before_loading_vaes() -> None:
+    from raylight.integrations.mmh3director import vae_decode
+
+    clear0 = _RemoteCall(True)
+    clear1 = _RemoteCall(True)
+    remote_result = {
+        "input_shape": (1, 24, 12, 1, 1),
+        "chunks": [_chunk(1, 0.2, 0.3)],
+    }
+    worker0 = SimpleNamespace(clear_sampling_vram=clear0)
+    worker1 = SimpleNamespace(
+        clear_sampling_vram=clear1,
+        ray_mmh3_vae_decode_chunks=_RemoteCall(remote_result),
+    )
+    context = vae_decode.DirectorVaeDecodeContext(
+        remote_worker=worker1,
+        vae_path="video.safetensors",
+        workers=(worker0, worker1),
+    )
+    local_result = {
+        "input_shape": (1, 24, 12, 1, 1),
+        "chunks": [_chunk(0, 0.0, 0.1)],
+    }
+    vae = SimpleNamespace(first_stage_model=FakeMiniMaxVAE())
+
+    with patch.object(vae_decode.ray, "get", side_effect=lambda value: value), patch.object(
+        vae_decode,
+        "decode_mmh3_temporal_chunks",
+        return_value=local_result,
+    ), patch.object(
+        vae_decode,
+        "merge_mmh3_temporal_chunks",
+        return_value=torch.zeros(1, 3, 39, 1, 1),
+    ):
+        output = vae_decode.hybrid_decode_mmh3_video(
+            vae,
+            torch.zeros(1, 24, 12, 1, 1),
+            context,
+        )
+
+    assert output.shape == (1, 39, 1, 1, 3)
+    assert clear0.calls == [()]
+    assert clear1.calls == [()]
+
+
+def test_director_execute_wrapper_leaves_non_proxy_execution_untouched() -> None:
+    from raylight.integrations.mmh3director import vae_decode
+
+    original = Mock(return_value="native")
+    wrapped = vae_decode.make_director_execute_wrapper(original)
+
+    assert wrapped(object(), object(), _source_vae()) == "native"
+    original.assert_called_once()
+    assert vae_decode.current_mmh3_vae_context() is None
+
+
+def test_vae_decode_wrapper_uses_hybrid_inside_context_and_preserves_image_layout() -> None:
+    from raylight.integrations.mmh3director import vae_decode
+
+    native = Mock(return_value=("native",))
+    wrapped = vae_decode.make_vae_decode_wrapper(native)
+    context = vae_decode.DirectorVaeDecodeContext(
+        remote_worker=object(),
+        vae_path="video.safetensors",
+    )
+    video = torch.zeros(1, 2, 3, 4, 3)
+    nested = SimpleNamespace(is_nested=True, unbind=lambda: (torch.zeros(1, 24, 12, 1, 1), object()))
+
+    with vae_decode.activate_mmh3_vae_context(context), patch.object(
+        vae_decode,
+        "hybrid_decode_mmh3_video",
+        return_value=video,
+    ) as hybrid:
+        result = wrapped(object(), object(), {"samples": nested})
+
+    assert result[0].shape == (2, 3, 4, 3)
+    hybrid.assert_called_once()
+    native.assert_not_called()
+
+
+def test_vae_decode_wrapper_falls_back_to_native_on_parallel_failure() -> None:
+    from raylight.integrations.mmh3director import vae_decode
+
+    native = Mock(return_value=("native",))
+    wrapped = vae_decode.make_vae_decode_wrapper(native)
+    context = vae_decode.DirectorVaeDecodeContext(object(), "video.safetensors")
+
+    with vae_decode.activate_mmh3_vae_context(context), patch.object(
+        vae_decode,
+        "hybrid_decode_mmh3_video",
+        side_effect=RuntimeError("remote failed"),
+    ):
+        assert wrapped(object(), object(), {"samples": torch.zeros(1, 24, 12, 1, 1)}) == ("native",)
+
+    native.assert_called_once()
