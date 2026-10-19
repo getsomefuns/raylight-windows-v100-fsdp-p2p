@@ -982,6 +982,24 @@ def _build_quantized_tensor(
     return QuantizedTensor(qdata, layout_name, params)
 
 
+def select_quantized_load_device(
+    device: torch.device,
+    *,
+    cpu_offload: bool,
+) -> torch.device:
+    """Choose where an FSDP quantized shard is materialized.
+
+    CPU-offloaded FSDP keeps its parameter shards on CPU between forwards.  In
+    that mode, building every quantized shard on CUDA and immediately calling
+    ``QuantizedTensor.cpu()`` adds an unnecessary device round trip.  On
+    Windows, large MiniMax H3 NVFP4 checkpoints can also crash inside
+    comfy-kitchen's tensor-subclass ``to_copy`` handler during that round trip.
+    Build the local shard directly on CPU instead.
+    """
+
+    return torch.device("cpu") if cpu_offload else torch.device(device)
+
+
 def _release_quant_keys(full_sd: dict[str, Any], param_name: str) -> None:
     prefix = param_name[: -len("weight")]
     for key in (
@@ -1029,7 +1047,16 @@ def load_from_full_model_state_dict(
             continue
 
         if not is_buffer and _is_quant_param(param_name, full_sd, sharded_meta_param):
-            quant_tensor = _build_quantized_tensor(param_name, full_sd, sharded_meta_param, device)
+            quant_load_device = select_quantized_load_device(
+                device,
+                cpu_offload=cpu_offload,
+            )
+            quant_tensor = _build_quantized_tensor(
+                param_name,
+                full_sd,
+                sharded_meta_param,
+                quant_load_device,
+            )
             if quant_tensor is None:
                 raise ValueError(
                     f"Expected quantized tensor for {param_name}, but could not build it ({_quant_payload_debug_info(param_name, full_sd)})"
@@ -1043,6 +1070,12 @@ def load_from_full_model_state_dict(
             else:
                 sharded_tensor = quant_tensor
             if cpu_offload:
+                # FSDP2 validates the DTensor's public device, not only the
+                # local payload device.  Calling cpu() here updates that outer
+                # DTensor metadata.  The quantized local payload was already
+                # built on CPU above, so comfy-kitchen only performs a safe
+                # CPU-to-CPU copy instead of the crashing CUDA-to-CPU round
+                # trip used by the old path.
                 sharded_tensor = sharded_tensor.cpu()
             sharded_sd[param_name] = torch.nn.Parameter(sharded_tensor)
             if release_sd:

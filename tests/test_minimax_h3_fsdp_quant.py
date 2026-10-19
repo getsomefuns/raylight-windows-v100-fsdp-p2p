@@ -7,6 +7,7 @@ import torch
 from raylight.comfy_dist.fsdp_utils import (
     collect_odd_dim0_ignored_params,
     collect_scalar_ignored_params,
+    select_quantized_load_device,
 )
 from raylight.comfy_dist.kitchen_patches.fp8 import (
     fp8_linear_fallback_chunked,
@@ -115,6 +116,18 @@ class MiniMaxH3FSDPQuantTests(unittest.TestCase):
         torch.testing.assert_close(qweight.float(), original_storage.float())
         self.assertEqual(result.dtype, torch.float16)
         self.assertTrue(torch.isfinite(result).all())
+
+    def test_cpu_offload_builds_quantized_shards_directly_on_cpu(self):
+        cuda_device = torch.device("cuda:1")
+
+        self.assertEqual(
+            select_quantized_load_device(cuda_device, cpu_offload=True),
+            torch.device("cpu"),
+        )
+        self.assertEqual(
+            select_quantized_load_device(cuda_device, cpu_offload=False),
+            cuda_device,
+        )
 
     def test_dual_v100_minimax_hybrid_topology_is_accepted(self):
         config = {
