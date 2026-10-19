@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.18.2 fixes a native Windows `0xC0000005` access violation in MiniMax H3 FP8 FSDP CPU offload. The old loader built every quantized local shard on CUDA and immediately copied it back to CPU through `comfy_kitchen QuantizedTensor.cpu()`. CPU-offloaded ranks now build their local payload directly on CPU and convert only the outer DTensor wrapper, eliminating the large CUDA-to-CPU round trip. A real REF2VA FP8 checkpoint plus 0.65 Turbo4 LoRA preflight registers all 684 FSDP wrappers on both V100s at about 60.10 GiB/s P2P bandwidth. The full suite reports `800 passed, 35 subtests passed`. See the [1.18.2 English release note](docs/releases/2026-10-19-windows-fsdp-quant-cpu-offload-fix.en.md).
+
 Version 1.18.1 fixes a native Windows `0xC0000005` access violation that could terminate a long multi-segment Director run after repeatedly loading the 15.7 GB NVFP4 Text Encoder. On Windows, TP2 embedding, vision-tower, and 50-layer language-backbone weights are now read one tensor at a time into owned CPU buffers instead of mapping the whole checkpoint through `safetensors.safe_open()`. Linux retains the native mmap path. Real dual-V100 text-only and REF2VA probes pass at about 7.35 GiB peak per GPU and release to about 17–25 MiB. Model values, TP2 sharding, attention, FSDP, and sampling math are unchanged. See the [1.18.1 English release note](docs/releases/2026-10-19-windows-text-encoder-non-mmap-fix.en.md).
 
 Version 1.18.0 (O15.2) parallelizes standard MiniMax H3 Director `VAEDecode` VideoVAE temporal chunks between the GPU0 main process and the GPU1 Ray worker. The official ComfyUI `vae.decode()` reference for 107 frames at 1920x1088 falls from 65.78 to 39.79 seconds warm (1.653x, 39.51% lower), with all five dual-GPU runs passing per-run quality gates and element-exact output. A two-segment Director hardware regression decoded in 9.191/9.210 seconds and produced 146 frames at 864x480 and 24 fps. The bridge is automatic only inside a Ray MODEL proxy Director execution and falls back to native decode for unsupported or failed paths. AudioVAE and direct internal SelfLift decode remain native. The full suite reports `797 passed, 35 subtests passed`. See the [1.18.0 English release note](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.en.md) and [O15.2 test record](docs/testing/minimax-h3/O15_2_DUAL_V100_VAE_DECODE_2026-10.en.md).
@@ -49,7 +51,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.18.1; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.18.2; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -72,6 +74,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - MiniMaxH3Director `4c6245e` compatibility certification 1.17.1: [English](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.en.md) / [中文](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.zh-CN.md)
 - Dual-V100 MiniMax H3 VideoVAE decode 1.18.0: [English](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.en.md) / [中文](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.zh-CN.md)
 - Windows multi-segment Text Encoder non-mmap stability fix 1.18.1: [English](docs/releases/2026-10-19-windows-text-encoder-non-mmap-fix.en.md) / [中文](docs/releases/2026-10-19-windows-text-encoder-non-mmap-fix.zh-CN.md)
+- Windows FSDP quantized CPU-offload native-crash fix 1.18.2: [English](docs/releases/2026-10-19-windows-fsdp-quant-cpu-offload-fix.en.md) / [中文](docs/releases/2026-10-19-windows-fsdp-quant-cpu-offload-fix.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 

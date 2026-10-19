@@ -13,6 +13,8 @@ CUDA Event 与 GPU P2P/NVLink 传输。Gloo/TCPStore 仍只负责初始化、建
 
 在此基础上，分支现已验证 LTX 2.3 与 MiniMax H3 Diffusion Model 的 Windows 双卡 FSDP 路径，并为 MiniMax H3 提供可直接载入的 Turbo8 I2V 和 Turbo4 REF2VA 工作流。
 
+1.18.2 修复 MiniMax H3 FP8 模型配合 FSDP CPU offload 时，量化分片先搬到 CUDA、随后立即搬回 CPU，可能在 `comfy_kitchen QuantizedTensor.cpu()` 中触发 Windows `0xC0000005 access violation` 并使 Ray worker/raylet 一起退出的问题。CPU-offload 路径现在直接在 CPU 构造本 rank 分片，只转换 DTensor 外壳，不再执行大型量化权重的 CUDA→CPU 回拷。真实 REF2VA FP8 checkpoint + 0.65 Turbo4 LoRA 双 V100 预检完成 684 个 FSDP wrapper，P2P 约 60.10 GiB/s；全量测试为 `800 passed, 35 subtests passed`。详见 [1.18.2 中文发布说明](docs/releases/2026-10-19-windows-fsdp-quant-cpu-offload-fix.zh-CN.md)。
+
 1.18.1 修复 Windows 长时间多段 Director 任务在反复加载 15.7GB NVFP4 Text Encoder 后，可能于后续片段直接以 `0xC0000005 access violation` 退出的问题。Windows TP2 Text Encoder 的 embedding、视觉塔和 50 层语言主干现在逐张量读取到自有 CPU buffer，不再通过 `safetensors.safe_open()` 为整个 checkpoint 建立 mmap；Linux 保持原生 mmap 路径。真实双 V100 探针已通过纯文本与 REF2VA 视觉输入，峰值约 7.35 GiB/卡，关闭后约 17–25 MiB。模型数值、TP2 分片、注意力、FSDP 和采样数学均未改变。详见 [1.18.1 中文发布说明](docs/releases/2026-10-19-windows-text-encoder-non-mmap-fix.zh-CN.md)。
 
 1.18.0（O15.2）把 MiniMax H3 Director 的标准 `VAEDecode` VideoVAE 时间块分配给 GPU0 主进程与 GPU1 Ray worker 并行执行。107 帧、1920×1088 的官方 ComfyUI `vae.decode()` 对照从 65.78 秒降到热态 39.79 秒（1.653×、减少 39.51%），五次双卡运行均通过逐轮质量门禁；输出与原生结果逐元素一致。Director 两段实机回归的两次解码为 9.191/9.210 秒，输出 864×480、24 fps、146 帧。功能在 Ray MODEL 代理的 Director 执行作用域内自动启用，异常或不支持路径原生回退；AudioVAE 和 SelfLift 内部直接解码仍保持原生路径。全量测试为 `797 passed, 35 subtests passed`。详见 [1.18.0 中文发布说明](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.zh-CN.md)和[O15.2 测试记录](docs/testing/minimax-h3/O15_2_DUAL_V100_VAE_DECODE_2026-10.zh-CN.md)。
@@ -59,7 +61,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.18.1；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.18.2；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -82,6 +84,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - MiniMaxH3Director `4c6245e` 兼容认证 1.17.1：[中文](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.zh-CN.md) / [English](docs/releases/2026-10-18-o15.1-mmh3director-4c6245e.en.md)
 - 双 V100 MiniMax H3 VideoVAE 解码 1.18.0：[中文](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.zh-CN.md) / [English](docs/releases/2026-10-18-o15.2-dual-v100-mmh3-vae-decode.en.md)
 - Windows 多段 Text Encoder 非 mmap 稳定性修复 1.18.1：[中文](docs/releases/2026-10-19-windows-text-encoder-non-mmap-fix.zh-CN.md) / [English](docs/releases/2026-10-19-windows-text-encoder-non-mmap-fix.en.md)
+- Windows FSDP 量化 CPU-offload 原生崩溃修复 1.18.2：[中文](docs/releases/2026-10-19-windows-fsdp-quant-cpu-offload-fix.zh-CN.md) / [English](docs/releases/2026-10-19-windows-fsdp-quant-cpu-offload-fix.en.md)
 
 本项目保留上游许可证、版权与归属信息。Windows P2P 兼容层、测试、脚本和
 文档是此分支新增的实验性工作，不代表上游作者对该 Windows 实现作出支持承诺。
