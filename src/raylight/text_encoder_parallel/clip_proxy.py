@@ -23,6 +23,8 @@ import statistics
 
 import torch
 
+from .safetensor_reader import open_text_encoder_safetensors
+
 from .attention_backends import (
     TextEncoderAttentionBackend,
     resolve_attention_backend,
@@ -300,15 +302,13 @@ class MiniMaxH3CheckpointPreprocessor:
     """GPU0-only INT8 token embedding and Qwen3-VL vision preprocessing."""
 
     def __init__(self, checkpoint: str | Path, *, device: int = 0) -> None:
-        from safetensors import safe_open
-
         self.checkpoint = Path(checkpoint)
         if not self.checkpoint.is_file():
             raise FileNotFoundError(self.checkpoint)
         self.device = torch.device("cuda", device)
         self._closed = False
         self._visual = None
-        with safe_open(self.checkpoint, framework="pt", device="cpu") as handle:
+        with open_text_encoder_safetensors(self.checkpoint) as handle:
             qdata = handle.get_tensor("model.embed_tokens.weight")
             scale = handle.get_tensor("model.embed_tokens.weight_scale")
         if tuple(qdata.shape) != (151936, MINIMAX_H3_QWEN3VL_CONFIG.hidden_size):
@@ -328,7 +328,6 @@ class MiniMaxH3CheckpointPreprocessor:
     def _load_visual(self):
         if self._visual is not None:
             return self._visual
-        from safetensors import safe_open
         from comfy.text_encoders.qwen3vl import (
             QWEN3VL_VISION,
             QWEN3VL_VISION_COMMON,
@@ -346,7 +345,7 @@ class MiniMaxH3CheckpointPreprocessor:
             dtype=torch.float32,
             ops=torch.nn,
         )
-        with safe_open(self.checkpoint, framework="pt", device="cpu") as handle:
+        with open_text_encoder_safetensors(self.checkpoint) as handle:
             state = {
                 key.removeprefix("visual."): handle.get_tensor(key).to(
                     self.device, dtype=torch.float32, non_blocking=False
@@ -602,8 +601,6 @@ def load_minimax_h3_tp2_backbone(
     """Load 50 NVFP4 decoder layers directly into two V100-local shards."""
 
     import comfy_kitchen as ck
-    from safetensors import safe_open
-
     path = Path(checkpoint)
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -616,7 +613,7 @@ def load_minimax_h3_tp2_backbone(
     collective = CudaPeerGroup2()
     blocks: list[TP2Qwen3VLBlock] = []
     try:
-        with safe_open(path, framework="pt", device="cpu") as handle:
+        with open_text_encoder_safetensors(path) as handle:
             keys = set(handle.keys())
             if "model.layers.49.mlp.down_proj.weight" not in keys or any(
                 key.startswith("model.layers.50.") for key in keys
