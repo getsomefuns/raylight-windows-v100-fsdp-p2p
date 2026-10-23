@@ -15,6 +15,7 @@ import comfy.model_management
 import comfy.sample
 
 from raylight.distributed_worker.sampling_lifecycle import clear_ray_worker_vram_after_sampling
+from raylight.diagnostics.memory_recorder import MemoryRunRecorder
 
 from .proxy import RayMMH3DirectorModelProxy
 from .external_acceleration import serialize_external_acceleration
@@ -503,6 +504,12 @@ def dispatch_mmh3director_sample(
         flush=True,
     )
     sampling_error = None
+    memory_record = MemoryRunRecorder(
+        "mmh3director_main_sampling",
+        operation_id=operation_id,
+        fields={"steps": int(steps), "ranks": len(workers)},
+    )
+    memory_record.__enter__()
     last_preview_step = [-1]
 
     def forward_preview(step, x0, x, total_steps):
@@ -601,6 +608,7 @@ def dispatch_mmh3director_sample(
         raise
     finally:
         preview_transport.close_preview_queue(preview_queue)
+        memory_record.finish(sampling_error)
         try:
             clear_ray_worker_vram_after_sampling(model.ray_actors)
         except BaseException:

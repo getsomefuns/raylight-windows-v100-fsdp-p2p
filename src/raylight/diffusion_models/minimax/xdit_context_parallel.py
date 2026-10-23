@@ -22,6 +22,7 @@ xfuser_optimized_attention = xfuser_attn.make_xfuser_attention(attn_type, sync_u
 FINAL_PROJECTION_CHUNK_TOKENS = 4096
 QK_NORM_CHUNK_TOKENS = 8192
 ROPE_CHUNK_TOKENS = 8192
+QKV_PROJECTION_CHUNK_TOKENS = 4096
 _TRACE_HIGH_WATER = {}
 
 
@@ -174,6 +175,56 @@ def _normalize_qk_in_place(
     return q, k
 
 
+def _project_qkv_owned(
+    projection,
+    value,
+    *,
+    heads,
+    head_dim,
+    chunk_tokens=QKV_PROJECTION_CHUNK_TOKENS,
+):
+    """Project bounded token chunks into independently owned Q/K/V storage."""
+
+    if chunk_tokens <= 0:
+        raise ValueError("QKV projection chunk_tokens must be positive")
+    width = heads * head_dim
+    sequence = value.shape[0]
+    manual_fsdp = all(
+        callable(getattr(projection, method, None)) for method in ("unshard", "reshard")
+    )
+    if manual_fsdp:
+        projection.unshard()
+    q = k = v = None
+    try:
+        forward = projection.forward if manual_fsdp else projection
+        for start in range(0, sequence, chunk_tokens):
+            stop = min(start + chunk_tokens, sequence)
+            projected = forward(value[start:stop])
+            if projected.shape[-1] != width * 3:
+                raise ValueError(
+                    f"QKV projection width mismatch: expected {width * 3}, got {projected.shape[-1]}"
+                )
+            if q is None:
+                shape = (sequence, heads, head_dim)
+                q = projected.new_empty(shape)
+                k = projected.new_empty(shape)
+                v = projected.new_empty(shape)
+            q_chunk, k_chunk, v_chunk = projected.split(width, dim=-1)
+            q[start:stop].copy_(q_chunk.reshape(-1, heads, head_dim))
+            k[start:stop].copy_(k_chunk.reshape(-1, heads, head_dim))
+            v[start:stop].copy_(v_chunk.reshape(-1, heads, head_dim))
+            del projected, q_chunk, k_chunk, v_chunk
+    finally:
+        if manual_fsdp:
+            projection.reshard()
+    if q is None:
+        shape = (sequence, heads, head_dim)
+        q = value.new_empty(shape)
+        k = value.new_empty(shape)
+        v = value.new_empty(shape)
+    return q, k, v
+
+
 def _apply_rope_in_place(
     q,
     k,
@@ -203,16 +254,15 @@ def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
             raise ValueError("owned MiniMax H3 attention input requires one tensor")
         x = x.pop()
     sequence_length = x.shape[0]
-    projected = self.qkv_proj(x)
-    del x
+    q, k, v = _project_qkv_owned(
+        self.qkv_proj,
+        x,
+        heads=self.heads,
+        head_dim=self.head_dim,
+    )
     _trace_cuda_memory("attention_qkv_projected")
-    q, k, v = projected.split(self.heads * self.head_dim, dim=-1)
-    del projected
-    q = q.view(sequence_length, self.heads, self.head_dim)
-    k = k.view(sequence_length, self.heads, self.head_dim)
     q, k = _normalize_qk_in_place(self.q_norm, self.k_norm, q, k)
     _trace_cuda_memory("attention_qk_normalized_in_place")
-    v = v.view(sequence_length, self.heads, self.head_dim)
     if rope_freqs is not None:
         rot = rope_freqs.shape[-3] * 2
         q, k = _apply_rope_in_place(q, k, rope_freqs, rot=rot)

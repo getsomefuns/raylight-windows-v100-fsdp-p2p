@@ -234,3 +234,55 @@ def test_owned_xformers_ulysses_runs_sol_override_between_exchange_phases(monkey
         ("a2a", 1, 2),
     ]
     assert output.shape == (1, 4, 2, 3)
+
+
+def test_windows_p2p_owned_exchange_reuses_layout_buffer(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    calls = []
+
+    def fake_all_to_all(output, input_tensor, **_kwargs):
+        calls.append((output.data_ptr(), input_tensor.data_ptr()))
+        assert output.data_ptr() == input_tensor.data_ptr()
+
+    monkeypatch.setattr(attention.dist, "get_world_size", lambda _group: 2)
+    monkeypatch.setattr(attention.dist, "all_to_all_single", fake_all_to_all)
+    owned = [torch.arange(48, dtype=torch.float32).reshape(1, 3, 4, 4)]
+
+    exchanged = attention._windows_p2p_all_to_all_4d_owned(
+        owned,
+        scatter_idx=2,
+        gather_idx=1,
+        group=object(),
+        use_sync=False,
+    )
+
+    assert owned == []
+    assert calls and calls[0][0] == calls[0][1]
+    assert exchanged.shape == (1, 6, 2, 4)
+
+
+def test_windows_p2p_owned_reverse_exchange_reuses_layout_buffer(monkeypatch):
+    import raylight.distributed_modules.attention as attention
+
+    calls = []
+
+    def fake_all_to_all(output, input_tensor, **_kwargs):
+        calls.append((output.data_ptr(), input_tensor.data_ptr()))
+        assert output.data_ptr() == input_tensor.data_ptr()
+
+    monkeypatch.setattr(attention.dist, "get_world_size", lambda _group: 2)
+    monkeypatch.setattr(attention.dist, "all_to_all_single", fake_all_to_all)
+    owned = [torch.arange(48, dtype=torch.float32).reshape(1, 6, 2, 4)]
+
+    exchanged = attention._windows_p2p_all_to_all_4d_owned(
+        owned,
+        scatter_idx=1,
+        gather_idx=2,
+        group=object(),
+        use_sync=False,
+    )
+
+    assert owned == []
+    assert calls and calls[0][0] == calls[0][1]
+    assert exchanged.shape == (1, 3, 4, 4)

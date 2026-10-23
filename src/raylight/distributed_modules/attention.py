@@ -1,3 +1,5 @@
+import os
+
 from xfuser.core.long_ctx_attention import (
     xFuserLongContextAttention,
 )
@@ -15,6 +17,81 @@ _SYNC_ULYSSES = None
 XFORMERS_MEMORY_EFFICIENT = "XFORMERS_MEMORY_EFFICIENT"
 XFORMERS_HEAD_CHUNK = 7
 XFORMERS_QUERY_CHUNK_TOKENS = 16384
+
+
+def _windows_p2p_all_to_all_4d_owned(
+    owned,
+    *,
+    scatter_idx,
+    gather_idx,
+    group,
+    use_sync,
+):
+    """Consume one 4D tensor and reuse its communication layout buffer.
+
+    The Windows P2P endpoint copies every outbound chunk into its fixed staging
+    buffer before it overwrites the corresponding receive range, so equal-size
+    two-rank all-to-all is safe with the same contiguous tensor as input/output.
+    """
+
+    if len(owned) != 1:
+        raise ValueError("owned all-to-all requires exactly one tensor")
+    value = owned.pop()
+    if value.dim() != 4:
+        raise ValueError(f"owned all-to-all requires a 4D tensor, got {value.dim()}D")
+    world_size = dist.get_world_size(group)
+    if world_size != 2:
+        raise ValueError(f"Windows P2P owned all-to-all requires two ranks, got {world_size}")
+
+    if scatter_idx == 2 and gather_idx == 1:
+        batch, local_sequence, heads, head_dim = value.shape
+        if heads % world_size:
+            raise ValueError("attention heads must be divisible by the Ulysses degree")
+        local_heads = heads // world_size
+        layout = (
+            value.reshape(batch, local_sequence, world_size, local_heads, head_dim)
+            .transpose(0, 2)
+            .contiguous()
+        )
+        del value
+        dist.all_to_all_single(layout, layout, group=group)
+        if use_sync:
+            torch.cuda.synchronize()
+        return layout.reshape(local_sequence * world_size, batch, local_heads, head_dim).transpose(0, 1)
+
+    if scatter_idx == 1 and gather_idx == 2:
+        batch, sequence, local_heads, head_dim = value.shape
+        if sequence % world_size:
+            raise ValueError("attention sequence must be divisible by the Ulysses degree")
+        local_sequence = sequence // world_size
+        heads = local_heads * world_size
+        layout = (
+            value.reshape(batch, world_size, local_sequence, local_heads, head_dim)
+            .transpose(0, 3)
+            .transpose(0, 1)
+            .contiguous()
+            .reshape(world_size, local_heads, local_sequence, batch, head_dim)
+        )
+        del value
+        dist.all_to_all_single(layout, layout, group=group)
+        if use_sync:
+            torch.cuda.synchronize()
+        return layout.reshape(heads, local_sequence, batch, head_dim).transpose(0, 2)
+
+    raise ValueError("owned all-to-all supports only (2, 1) and (1, 2)")
+
+
+def _ulysses_exchange_owned(owned, *, scatter_idx, gather_idx, group, use_sync):
+    value = owned.pop(0).transpose(1, 2)
+    if os.name == "nt" and os.environ.get("RAYLIGHT_WINDOWS_P2P", "0") == "1":
+        return _windows_p2p_all_to_all_4d_owned(
+            [value],
+            scatter_idx=scatter_idx,
+            gather_idx=gather_idx,
+            group=group,
+            use_sync=use_sync,
+        )
+    return SeqAllToAll4D.apply(group, value, scatter_idx, gather_idx, use_sync)
 
 
 def xfuser_attention_choices():
@@ -70,15 +147,15 @@ def xformers_ulysses_attention_owned(
     if ulysses_group is None:
         raise ValueError("XFORMERS_MEMORY_EFFICIENT requires an Ulysses process group")
 
-    query = qkv.pop(0).transpose(1, 2)
-    query_layer = SeqAllToAll4D.apply(ulysses_group, query, 2, 1, use_sync)
-    del query
-    key = qkv.pop(0).transpose(1, 2)
-    key_layer = SeqAllToAll4D.apply(ulysses_group, key, 2, 1, use_sync)
-    del key
-    value = qkv.pop(0).transpose(1, 2)
-    value_layer = SeqAllToAll4D.apply(ulysses_group, value, 2, 1, use_sync)
-    del value
+    query_layer = _ulysses_exchange_owned(
+        qkv, scatter_idx=2, gather_idx=1, group=ulysses_group, use_sync=use_sync
+    )
+    key_layer = _ulysses_exchange_owned(
+        qkv, scatter_idx=2, gather_idx=1, group=ulysses_group, use_sync=use_sync
+    )
+    value_layer = _ulysses_exchange_owned(
+        qkv, scatter_idx=2, gather_idx=1, group=ulysses_group, use_sync=use_sync
+    )
     options = transformer_options or {}
 
     def dense_local(query_bhsd, key_bhsd, value_bhsd, _heads, **_kwargs):
@@ -125,10 +202,16 @@ def xformers_ulysses_attention_owned(
             causal=causal,
             chunk_heads=chunk_heads,
             chunk_query_tokens=chunk_query_tokens,
+            output=query_layer,
         )
     del query_layer, key_layer, value_layer
-    output = SeqAllToAll4D.apply(ulysses_group, context_layer, 1, 2, use_sync)
-    del context_layer
+    output = _ulysses_exchange_owned(
+        [context_layer.transpose(1, 2)],
+        scatter_idx=1,
+        gather_idx=2,
+        group=ulysses_group,
+        use_sync=use_sync,
+    )
     return output
 
 
@@ -141,9 +224,10 @@ def _xformers_local_attention(
     causal,
     chunk_heads,
     chunk_query_tokens,
+    output=None,
 ):
     attention_bias = xops.LowerTriangularMask() if causal else None
-    context_layer = torch.empty_like(query_layer)
+    context_layer = torch.empty_like(query_layer) if output is None else output
     if causal and chunk_query_tokens < query_layer.shape[1]:
         raise ValueError("query chunking does not support causal attention offsets")
     for query_start in range(0, query_layer.shape[1], chunk_query_tokens):

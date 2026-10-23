@@ -1,7 +1,11 @@
+import os
 import sys
 from pathlib import Path
 
 from .path_helpers import comfy_root
+
+
+os.environ.setdefault("RAYLIGHT_MEMORY_RECORD", "0")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

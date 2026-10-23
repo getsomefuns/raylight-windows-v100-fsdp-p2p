@@ -21,10 +21,11 @@ REAL_SHAPES = (
 
 def _load_module(rank):
     name = f"raylight_windows_p2p_full_rank_{rank}"
-    spec = importlib.util.spec_from_file_location(name, MODULE_PATH)
-    module = importlib.util.module_from_spec(spec)
     import sys
 
+    sys.path.insert(0, str(MODULE_PATH.parents[2]))
+    spec = importlib.util.spec_from_file_location(name, MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
@@ -53,32 +54,36 @@ def _worker(rank, group_name, handle_queues, barrier, results):
 
     checks = []
     try:
-        for shape in REAL_SHAPES:
-            element_count = 1
-            for dimension in shape:
-                element_count *= dimension
-            # int32 matches the four-byte float32 payloads observed in the LTX trace.
-            source = torch.arange(element_count, dtype=torch.int32, device="cuda:0")
-            source.add_(rank * 10_000_000)
-            source = source.reshape(shape)
-            output = torch.empty_like(source)
-            barrier.wait(timeout=30)
-            endpoint.all_to_all_single(output, source)
-            torch.cuda.synchronize()
-            expected = _expected(torch, rank, element_count)
-            observed = output.reshape(-1)
-            mismatches = torch.count_nonzero(observed != expected).item()
-            maximum_error = torch.max(torch.abs(observed - expected)).item()
-            checks.append(
-                {
-                    "shape": shape,
-                    "bytes": source.numel() * source.element_size(),
-                    "mismatches": mismatches,
-                    "maximum_error": maximum_error,
-                }
-            )
-            if mismatches:
-                raise RuntimeError(f"rank={rank} shape={shape} mismatches={mismatches}")
+        for inplace in (False, True):
+            for shape in REAL_SHAPES:
+                element_count = 1
+                for dimension in shape:
+                    element_count *= dimension
+                # int32 matches the four-byte float32 payloads observed in the LTX trace.
+                source = torch.arange(element_count, dtype=torch.int32, device="cuda:0")
+                source.add_(rank * 10_000_000)
+                source = source.reshape(shape)
+                output = source if inplace else torch.empty_like(source)
+                barrier.wait(timeout=30)
+                endpoint.all_to_all_single(output, source)
+                torch.cuda.synchronize()
+                expected = _expected(torch, rank, element_count)
+                observed = output.reshape(-1)
+                mismatches = torch.count_nonzero(observed != expected).item()
+                maximum_error = torch.max(torch.abs(observed - expected)).item()
+                checks.append(
+                    {
+                        "shape": shape,
+                        "bytes": source.numel() * source.element_size(),
+                        "inplace": inplace,
+                        "mismatches": mismatches,
+                        "maximum_error": maximum_error,
+                    }
+                )
+                if mismatches:
+                    raise RuntimeError(
+                        f"rank={rank} shape={shape} inplace={inplace} mismatches={mismatches}"
+                    )
         results.put((rank, checks, None))
     except Exception as exc:
         results.put((rank, checks, repr(exc)))

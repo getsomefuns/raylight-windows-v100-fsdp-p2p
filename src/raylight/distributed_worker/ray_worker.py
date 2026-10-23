@@ -77,6 +77,7 @@ from raylight.comfy_dist.minimax_h3_fp16 import (
     prepare_minimax_h3_safe_fp16_worker,
 )
 from raylight.distributed_worker.sampling_profiler import run_with_optional_profile
+from raylight.diagnostics.memory_recorder import MemoryRunRecorder
 from raylight.text_encoder_parallel.lifecycle import WorkerGpuLifecycle
 from ray.exceptions import RayActorError
 
@@ -2145,7 +2146,15 @@ class RayWorker:
             "rank": int(self.local_rank),
             "state": "running",
         }
+        memory_record = MemoryRunRecorder(
+            "mmh3director_worker_sampling",
+            operation_id=operation_id,
+            rank=int(self.local_rank),
+            fields={"steps": int(request.get("steps", 0))},
+        )
+        memory_record.__enter__()
         model_for_sampling = None
+        sampling_error = None
         try:
             if not self.is_model_loaded or self.model is None:
                 raise RuntimeError(f"rank {self.local_rank} has no loaded model")
@@ -2335,6 +2344,7 @@ class RayWorker:
             }
             return result
         except BaseException as error:
+            sampling_error = error
             self._mmh3director_last_status = {
                 "operation_id": operation_id,
                 "rank": int(self.local_rank),
@@ -2352,6 +2362,7 @@ class RayWorker:
                     pass
             comfy_model_management.soft_empty_cache()
             gc.collect()
+            memory_record.finish(sampling_error)
 
     @worker_gpu_activity("sampling")
     @_scoped_fsdp_host_registration
