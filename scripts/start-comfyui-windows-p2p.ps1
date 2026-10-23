@@ -80,6 +80,7 @@ $env:RAYLIGHT_WINDOWS_P2P = "1"
 $env:RAYLIGHT_WINDOWS_P2P_CAPACITY_BYTES = [string]$selectedCapacityBytes
 $env:RAYLIGHT_WINDOWS_P2P_MIN_GIB_S = [string]$MinimumP2PGiBs
 $env:RAYLIGHT_RANK_DIAG = if ($EnableDiagnostics) { "1" } else { "0" }
+$env:RAYLIGHT_MEMORY_LOG_DIR = Join-Path $comfyRoot "user\raylight_memory"
 if ([string]::IsNullOrWhiteSpace($env:PYTORCH_CUDA_ALLOC_CONF)) {
     $env:PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:$CudaMaxSplitSizeMiB"
 }
@@ -97,6 +98,7 @@ Write-Host "P2P capacity choices: 128, 256, 512 MiB"
 Write-Host "P2P staging budget: $selectedCapacityMiB MiB ($selectedCapacityBytes bytes per GPU)"
 Write-Host "Larger collectives are auto-chunked: enabled"
 Write-Host "Rank/P2P diagnostics: $(if ($EnableDiagnostics) { 'enabled' } else { 'disabled' })"
+Write-Host "Memory records: $env:RAYLIGHT_MEMORY_LOG_DIR"
 Write-Host "Minimum P2P bandwidth: $MinimumP2PGiBs GiB/s"
 Write-Host "Reserved VRAM: $ReserveVramGiB GiB"
 Write-Host "CUDA allocator: $env:PYTORCH_CUDA_ALLOC_CONF"

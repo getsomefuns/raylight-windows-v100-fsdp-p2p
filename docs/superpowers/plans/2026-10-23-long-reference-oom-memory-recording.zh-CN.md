@@ -12,11 +12,12 @@
 2. Windows 双 rank P2P 的 4D Ulysses 交换复用通信布局张量作为收发输出，依赖既有 128 MiB staging 的“先保存发送块、再覆盖目标块”顺序，不再创建第二个完整 `empty_like`。
 3. 非 Windows P2P 路径继续使用 yunchang 原实现。
 4. xFormers 密集注意力把结果写回已消费的 Query 存储，减少一个完整 context 输出。
-5. 每次 Director 采样在主进程和两个 worker 启动 1 秒周期的本地记录器；无论成功还是异常，都向 `ComfyUI/user/raylight_memory/<日期>/` 写入 JSONL 汇总。
+5. Director 完整生命周期（预加载、参考素材预处理、Text Encoder、采样、VAE 解码与最终清理）和每次内部采样均启用 1 秒周期记录器；主进程及两个 worker 统一向 `ComfyUI/user/raylight_memory/<日期>/` 写入 JSONL 汇总。
+6. 记录器同时保存系统物理内存、Windows commit/commit limit、进程 RSS/private/pagefile、PyTorch allocated/reserved，以及 `cudaMemGetInfo` 的整卡 used/free；CUDA 峰值在阶段开始前重置，避免混入上一阶段数据。
 
 ## 验收标准
 
 - 单元测试证明 QKV 分块有界、三个输出不共享底层存储、Windows P2P all-to-all 输入输出复用同一 data pointer。
-- 内存记录在采样成功和异常退出时均能写入，并包含系统可用内存最低值、Windows commit 峰值、进程 RSS/private 峰值和 CUDA allocated/reserved 峰值。
+- 内存记录在成功和异常退出时均能写入，并包含系统可用内存最低值、Windows commit 峰值、进程 RSS/private 峰值、CUDA allocated/reserved 峰值和整卡物理显存峰值。
 - 原 15 秒、双图、354 帧抠像参考视频工作流必须越过原 OOM 点；最终验收需要完成全部采样并确认输出有限值和画面质量无退化。
 - 不修改 ComfyUI 与 MiniMax H3 Director 源码。

@@ -16,3 +16,4 @@ def test_windows_launcher_keeps_mmh3_multireference_headroom() -> None:
     assert match is not None, "launcher must expose ReserveVramGiB"
     assert float(match.group(1)) >= 3.0
     assert '"--reserve-vram", $reserveVramText' in script
+    assert '$env:RAYLIGHT_MEMORY_LOG_DIR = Join-Path $comfyRoot "user\\raylight_memory"' in script

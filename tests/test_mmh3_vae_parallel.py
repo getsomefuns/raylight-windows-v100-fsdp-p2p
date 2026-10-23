@@ -359,6 +359,53 @@ def test_director_execute_wrapper_preloads_rank1_and_clears_context_on_error() -
     assert vae_decode.current_mmh3_vae_context() is None
 
 
+def test_director_execute_wrapper_records_the_full_director_lifecycle() -> None:
+    from raylight.integrations.mmh3director import vae_decode
+
+    events = []
+
+    class TrackedRemoteCall(_RemoteCall):
+        def remote(self, *args):
+            events.append("preload")
+            return super().remote(*args)
+
+    class FakeRecorder:
+        def __init__(self, stage, **kwargs):
+            events.append(("recorder", stage, kwargs["operation_id"]))
+
+        def __enter__(self):
+            events.append("enter")
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("exit")
+            return False
+
+    worker = SimpleNamespace(
+        start_mmh3_vae_preload=TrackedRemoteCall("started"),
+        clear_sampling_vram=_RemoteCall(True),
+    )
+    proxy = _proxy_without_init(worker)
+
+    def original(_self, model, video_vae, unique_id=None):
+        events.append("original")
+        return "done"
+
+    wrapped = vae_decode.make_director_execute_wrapper(original)
+    with patch.object(vae_decode, "MemoryRunRecorder", FakeRecorder), patch.object(
+        vae_decode.ray, "get", side_effect=lambda value: value
+    ):
+        assert wrapped(object(), proxy, _source_vae(), unique_id="director-5") == "done"
+
+    assert events == [
+        ("recorder", "mmh3director_lifecycle", "director-5"),
+        "enter",
+        "preload",
+        "original",
+        "exit",
+    ]
+
+
 def test_hybrid_decode_clears_sampling_workers_once_then_reuses_resident_vaes() -> None:
     from raylight.integrations.mmh3director import vae_decode
 

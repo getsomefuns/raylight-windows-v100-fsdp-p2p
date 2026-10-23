@@ -66,8 +66,12 @@ def capture_memory_snapshot():
     payload.update(_windows_commit_memory())
     if torch.cuda.is_available():
         device = torch.cuda.current_device()
+        device_free, device_total = torch.cuda.mem_get_info(device)
         payload.update(
             cuda_device=int(device),
+            cuda_device_total_bytes=int(device_total),
+            cuda_device_free_bytes=int(device_free),
+            cuda_device_used_bytes=int(device_total - device_free),
             cuda_allocated_bytes=int(torch.cuda.memory_allocated(device)),
             cuda_reserved_bytes=int(torch.cuda.memory_reserved(device)),
             cuda_peak_allocated_bytes=int(torch.cuda.max_memory_allocated(device)),
@@ -120,8 +124,8 @@ class MemoryRunRecorder:
         for key, value in sample.items():
             if not isinstance(value, (int, float)):
                 continue
-            if key == "system_available_bytes":
-                peak_key = "min_system_available_bytes"
+            if key == "system_available_bytes" or key.endswith("_free_bytes"):
+                peak_key = f"min_{key}"
                 current = self.peaks.get(peak_key)
                 self.peaks[peak_key] = value if current is None else min(current, value)
             elif key.endswith("_bytes"):
@@ -146,9 +150,9 @@ class MemoryRunRecorder:
         if not self.enabled:
             return self
         self.started_ns = time.time_ns()
-        self.start_snapshot = self.poll_once()
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
+        self.start_snapshot = self.poll_once()
         if self.start_thread:
             self._thread = threading.Thread(target=self._poll, name="raylight-memory", daemon=True)
             self._thread.start()

@@ -14,6 +14,7 @@ from typing import Callable
 import ray
 import torch
 
+from raylight.diagnostics.memory_recorder import MemoryRunRecorder
 from raylight.distributed_worker.ray_worker_vae import (
     build_mmh3_temporal_plan,
     decode_mmh3_temporal_chunks,
@@ -92,34 +93,42 @@ def make_director_execute_wrapper(original: Callable) -> Callable:
             return original(*args, **kwargs)
 
         remote_worker = workers[1]
-        try:
-            ray.get(remote_worker.start_mmh3_vae_preload.remote(vae_path))
-        except Exception as error:
-            _LOG.warning(
-                "MiniMax H3 VideoVAE background preload unavailable; using native decode: %s: %s",
-                type(error).__name__,
-                error,
-            )
-            return original(*args, **kwargs)
-
-        context = DirectorVaeDecodeContext(
-            remote_worker=remote_worker,
-            vae_path=vae_path,
-            vae_identity=id(vae),
-            workers=tuple(workers),
-        )
-        with activate_mmh3_vae_context(context):
+        with MemoryRunRecorder(
+            "mmh3director_lifecycle",
+            operation_id=bound.get("unique_id"),
+            fields={
+                "worker_count": len(workers),
+                "video_vae_path": vae_path,
+            },
+        ):
             try:
+                ray.get(remote_worker.start_mmh3_vae_preload.remote(vae_path))
+            except Exception as error:
+                _LOG.warning(
+                    "MiniMax H3 VideoVAE background preload unavailable; using native decode: %s: %s",
+                    type(error).__name__,
+                    error,
+                )
                 return original(*args, **kwargs)
-            finally:
+
+            context = DirectorVaeDecodeContext(
+                remote_worker=remote_worker,
+                vae_path=vae_path,
+                vae_identity=id(vae),
+                workers=tuple(workers),
+            )
+            with activate_mmh3_vae_context(context):
                 try:
-                    ray.get(remote_worker.clear_sampling_vram.remote())
-                except Exception as error:
-                    _LOG.warning(
-                        "MiniMax H3 VideoVAE final GPU cleanup failed: %s: %s",
-                        type(error).__name__,
-                        error,
-                    )
+                    return original(*args, **kwargs)
+                finally:
+                    try:
+                        ray.get(remote_worker.clear_sampling_vram.remote())
+                    except Exception as error:
+                        _LOG.warning(
+                            "MiniMax H3 VideoVAE final GPU cleanup failed: %s: %s",
+                            type(error).__name__,
+                            error,
+                        )
 
     setattr(wrapped, _EXECUTE_MARKER, True)
     setattr(wrapped, _EXECUTE_ORIGINAL, original)
