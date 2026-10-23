@@ -7,6 +7,8 @@
 
 This branch extends the previous Windows P2P/Ulysses work with the CUDA `all_gather_into_tensor` data path required by FSDP2. The validated LTX 2.3 and MiniMax H3 Diffusion Models are genuinely sharded across two V100 GPUs. Temporary weight gathering and Ulysses tensor exchange use CUDA IPC, cross-process CUDA events, and GPU P2P/NVLink. Gloo/TCPStore remains the rendezvous and control plane.
 
+Version 1.18.4 fixes PyAV `Cannot allocate memory` errors when Director mute output reaches stock `CreateVideo → SaveVideo`. Raylight fills empty AUDIO with clip-aligned CPU silence and passes normal audio through unchanged. Existing AUDIO wiring can stay connected. See the [1.18.4 English release note](docs/releases/2026-10-23-director-empty-audio-save.en.md).
+
 Version 1.18.3 fixes a long-reference SelfLift OOM caused by shared QKV backing storage overlapping a second full-size Ulysses `all_to_all` output. MiniMax H3 now uses bounded independent Q/K/V projection, an in-place two-rank Windows CUDA P2P exchange, and consumed-Query output reuse for dense xFormers Attention. The 362-frame 768×1344 hardware gate completes at roughly 233,224 high-resolution positions with observed board peaks of 16,083/16,213 MiB. A full-lifecycle recorder now writes Windows commit, process-private, PyTorch allocator, and whole-device VRAM summaries to JSONL. This is a capacity-stability release, not a speed optimization. See the [1.18.3 English release note](docs/releases/2026-10-23-long-reference-oom-memory-recording.en.md).
 
 Version 1.18.2 fixes a native Windows `0xC0000005` access violation in MiniMax H3 FP8 FSDP CPU offload. The old loader built every quantized local shard on CUDA and immediately copied it back to CPU through `comfy_kitchen QuantizedTensor.cpu()`. CPU-offloaded ranks now build their local payload directly on CPU and convert only the outer DTensor wrapper, eliminating the large CUDA-to-CPU round trip. A real REF2VA FP8 checkpoint plus 0.65 Turbo4 LoRA preflight registers all 684 FSDP wrappers on both V100s at about 60.10 GiB/s P2P bandwidth. The full suite reports `800 passed, 35 subtests passed`. See the [1.18.2 English release note](docs/releases/2026-10-19-windows-fsdp-quant-cpu-offload-fix.en.md).
@@ -53,7 +55,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.18.3; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.18.4; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -78,6 +80,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 - Windows multi-segment Text Encoder non-mmap stability fix 1.18.1: [English](docs/releases/2026-10-19-windows-text-encoder-non-mmap-fix.en.md) / [中文](docs/releases/2026-10-19-windows-text-encoder-non-mmap-fix.zh-CN.md)
 - Windows FSDP quantized CPU-offload native-crash fix 1.18.2: [English](docs/releases/2026-10-19-windows-fsdp-quant-cpu-offload-fix.en.md) / [中文](docs/releases/2026-10-19-windows-fsdp-quant-cpu-offload-fix.zh-CN.md)
 - Long-reference Attention OOM and lifecycle memory records 1.18.3: [English](docs/releases/2026-10-23-long-reference-oom-memory-recording.en.md) / [中文](docs/releases/2026-10-23-long-reference-oom-memory-recording.zh-CN.md)
+- Director muted-video save compatibility 1.18.4: [English](docs/releases/2026-10-23-director-empty-audio-save.en.md) / [中文](docs/releases/2026-10-23-director-empty-audio-save.zh-CN.md)
 
 The upstream license, copyright, and attribution are retained. The Windows P2P/FSDP layer, scripts, tests, and documentation are experimental branch work and do not imply upstream support for this Windows configuration.
 

@@ -22,6 +22,7 @@ from raylight.distributed_worker.ray_worker_vae import (
 )
 
 from .proxy import RayMMH3DirectorModelProxy
+from .audio_output import normalize_director_audio_output
 
 
 _LOG = logging.getLogger("raylight.mmh3director.vae")
@@ -90,7 +91,7 @@ def make_director_execute_wrapper(original: Callable) -> Callable:
         workers = list(model.ray_actors.get("workers", ()))
         vae_path = extract_vae_source_path(vae)
         if len(workers) < 2 or vae_path is None:
-            return original(*args, **kwargs)
+            return normalize_director_audio_output(original(*args, **kwargs))
 
         remote_worker = workers[1]
         with MemoryRunRecorder(
@@ -109,7 +110,7 @@ def make_director_execute_wrapper(original: Callable) -> Callable:
                     type(error).__name__,
                     error,
                 )
-                return original(*args, **kwargs)
+                return normalize_director_audio_output(original(*args, **kwargs))
 
             context = DirectorVaeDecodeContext(
                 remote_worker=remote_worker,
@@ -119,7 +120,7 @@ def make_director_execute_wrapper(original: Callable) -> Callable:
             )
             with activate_mmh3_vae_context(context):
                 try:
-                    return original(*args, **kwargs)
+                    return normalize_director_audio_output(original(*args, **kwargs))
                 finally:
                     try:
                         ray.get(remote_worker.clear_sampling_vram.remote())
