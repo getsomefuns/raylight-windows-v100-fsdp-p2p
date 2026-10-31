@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
+Version 1.18.5 fixes BF16/FP16 curve-table interpolation with FP32 coefficients. Only the small time table is temporarily cast to FP32; model-wide precision and workflow wiring are unchanged. See the [release note](docs/releases/2026-10-31-h3-adaln-curve-dtype.en.md) for the auxiliary-tensor audit and regression scope.
+
 > **Experimental Preview**
 > Native-Windows Raylight branch for two Tesla V100-SXM2-16GB GPUs in TCC mode, with FSDP2 weight sharding and CUDA IPC/P2P communication over NVLink.
 
@@ -55,7 +57,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.18.4; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.18.5; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)

@@ -395,7 +395,10 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     t_vals = torch.tensor(unique_t, dtype=torch.float32, device=device)
     if self.use_adaln_curves:
         # adaln projections consume interpolated coordinates of the time-embedding curve
-        table = comfy.model_management.cast_to(self.adaln_t_table, device=device)
+        # assign=True/FSDP loading may retain the checkpoint's BF16/FP16
+        # buffer. Curve coordinates and interpolation must stay FP32, as in
+        # the core model's constructor; never round time coordinates to BF16.
+        table = comfy.model_management.cast_to(self.adaln_t_table, device=device, dtype=torch.float32)
         pos = t_vals.clamp(0.0, 1.0) * (table.shape[0] - 1)     # t in [0,1] -> fractional grid index, out-of-range t clamps to the curve ends
         i0 = pos.floor().long().clamp(max=table.shape[0] - 2)   # lower grid row, max-clamp keeps t=1.0 on the last interval instead of reading past the table
         t_emb = torch.lerp(table[i0], table[i0 + 1], (pos - i0).unsqueeze(1))  # blend the two rows by the fractional part

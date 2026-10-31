@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
+1.18.5 修复压缩时间曲线模型的 BF16/FP16 时间表与 FP32 插值系数冲突。只将小型时间表临时转为 FP32，不改变模型主体精度或现有工作流。辅助张量核查、回归范围及使用说明见 [中文发布说明](docs/releases/2026-10-31-h3-adaln-curve-dtype.zh-CN.md)。
+
 > **实验性 Preview**
 > 面向原生 Windows、双 Tesla V100-SXM2-16GB、TCC 与 NVLink 的 Raylight
 > FSDP2 权重分片与 CUDA IPC/P2P 通信分支。
@@ -65,7 +67,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.18.4；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.18.5；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)

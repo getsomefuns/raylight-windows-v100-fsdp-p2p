@@ -2,12 +2,14 @@
 
 本文只维护 `windows-v100-fsdp-p2p` 分支的 FSDP 计划、诊断、失败记录与验收结果。旧版 Windows P2P/Ulysses 项目的数据继续保留在 [TESTING.md](TESTING.md)，两者不再混写。
 
-- 最近更新：2026-10-12
+- 最近更新：2026-10-31
 - 精简数据附件：[windows-v100-fsdp-test-results-2026-08.csv](windows-v100-fsdp-test-results-2026-08.csv)
 - 当前状态：FSDP 显存分片、CUDA P2P 数据面和 LTX 5 秒视觉输出已通过；性能优化目标尚未通过
 - 历史阶段：F0 方案评估、F2 合成模型门禁、F3/F4 LTX 集成与输出修复
 
 ## 测试验证目标
+
+最新维护记录：[1.18.5 压缩时间曲线精度兼容回归](releases/2026-10-31-h3-adaln-curve-dtype.zh-CN.md)。全量 830 passed、35 subtests passed；覆盖旧模型路径与每张 V100 的小模型前向。该记录不是完整视频生成或性能验收，不替代下列历史基准。
 
 1. 在原生 Windows、双 Tesla V100 TCC 环境中运行 FSDP2 推理。
 2. 权重分片通信使用 CUDA IPC/P2P/NVLink；Gloo/TCPStore 只承担控制面。
