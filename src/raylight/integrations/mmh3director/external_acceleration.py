@@ -204,7 +204,7 @@ def apply_external_acceleration(
     sol_config = transformer.pop(RAYLIGHT_SOLATTN_CONFIG_KEY, None)
 
     patched = model
-    if te_config is not None:
+    if te_config is not None and te_speed_factory is not None:
         factory = te_speed_factory or _te_speed_factory
         te_argument = _te_speed_model_argument(patched)
         te_result = factory().patch(te_argument, **te_config)[0]
@@ -212,4 +212,10 @@ def apply_external_acceleration(
     if sol_config is not None:
         factory = solattn_factory or _solattn_factory
         patched = factory().patch(patched, **sol_config)[0]
+    if te_config is not None and te_speed_factory is None:
+        from .te_speed_cache import create_runtime, RUNTIME_KEY
+        diffusion = patched.get_model_object('diffusion_model')
+        # Construct AFTER other patches clone model_options. Never install TE's
+        # whole-model forward over our sequence-sharded, mask-aware forward.
+        patched.model_options.setdefault('transformer_options', {})[RUNTIME_KEY] = create_runtime(te_config, len(diffusion.blocks))
     return patched

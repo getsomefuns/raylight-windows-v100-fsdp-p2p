@@ -301,6 +301,43 @@ def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
     return result
 
 
+def _run_block_range(model, hidden, indices, t_emb, mod_segments, rope_freqs, options, layout):
+    indices = list(indices)
+    if not indices:
+        return hidden
+    device = hidden.device
+    replacements = options.get('patches_replace', {}).get('dit', {})
+    queue = comfy.model_prefetch.make_prefetch_queue([model.blocks[i] for i in indices], device, options)
+    try:
+        for index in indices:
+            block = model.blocks[index]
+            comfy.model_prefetch.prefetch_queue_pop(queue, device, block)
+            options['block_index'] = index
+            if ('double_block', index) in replacements:
+                def original(args):
+                    extra = {} if args.get('attention') is None else {'attention': args['attention']}
+                    return {'img': block(args['img'], args['t_emb'], args['mod_segments'], args['rope_freqs'],
+                        transformer_options=args['transformer_options'], **extra)}
+                hidden = replacements[('double_block', index)](
+                    {'img': hidden, 't_emb': t_emb, 'mod_segments': mod_segments, 'rope_freqs': rope_freqs,
+                     'layout': layout, 'transformer_options': options}, {'original_block': original})['img']
+            else:
+                hidden = block(hidden, t_emb, mod_segments, rope_freqs, transformer_options=options)
+            _trace_cuda_memory(f'block_{index}_end')
+    finally:
+        if queue is not None:
+            comfy.model_prefetch.prefetch_queue_pop(queue, device, None)
+    return hidden
+
+
+def _te_agreement(proposed, device):
+    if get_sequence_parallel_world_size() == 1:
+        return proposed
+    vote = torch.tensor([float(proposed)], device=device, dtype=torch.float32)
+    votes = get_sp_group().all_gather(vote, dim=0)
+    return bool(torch.all(votes > .5).item())
+
+
 def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_payload=None, denoise_mask=None, audio_denoise_mask=None, **kwargs):
     video_x, audio_x = x[0], x[1]
     video_dtype = video_x.dtype
@@ -404,25 +441,18 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     _trim_safe_fp16_cuda_cache()
     _trace_cuda_memory("sequence_split")
 
-    # blocks
-    patches_replace = transformer_options.get("patches_replace", {})
-    blocks_replace = patches_replace.get("dit", {})
-    prefetch_queue = comfy.model_prefetch.make_prefetch_queue(list(self.blocks), device, transformer_options)
-    for i, block in enumerate(self.blocks):
-        comfy.model_prefetch.prefetch_queue_pop(prefetch_queue, device, block)
-        if ("double_block", i) in blocks_replace:
-            def block_wrap(args):
-                return {"img": block(args["img"], args["t_emb"], args["mod_segments"], args["rope_freqs"],
-                                     transformer_options=args["transformer_options"])}
-            h = blocks_replace[("double_block", i)](
-                {"img": h, "t_emb": t_emb, "mod_segments": mod_segments, "rope_freqs": rope_freqs,
-                 "transformer_options": transformer_options},
-                {"original_block": block_wrap})["img"]
-        else:
-            h = block(h, t_emb, mod_segments, rope_freqs, transformer_options=transformer_options)
-        _trace_cuda_memory(f"block_{i}_end")
-    if prefetch_queue is not None:
-        comfy.model_prefetch.prefetch_queue_pop(prefetch_queue, device, None)
+    from raylight.integrations.mmh3director.te_speed_cache import OwnedTECache, RUNTIME_KEY, run_cached_blocks
+    runtime = transformer_options.get(RUNTIME_KEY)
+    def run_range(hidden, indices):
+        return _run_block_range(self, hidden, indices, t_emb, mod_segments, rope_freqs, transformer_options, layout)
+    if isinstance(runtime, OwnedTECache):
+        replacements = transformer_options.get('patches_replace', {}).get('dit', {})
+        # Unknown block replacements must run rather than be elided by cache.
+        h = run_cached_blocks(runtime, h, layout, transformer_options, run_range,
+            lambda proposed: _te_agreement(proposed, h.device), rank=get_sequence_parallel_rank(),
+            local_rows=h.shape[0], block_count=len(self.blocks), force_full=bool(replacements))
+    else:
+        h = run_range(h, range(len(self.blocks)))
 
     shift, scale = self.final_layer.adaln_proj(t_emb)
     v_local, v_counts = _project_local_final_segment(

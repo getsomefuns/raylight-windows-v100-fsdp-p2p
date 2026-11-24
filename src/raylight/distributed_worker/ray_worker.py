@@ -2380,7 +2380,18 @@ class RayWorker:
             raise
         finally:
             self._mmh3director_active_operation = None
+            cache_cleanup_error = None
+            previous_sampling_error = sampling_error
             if model_for_sampling is not None:
+                try:
+                    from raylight.integrations.mmh3director.te_speed_cache import finish_owned_runtime
+                    stats = finish_owned_runtime(model_for_sampling)
+                    if stats is not None and os.environ.get('RAYLIGHT_EXTERNAL_ACCEL_STATS') == '1':
+                        print(f'[Raylight] TE cache stats rank={self.local_rank} {json.dumps(stats)}', flush=True)
+                except BaseException as error:
+                    cache_cleanup_error = error
+                    if sampling_error is None:
+                        sampling_error = error
                 try:
                     model_for_sampling.cleanup()
                 except Exception:
@@ -2388,6 +2399,10 @@ class RayWorker:
             comfy_model_management.soft_empty_cache()
             gc.collect()
             memory_record.finish(sampling_error)
+            if cache_cleanup_error is not None and previous_sampling_error is None:
+                self._mmh3director_last_status = {'operation_id': operation_id, 'rank': int(self.local_rank),
+                    'state': 'failed', 'error_type': type(cache_cleanup_error).__name__, 'error': str(cache_cleanup_error)}
+                raise cache_cleanup_error
 
     @worker_gpu_activity("sampling")
     @_scoped_fsdp_host_registration

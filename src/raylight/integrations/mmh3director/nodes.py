@@ -40,6 +40,8 @@ class RayMMH3DirectorModelAdapter:
             raise ValueError(f"MMH3Director adapter requires MiniMax H3 workers; found {metadata.model_family}")
 
         install_mmh3director_sample_bridge(require_director=True)
+        from .te_speed_cache import install_te_proxy_bridge
+        install_te_proxy_bridge()
         return (
             RayMMH3DirectorModelProxy(
                 ray_actors,
