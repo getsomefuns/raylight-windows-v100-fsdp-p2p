@@ -19,6 +19,14 @@ _POOL = None
 _POOL_LOCK = threading.Lock()
 
 
+def window_inputs(samples, images, job):
+    # contiguous() is a no-op for a contiguous frame slice, leaving the ENTIRE
+    # video's storage attached. Torch serialization follows that backing storage.
+    # clone() gives each in-flight object exactly the bounded window allocation.
+    return (samples[:, :, job.latent_start:job.latent_stop].clone(memory_format=torch.contiguous_format),
+            images[job.pixel_start:job.pixel_stop].clone(memory_format=torch.contiguous_format))
+
+
 def required_store_bytes(height, width, scale, worker_count=2, window_frames=16):
     if scale not in (2, 4) or worker_count not in (1, 2):
         raise ValueError("RelayVSR supports x2/x4 and one or two workers")
@@ -218,9 +226,9 @@ def run_parallel_flash(vae_path, samples, images, detail, worker_count=2,
         images = images.detach().cpu()
 
         def submit(worker, job):
+            latent_window, image_window = window_inputs(samples, images, job)
             return workers[worker].ray_relayvsr_decode_window.remote(
-                str(vae_path), samples[:, :, job.latent_start:job.latent_stop].contiguous(),
-                images[job.pixel_start:job.pixel_stop].contiguous(), detail, asdict(job))
+                str(vae_path), latent_window, image_window, detail, asdict(job))
 
         def poll(refs):
             ready, _ = ray.wait(list(refs), num_returns=1, timeout=0.1)

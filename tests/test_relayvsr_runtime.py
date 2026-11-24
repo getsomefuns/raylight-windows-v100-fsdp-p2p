@@ -201,3 +201,21 @@ def test_actor_runtime_environment_accepts_local_shared_source(tmp_path):
     assert "env_vars" in validated
     assert "PYTHONPATH" in validated["env_vars"]
 
+
+def test_window_transfer_owns_only_window_storage_not_entire_video():
+    import io
+    runtime = load_runtime()
+    images = torch.arange(61*8*8*3).reshape(61,8,8,3).float()
+    latents = torch.zeros(1,48,5,2,2)
+    job = plan_relay_windows(61)[1]
+    pack = getattr(runtime, "window_inputs", None)
+    assert pack is not None, "Window input transport does not own bounded storage"
+    z, pixels = pack(latents, images, job)
+    assert torch.equal(pixels, images[15:31])
+    assert torch.equal(z, latents[:,:,1:3])
+    for tensor in (z, pixels):
+        assert tensor.untyped_storage().nbytes() == tensor.numel()*tensor.element_size()
+    serialized = io.BytesIO()
+    torch.save(pixels, serialized)
+    assert serialized.tell() < 16*8*8*3*4+4096
+
