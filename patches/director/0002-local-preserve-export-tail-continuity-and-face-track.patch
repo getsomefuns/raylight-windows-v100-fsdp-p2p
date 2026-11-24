@@ -1,0 +1,247 @@
+From 0b0daefeac72a1be4fb722cf394ad26ec5ce1d16 Mon Sep 17 00:00:00 2001
+From: getsomefuns <getsomefuns@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 08:23:59 +0800
+Subject: [PATCH 2/2] local: preserve export-tail continuity and face tracking
+ fixes
+
+---
+ director/executor_core.py     | 23 +++++++++++++++++++++++
+ director/face_refine/pack.py  | 11 +++++++++--
+ director/face_refine/track.py | 11 ++++++++---
+ director/segment_cache.py     | 16 ++++++++++++++++
+ nodes/director_face_refine.py | 14 +++++++++++++-
+ 5 files changed, 69 insertions(+), 6 deletions(-)
+
+diff --git a/director/executor_core.py b/director/executor_core.py
+index 200fe02..43b00a5 100644
+--- a/director/executor_core.py
++++ b/director/executor_core.py
+@@ -135,6 +135,15 @@ def _unpack_node_output(out):
+     raise RuntimeError(f"Unexpected node output: {type(out)!r}")
+ 
+ 
++def _needs_export_tail_context(context_end_frame, context_frames):
++    return (
++        context_end_frame is not None
++        and context_frames is not None
++        and int(context_frames.shape[0]) > 0
++        and minimax_align_frame_count(int(context_end_frame)) != int(context_end_frame)
++    )
++
++
+ def _decode_av_latent(samples, vae, audio_vae, *, decode_audio: bool = True):
+     """Same as official r2v: VAEDecode + VAEDecodeAudio both take the AV latent.
+ 
+@@ -910,6 +919,20 @@ def execute_director_plan_core(
+                 and (prev_av is not None or prev_audio is not None)
+             )
+             prev_av = select_continuity_pin_latent(latent, prev_first_pass_av, prev_av)
++            if (
++                not is_continue_mode(plan)
++                and not bool(getattr(plan, "continuity_keep_tail", True))
++                and _needs_export_tail_context(prev_end_frame, prev_tail)
++            ):
++                # The visible export can end between cached VAE phases. Encode
++                # its actual tail instead of discarding frames to align the latent.
++                prev_av = None
++                prev_low_carry = None
++                prev_end_frame = None
++                reports.append(
++                    f"Segment {ui_idx + 1}/{timeline_seg_total}: guide {context_n}f "
++                    "from decoded export tail; preserve previous duration, skip native low carry"
++                )
+             if is_continue_mode(plan):
+                 from .h3_latent_continue import (
+                     apply_latent_continue,
+diff --git a/director/face_refine/pack.py b/director/face_refine/pack.py
+index e021d3b..bda030c 100644
+--- a/director/face_refine/pack.py
++++ b/director/face_refine/pack.py
+@@ -6,7 +6,7 @@ from typing import Any
+ 
+ MMX_DIR_FACE_REFINE = "MMX_DIR_FACE_REFINE"
+ 
+-SELECT_MODES = ("largest_face", "centre_most")
++SELECT_MODES = ("largest_face", "centre_most", "leftmost_face", "rightmost_face")
+ CANVAS_MODES = ("manual", "auto_capped_768")
+ PASTE_REGIONS = ("face_only", "face_ellipse", "full_crop")
+ SEED_MODES = ("inherit", "offset")
+@@ -83,6 +83,7 @@ def pack_face_refine(
+     colour_match: float = 1.0,
+     blend: float = 1.0,
+     sigmas=None,
++    tracking_reach: float = 0.75,
+ ) -> dict[str, Any]:
+     mode = str(canvas_mode or "manual").strip().lower()
+     if mode not in CANVAS_MODES:
+@@ -116,6 +117,7 @@ def pack_face_refine(
+         "canvas_height": int(canvas_height),
+         "canvas_mode": mode,
+         "select": sel,
++        "tracking_reach": _clamp_float(tracking_reach, 0.25, 2.0, 0.75),
+         "denoise": _clamp_float(denoise, 0.02, 1.0, 0.40),
+         "steps": _clamp_int(steps, 1, 50, 8),
+         "sampler": str(sampler or DEFAULT_SAMPLER).strip() or DEFAULT_SAMPLER,
+@@ -147,6 +149,7 @@ def normalize_face_refine_pack(raw) -> dict[str, Any] | None:
+         canvas_height=raw.get("canvas_height", 768),
+         canvas_mode=raw.get("canvas_mode") or "manual",
+         select=raw.get("select") or "largest_face",
++        tracking_reach=raw.get("tracking_reach", 0.75),
+         denoise=raw.get("denoise", 0.40),
+         steps=raw.get("steps", 8),
+         sampler=raw.get("sampler") or DEFAULT_SAMPLER,
+@@ -166,7 +169,7 @@ def face_refine_fingerprint(plan) -> dict[str, Any]:
+     pack = getattr(plan, "face_refine", None)
+     if not isinstance(pack, dict) or not pack.get("enabled"):
+         return {}
+-    return {
++    fingerprint = {
+         "face_refine": True,
+         "fr_detector": pack.get("detector") or "",
+         "fr_confidence": round(float(pack.get("confidence") or 0), 4),
+@@ -190,6 +193,10 @@ def face_refine_fingerprint(plan) -> dict[str, Any]:
+         # Bump when continuity seam fade lands so old unfaded stitch caches miss.
+         "fr_seam_fade": 12,
+     }
++    reach = float(pack.get("tracking_reach", 0.75))
++    if reach != 0.75:
++        fingerprint["fr_tracking_reach"] = round(reach, 4)
++    return fingerprint
+ 
+ 
+ def face_refine_enabled(plan) -> bool:
+diff --git a/director/face_refine/track.py b/director/face_refine/track.py
+index 1ef8969..c682c5b 100644
+--- a/director/face_refine/track.py
++++ b/director/face_refine/track.py
+@@ -2,7 +2,7 @@
+ 
+ Adapted from ComfyUI-H3-FaceRefine (MIT, Carasibana): detection, gap fill,
+ trajectory smoothing, and sub-pixel affine crop. Identity / SAM / cut-picker
+-UI are omitted; this pass follows one subject (largest or most central face)
++UI are omitted; this pass follows one subject (size, centre, or horizontal position)
+ with nearest-box continuity.
+ """
+ 
+@@ -188,6 +188,10 @@ def feather_edge_mask(h: int, w: int, feather: int, device, dtype) -> torch.Tens
+ def _rank_box(box, frame_w: int, frame_h: int, select: str) -> float:
+     x0, y0, x1, y1 = box
+     h = max(1.0, y1 - y0)
++    if select == "leftmost_face":
++        return -float(x0 + x1) * 0.5
++    if select == "rightmost_face":
++        return float(x0 + x1) * 0.5
+     if select == "centre_most":
+         cx, cy = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+         dx, dy = cx - frame_w * 0.5, cy - frame_h * 0.5
+@@ -211,6 +215,7 @@ def track_and_crop(
+     conf = float(pack.get("confidence") or 0.35)
+     crop_factor = float(pack.get("crop_factor") or 2.5)
+     select = str(pack.get("select") or "largest_face")
++    tracking_reach = float(pack.get("tracking_reach", 0.75))
+     canvas_w = int(pack.get("canvas_width") or 768)
+     canvas_h = int(pack.get("canvas_height") or 768)
+     canvas_mode = str(pack.get("canvas_mode") or "manual")
+@@ -236,7 +241,7 @@ def track_and_crop(
+             pick = max(boxes, key=lambda b: _rank_box(b, width, height, select))
+         else:
+             lx, ly, lh = lock
+-            reach = 0.75 * max(lh, 8.0)
++            reach = tracking_reach * max(lh, 8.0)
+ 
+             def _dist(b):
+                 pcx, pcy = (b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5
+@@ -323,6 +328,6 @@ def track_and_crop(
+     }
+     report = (
+         f"FaceRefine track: {found}/{n_frames} faces, select={select}, "
+-        f"canvas={canvas_w}x{canvas_h} ({canvas_mode}), crop×{crop_factor:g}"
++        f"canvas={canvas_w}x{canvas_h} ({canvas_mode}), crop×{crop_factor:g}, reach×{tracking_reach:g}"
+     )
+     return crops, transform, report
+diff --git a/director/segment_cache.py b/director/segment_cache.py
+index d063389..35b7433 100644
+--- a/director/segment_cache.py
++++ b/director/segment_cache.py
+@@ -25,6 +25,7 @@ import torch
+ import folder_paths
+ 
+ from ..lib.frames_ffv1 import FRAMES_SUFFIX, decode_frames_ffv1, encode_frames_ffv1
++from .frame_align import minimax_align_frame_count
+ from .h3_latent_continue import CONTINUE_PIPELINE_ID, clamp_seam_min_mask
+ from .h3_motion_context import CONTINUITY_PIPELINE_ID, trim_context_prefix, trim_export_tail
+ from .plan import DirectorPlan, SegmentPlan, resolve_ref_image_size
+@@ -259,6 +260,20 @@ def _ref_audio_file_stamp(audio: Any, fallback_index: int) -> str:
+     return f"aud{index}:{name}:{stamp}"
+ 
+ 
++def _export_tail_context_fingerprint(seg, plan):
++    if (
++        not plan.continuity_enabled
++        or plan.continuity_mode != "guide"
++        or plan.continuity_keep_tail
++        or int(seg.index) < 1
++    ):
++        return {}
++    previous = plan.segments[int(seg.index) - 1]
++    if int(seg.index) == 1 and minimax_align_frame_count(previous.frame_count) == previous.frame_count:
++        return {}
++    return {"continuity_export_tail_pin": "decoded_v1"}
++
++
+ def _segment_identity_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[str, Any]:
+     """Identity that affects first-pass sampling (no Refine settings)."""
+     ref_files = sorted(
+@@ -320,6 +335,7 @@ def _segment_identity_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[
+     }
+     if plan.continuity_enabled and bool(getattr(plan, "continuity_keep_tail", True)):
+         payload["continuity_keep_tail"] = True
++    payload.update(_export_tail_context_fingerprint(seg, plan))
+     witness = getattr(plan, "external_groups_witness", None)
+     if isinstance(witness, dict):
+         # This segment's own group only. The whole chain is deliberately *not*
+diff --git a/nodes/director_face_refine.py b/nodes/director_face_refine.py
+index 9c48d1f..b6267d9 100644
+--- a/nodes/director_face_refine.py
++++ b/nodes/director_face_refine.py
+@@ -97,7 +97,7 @@ class MiniMaxH3DirectorFaceRefine:
+                     list(SELECT_MODES),
+                     {
+                         "default": "largest_face",
+-                        "tooltip": "锁定对象：最大脸，或最靠近画面中心的脸。锁定后按邻近框跟踪。",
++                        "tooltip": "首次锁定最大、最中心、最左或最右脸。锁定后按邻近框跟踪；左右选项不代表身份识别。",
+                     },
+                 ),
+                 "bd_grp_face_sample": ("BDGROUP", {"default": "采样设置"}),
+@@ -183,6 +183,16 @@ class MiniMaxH3DirectorFaceRefine:
+                         "tooltip": "可选。接线后覆盖步数 / 调度器 / denoise。",
+                     },
+                 ),
++                "tracking_reach": (
++                    "FLOAT",
++                    {
++                        "default": 0.75,
++                        "min": 0.25,
++                        "max": 2.0,
++                        "step": 0.05,
++                        "tooltip": "跟踪允许位移 = 上次脸高 × 此值。转头后断跟可试 1.0–1.25；过大可能跳到其他人物。",
++                    },
++                ),
+             },
+         }
+ 
+@@ -218,6 +228,7 @@ class MiniMaxH3DirectorFaceRefine:
+         colour_match=1.0,
+         blend=1.0,
+         sigmas=None,
++        tracking_reach=0.75,
+         **kwargs,
+     ):
+         del kwargs
+@@ -241,5 +252,6 @@ class MiniMaxH3DirectorFaceRefine:
+                 colour_match=colour_match,
+                 blend=blend,
+                 sigmas=sigmas,
++                tracking_reach=tracking_reach,
+             ),
+         )

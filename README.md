@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
+2026-11-24：本地 Director 已安全更新到 `aff2579` 并保留缓存/尾帧/跟踪补丁。当前核心缺 RelayVSR 后端，Pika 也尚未实机验收，**不能把节点更新视为新功能已可用**。见 [兼容核查与补丁维护说明](docs/releases/2026-11-24-director-aff2579-compatibility.zh-CN.md)。
+
 1.18.5 修复压缩时间曲线模型的 BF16/FP16 时间表与 FP32 插值系数冲突。只将小型时间表临时转为 FP32，不改变模型主体精度或现有工作流。辅助张量核查、回归范围及使用说明见 [中文发布说明](docs/releases/2026-10-31-h3-adaln-curve-dtype.zh-CN.md)。
 
 > **实验性 Preview**

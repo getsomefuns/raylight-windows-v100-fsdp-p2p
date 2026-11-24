@@ -1,0 +1,626 @@
+From 131b7143fea6ce0f30f1f80ca90eb070410e4b59 Mon Sep 17 00:00:00 2001
+From: Lucas <luka199612@gmail.com>
+Date: Tue, 22 Sep 2026 22:20:59 +0800
+Subject: [PATCH 1/2] fix(cache-status): integrate PR 231 on current Director
+
+Source: AIMixer/ComfyUI_MiniMaxH3_Director#231, original commit f2493eaffe4c1336105f3b79bc5d1c01ba16a91a. Retain current per-segment LoRA support and correct metadata-only FL2V identities to match existing generation fingerprints. Add local overlay maintenance and recovery instructions.
+---
+ director/fl2v_timeline.py |  89 +++++++++++++++---------
+ director/gen_timeline.py  |  51 ++++++++++++--
+ director/http_routes.py   |  13 ++--
+ director/plan.py          | 138 +++++++++++++++++++++++++-------------
+ web/js/minimax_refine.js  |  93 ++++++++++++++++++-------
+ 5 files changed, 267 insertions(+), 117 deletions(-)
+
+diff --git a/director/fl2v_timeline.py b/director/fl2v_timeline.py
+index 059fa20..35adc6e 100644
+--- a/director/fl2v_timeline.py
++++ b/director/fl2v_timeline.py
+@@ -517,11 +517,13 @@ def build_fl2v_director_plan(
+     width: int,
+     height: int,
+     ref_max_size: int,
++    materialize_media: bool = True,
+ ):
+     from .plan import (
+         DirectorPlan,
+         SegmentPlan,
+         SegmentRef,
++        _load_refs,
+         _parse_run_selection,
+         _resolve_export_mode,
+     )
+@@ -629,42 +631,65 @@ def build_fl2v_director_plan(
+         )
+ 
+         start_img = None
+-        if start_kf is not None:
+-            start_ref = {
+-                "imageFile": start_kf.get("imageFile") or "",
+-                "imageB64": start_kf.get("imageB64") or "",
+-            }
+-            start_img = _fit_image(
+-                _load_image_ref(start_ref),
+-                width=out_w,
+-                height=out_h,
+-                output_mode=out_mode,
+-                ref_max_size=ref_max,
+-            )
+-
+         end_img = None
+-        if end_kf is not None:
+-            end_ref = {
+-                "imageFile": end_kf.get("imageFile") or "",
+-                "imageB64": end_kf.get("imageB64") or "",
+-            }
+-            end_img = _fit_image(
+-                _load_image_ref(end_ref),
+-                width=out_w,
+-                height=out_h,
+-                output_mode=out_mode,
+-                ref_max_size=ref_max,
+-            )
+-        start_img, end_img = _unify_fl2v_pair_canvas(start_img, end_img)
+-        refs: list[SegmentRef] = []
+-        if start_img is not None:
+-            refs.append(SegmentRef(index=0, tensor=start_img[:1].clone()))
+-        if end_img is not None:
+-            refs.append(SegmentRef(index=1, tensor=end_img[:1].clone()))
++        if materialize_media:
++            if start_kf is not None:
++                start_ref = {
++                    "imageFile": start_kf.get("imageFile") or "",
++                    "imageB64": start_kf.get("imageB64") or "",
++                }
++                start_img = _fit_image(
++                    _load_image_ref(start_ref),
++                    width=out_w,
++                    height=out_h,
++                    output_mode=out_mode,
++                    ref_max_size=ref_max,
++                )
++
++            if end_kf is not None:
++                end_ref = {
++                    "imageFile": end_kf.get("imageFile") or "",
++                    "imageB64": end_kf.get("imageB64") or "",
++                }
++                end_img = _fit_image(
++                    _load_image_ref(end_ref),
++                    width=out_w,
++                    height=out_h,
++                    output_mode=out_mode,
++                    ref_max_size=ref_max,
++                )
++            start_img, end_img = _unify_fl2v_pair_canvas(start_img, end_img)
++            refs: list[SegmentRef] = []
++            if start_img is not None:
++                refs.append(SegmentRef(index=0, tensor=start_img[:1].clone()))
++            if end_img is not None:
++                refs.append(SegmentRef(index=1, tensor=end_img[:1].clone()))
++        else:
++            refs = []
++            for index, keyframe in ((0, start_kf), (1, end_kf)):
++                if isinstance(keyframe, dict):
++                    refs.extend(
++                        _load_refs(
++                            [{
++                                "index": index,
++                                "imageFile": keyframe.get("imageFile") or "",
++                                "imageB64": keyframe.get("imageB64") or "",
++                            }],
++                            materialize_media=False,
++                        )
++                    )
++
++            # Normal FL2V refs historically have an empty image_file identity.
++            # Match that contract without changing existing cache fingerprints.
++            for ref in refs:
++                ref.image_file = ""
+ 
+         # Last-only: no source_clip — otherwise held end would be read as first_frame.
+         # Empty shot: dummy clip; ImageToVideo gets no keyframes (text-to-video).
+-        if start_img is not None:
++        if not materialize_media:
++            source_clip = None
++            source_clips.append(torch.full((1, 16, 16, 3), 0.5, dtype=torch.float32))
++        elif start_img is not None:
+             source_clip = _build_fl2v_endpoint_source(start_img, end_img, fc)
+             source_clips.append(source_clip[:1].clone())
+         elif end_img is not None:
+diff --git a/director/gen_timeline.py b/director/gen_timeline.py
+index bc40ba2..a393bcf 100644
+--- a/director/gen_timeline.py
++++ b/director/gen_timeline.py
+@@ -210,13 +210,25 @@ def _load_fl2v_segment_refs(
+     height: int,
+     output_mode: str,
+     ref_max_size: int,
++    materialize_media: bool = True,
+ ):
+     """Build SegmentRef 0/1 from mixed-timeline fl2v start/end images."""
+     from .fl2v_timeline import _fit_image, _unify_fl2v_pair_canvas
+-    from .plan import SegmentRef
++    from .plan import SegmentRef, _load_refs
+ 
+     start_raw = _fl2v_image_raw(seg_data, 0)
+     end_raw = _fl2v_image_raw(seg_data, 1)
++    if not materialize_media:
++        refs = []
++        for index, raw in ((0, start_raw), (1, end_raw)):
++            if isinstance(raw, dict):
++                item = dict(raw)
++                item["index"] = index
++                refs.extend(_load_refs([item], materialize_media=False))
++        # Keep mixed FL2V cache identity identical to the normal pixel path.
++        for ref in refs:
++            ref.image_file = ""
++        return refs
+     start_img = None
+     end_img = None
+     if start_raw:
+@@ -371,6 +383,7 @@ def build_gen_director_plan(
+     width: int,
+     height: int,
+     ref_max_size: int,
++    materialize_media: bool = True,
+ ):
+     """Build DirectorPlan for generation timeline modes (lazy import avoids cycles)."""
+     from .plan import (
+@@ -402,7 +415,10 @@ def build_gen_director_plan(
+ 
+     submode = gen_submode(timeline, task_key)
+     prompt = global_block.get("prompt") or global_prompt or ""
+-    global_refs = _load_refs(global_block.get("refs") or [])
++    global_refs = _load_refs(
++        global_block.get("refs") or [],
++        materialize_media=materialize_media,
++    )
+     # r2v/r2i shared「公共参数」: off unless timeline.global.commonEnabled is set.
+     common_enabled = bool(
+         global_block.get("commonEnabled")
+@@ -496,7 +512,7 @@ def build_gen_director_plan(
+         source_video = torch.full(
+             (max(1, len(segment_ranges)), 16, 16, 3), 0.5, dtype=torch.float32
+         )
+-    else:
++    elif materialize_media:
+         source_clips = _build_gen_source_clips(
+             segment_ranges,
+             task_key=task_key,
+@@ -514,6 +530,11 @@ def build_gen_director_plan(
+             source_video = torch.full((len(source_clips), 16, 16, 3), 0.5, dtype=torch.float32)
+         else:
+             source_video = cat_frames_variable_size(source_clips)
++    else:
++        source_clips = []
++        source_video = torch.full(
++            (max(1, len(segment_ranges)), 16, 16, 3), 0.5, dtype=torch.float32
++        )
+ 
+     from .segment_continuity import resolve_segment_continuity_from_prev
+ 
+@@ -565,7 +586,10 @@ def build_gen_director_plan(
+             else:
+                 seg_prompt = local_prompt or prompt
+             # r2v/r2i + commonEnabled: merge shared global.refs; same slot → group wins.
+-            local_refs = _load_refs(seg_data.get("refs") or [])
++            local_refs = _load_refs(
++                seg_data.get("refs") or [],
++                materialize_media=materialize_media,
++            )
+             if seg_task_key_preview in ("r2v", "r2i") and common_enabled and global_refs:
+                 seg_refs = merge_indexed_refs(global_refs, local_refs)
+             else:
+@@ -590,6 +614,7 @@ def build_gen_director_plan(
+                 height=out_h,
+                 output_mode=out_mode,
+                 ref_max_size=ref_max,
++                materialize_media=materialize_media,
+             )
+         seg_ref_audios = []
+         seg_ref_videos = []
+@@ -619,7 +644,12 @@ def build_gen_director_plan(
+                 if isinstance(legacy, dict) and (legacy.get("videoFile") or legacy.get("fileName")):
+                     if not any(int(v.get("index", v.get("slot", -1))) == 0 for v in raw_vids if isinstance(v, dict)):
+                         raw_vids = [{"index": 0, **legacy}, *list(raw_vids or [])]
+-                local_videos = _load_ref_videos(raw_vids, timeline, seg_len)
++                local_videos = _load_ref_videos(
++                    raw_vids,
++                    timeline,
++                    seg_len,
++                    materialize_media=materialize_media,
++                )
+                 if common_enabled:
+                     common_vids = list(
+                         global_block.get("refVideos") or global_block.get("ref_videos") or []
+@@ -639,7 +669,12 @@ def build_gen_director_plan(
+                         ):
+                             common_vids = [{"index": 0, **g_legacy}, *common_vids]
+                     common_videos = (
+-                        _load_ref_videos(common_vids, timeline, seg_len) if common_vids else []
++                        _load_ref_videos(
++                            common_vids,
++                            timeline,
++                            seg_len,
++                            materialize_media=materialize_media,
++                        ) if common_vids else []
+                     )
+                     seg_ref_videos = merge_indexed_refs(common_videos, local_videos)
+                 else:
+@@ -651,7 +686,9 @@ def build_gen_director_plan(
+                 idx + 1,
+                 seg_task_key,
+             )
+-        if seg_task_key == "i2v":
++        if not materialize_media:
++            seg_source = None
++        elif seg_task_key == "i2v":
+             if idx < len(source_clips):
+                 seg_source = source_clips[idx].clone()
+             else:
+diff --git a/director/http_routes.py b/director/http_routes.py
+index aae8025..a63aac3 100644
+--- a/director/http_routes.py
++++ b/director/http_routes.py
+@@ -542,16 +542,19 @@ async def minimax_first_pass_cache_status(request):
+         from .plan import build_director_plan
+         from .segment_cache import inspect_first_pass_cache
+ 
+-        plan = build_director_plan(
++        plan = build_director_plan(
+             str(timeline_data),
+             global_task_type=str(body.get("task_type") or ""),
+             global_prompt=str(body.get("global_prompt") or ""),
+             total_frames=int(body.get("total_frames") or 124),
+             frame_rate=float(body.get("frame_rate") or 24.0),
+-            width=int(body.get("width") or 864),
+-            height=int(body.get("height") or 480),
+-            ref_max_size=int(body.get("ref_max_size") or 864),
+-        )
++            width=int(body.get("width") or 864),
++            height=int(body.get("height") or 480),
++            ref_max_size=int(body.get("ref_max_size") or 864),
++            # Cache status only needs identity fields.  Avoid decoding source
++            # and reference media on the ComfyUI request loop.
++            materialize_media=False,
++        )
+         plan.sample_seed = int(body.get("seed") or 0)
+         plan.sample_cfg = float(body.get("cfg") or 1.0)
+         plan.sample_steps = int(body.get("steps") or 25)
+diff --git a/director/plan.py b/director/plan.py
+index 73fa064..e05c405 100644
+--- a/director/plan.py
++++ b/director/plan.py
+@@ -30,8 +30,9 @@ from ..lib.video_io import (
+     logical_frame_count,
+     logical_frame_map,
+     load_timeline_segment,
+-    video_clips_from_timeline,
+-)
++    resolve_video_path,
++    video_clips_from_timeline,
++)
+ from .gen_timeline import (
+     build_gen_director_plan,
+     is_gen_timeline,
+@@ -407,14 +408,30 @@ def load_source_video_from_timeline(timeline: dict) -> torch.Tensor:
+     return load_timeline_segment(timeline, 0, max(1, total))
+ 
+ 
+-def _load_refs(ref_list: list[dict]) -> list[SegmentRef]:
+-    refs: list[SegmentRef] = []
+-    for item in ref_list or []:
+-        index = int(item.get("index", item.get("slot", len(refs))))
+-        if index < 0 or index >= MAX_REFERENCE_IMAGES:
+-            continue
+-        tensor = load_reference_tensor(item)
+-        if tensor is not None:
++def _load_refs(
++    ref_list: list[dict],
++    *,
++    materialize_media: bool = True,
++) -> list[SegmentRef]:
++    """Load reference image slots, optionally without decoding image pixels."""
++    refs: list[SegmentRef] = []
++    for item in ref_list or []:
++        index = int(item.get("index", item.get("slot", len(refs))))
++        if index < 0 or index >= MAX_REFERENCE_IMAGES:
++            continue
++        if materialize_media:
++            tensor = load_reference_tensor(item)
++        else:
++            tensor = None
++            image_file = item.get("imageFile")
++            if image_file:
++                rel = str(image_file).replace("\\", "/")
++                path = os.path.join(folder_paths.get_input_directory(), rel.replace("/", os.sep))
++                if os.path.isfile(path):
++                    tensor = torch.empty(0, dtype=torch.float32)
++            elif item.get("imageB64"):
++                tensor = torch.empty(0, dtype=torch.float32)
++        if tensor is not None:
+             image_file = str(
+                 item.get("imageFile") or item.get("image_file") or item.get("fileName") or ""
+             ).replace("\\", "/").strip()
+@@ -572,12 +589,14 @@ def _ref_video_entry_has_file(item: dict | None) -> bool:
+     return bool((item.get("videoFile") or item.get("fileName") or "").strip())
+ 
+ 
+-def _load_ref_videos(
+-    video_list: list[dict],
+-    timeline: dict,
+-    num_frames: int,
+-) -> list[SegmentRefVideo]:
+-    """Load up to 3 standalone reference videos for r2v / ReferenceToVideo."""
++def _load_ref_videos(
++    video_list: list[dict],
++    timeline: dict,
++    num_frames: int,
++    *,
++    materialize_media: bool = True,
++) -> list[SegmentRefVideo]:
++    """Load reference videos, optionally keeping only identity metadata."""
+     out: list[SegmentRefVideo] = []
+     for item in video_list or []:
+         if not isinstance(item, dict) or not _ref_video_entry_has_file(item):
+@@ -585,13 +604,21 @@ def _load_ref_videos(
+         index = int(item.get("index", item.get("slot", len(out))))
+         if index < 0 or index >= MAX_REFERENCE_VIDEOS:
+             continue
+-        try:
+-            tensor = load_reference_video_clip(item, timeline, num_frames, start_frame=0)
+-        except Exception as exc:
+-            log.warning("Failed to load reference video slot %s: %s", index, exc)
+-            continue
+-        if tensor is None or tensor.numel() <= 0:
+-            continue
++        if materialize_media:
++            try:
++                tensor = load_reference_video_clip(item, timeline, num_frames, start_frame=0)
++            except Exception as exc:
++                log.warning("Failed to load reference video slot %s: %s", index, exc)
++                continue
++        else:
++            try:
++                resolve_video_path(item)
++            except Exception as exc:
++                log.warning("Failed to load reference video slot %s: %s", index, exc)
++                continue
++            tensor = torch.empty(0, dtype=torch.float32)
++        if tensor is None or (materialize_media and tensor.numel() <= 0):
++            continue
+         rel = str(item.get("videoFile") or item.get("fileName") or "").strip()
+         out.append(SegmentRefVideo(index=index, tensor=tensor, video_file=rel, meta=dict(item)))
+     return sorted(out, key=lambda v: v.index)
+@@ -774,17 +801,18 @@ def count_timeline_segments(timeline_data: str) -> int:
+     return len(run_sel) if run_sel is not None else seg_count
+ 
+ 
+-def build_director_plan(
++def build_director_plan(
+     timeline_data: str,
+     *,
+     global_task_type: str,
+     global_prompt: str,
+     total_frames: int,
+     frame_rate: float,
+-    width: int,
+-    height: int,
+-    ref_max_size: int,
+-) -> DirectorPlan:
++    width: int,
++    height: int,
++    ref_max_size: int,
++    materialize_media: bool = True,
++) -> DirectorPlan:
+     timeline: dict = {}
+     if timeline_data and timeline_data.strip():
+         try:
+@@ -799,7 +827,10 @@ def build_director_plan(
+ 
+     task_type = global_block.get("taskType") or global_task_type or "v2v — 视频转视频(Video to Video)"
+     prompt = global_block.get("prompt") or global_prompt or ""
+-    global_refs = _load_refs(global_block.get("refs") or [])
++    global_refs = _load_refs(
++        global_block.get("refs") or [],
++        materialize_media=materialize_media,
++    )
+     global_ref_audios = _load_ref_audios(
+         global_block.get("refAudios") or global_block.get("ref_audios") or []
+     )
+@@ -815,10 +846,11 @@ def build_director_plan(
+             global_prompt=prompt,
+             total_frames=total_frames,
+             frame_rate=frame_rate,
+-            width=width,
+-            height=height,
+-            ref_max_size=ref_max_size,
+-        )
++            width=width,
++            height=height,
++            ref_max_size=ref_max_size,
++            materialize_media=materialize_media,
++        )
+     if is_gen_timeline(timeline, task_key_early):
+         return build_gen_director_plan(
+             timeline,
+@@ -826,10 +858,11 @@ def build_director_plan(
+             global_prompt=prompt,
+             total_frames=total_frames,
+             frame_rate=frame_rate,
+-            width=width,
+-            height=height,
+-            ref_max_size=ref_max_size,
+-        )
++            width=width,
++            height=height,
++            ref_max_size=ref_max_size,
++            materialize_media=materialize_media,
++        )
+ 
+     frame_map = logical_frame_map(timeline)
+     source_total = logical_frame_count(timeline) or int(timeline.get("totalFrames") or total_frames or 0)
+@@ -848,15 +881,23 @@ def build_director_plan(
+             "No source video in MiniMax H3 Director. Upload a video inside the node timeline UI before running."
+         )
+ 
+-    try:
+-        probe = load_timeline_segment(load_timeline, 0, 1)
+-        loaded_h = int(probe.shape[1])
+-        loaded_w = int(probe.shape[2])
+-    except Exception as exc:
+-        log.warning("Could not probe source video frame: %s", exc)
+-        video_meta = load_timeline.get("video") or {}
+-        loaded_w = int(video_meta.get("width") or width)
+-        loaded_h = int(video_meta.get("height") or height)
++    video_meta = timeline.get("video") or {}
++    if not (video_meta.get("width") and video_meta.get("height")):
++        clips_meta = video_clips_from_timeline(timeline)
++        if clips_meta:
++            video_meta = {**clips_meta[0], **video_meta}
++    if materialize_media:
++        try:
++            probe = load_timeline_segment(load_timeline, 0, 1)
++            loaded_h = int(probe.shape[1])
++            loaded_w = int(probe.shape[2])
++        except Exception as exc:
++            log.warning("Could not probe source video frame: %s", exc)
++            loaded_w = int(video_meta.get("width") or width)
++            loaded_h = int(video_meta.get("height") or height)
++    else:
++        loaded_w = int(video_meta.get("width") or width)
++        loaded_h = int(video_meta.get("height") or height)
+ 
+     source_video = torch.zeros(0, max(1, loaded_h), max(1, loaded_w), 3)
+     video_meta = timeline.get("video") or {}
+@@ -897,7 +938,10 @@ def build_director_plan(
+             seg_prompt = (seg_data.get("prompt") or "").strip() or prompt
+             seg_task = seg_data.get("taskType") or seg_data.get("task_type") or task_type
+             # Segment mode: only this segment's refs — never inherit global.refs / refAudios.
+-            seg_refs = _load_refs(seg_data.get("refs") or [])
++            seg_refs = _load_refs(
++                seg_data.get("refs") or [],
++                materialize_media=materialize_media,
++            )
+             seg_ref_audios = _load_ref_audios(
+                 seg_data.get("refAudios") or seg_data.get("ref_audios") or []
+             )
+diff --git a/web/js/minimax_refine.js b/web/js/minimax_refine.js
+index 5d1404e..7e20eae 100644
+--- a/web/js/minimax_refine.js
++++ b/web/js/minimax_refine.js
+@@ -600,7 +600,7 @@ function cacheStatusPayload(director, refine) {
+     };
+ }
+ 
+-function renderCacheStatus(node, data, kind = "normal") {
++function renderCacheStatus(node, data, kind = "normal") {
+     const ui = node._mmxFirstPassCacheUI;
+     if (!ui) return;
+     const colors = {
+@@ -684,26 +684,61 @@ function renderCacheStatus(node, data, kind = "normal") {
+             `提示：${staleExternal} 段缓存由外接组计划写入，当前未检测到外接组接线，这些段会重采一采`,
+         );
+     }
+-    ui.body.textContent = lines.join("\n");
+-}
+-
+-async function refreshFirstPassCacheStatus(node) {
+-    if (!isRefineNode(node)) return;
+-    ensureFirstPassCacheUI(node);
+-    const director = connectedDirector(node);
+-    if (!director) {
+-        renderCacheStatus(node, "未找到相连的 MiniMax H3 Director。", "warn");
+-        return;
+-    }
+-    const seq = (node._mmxCacheStatusSeq || 0) + 1;
+-    node._mmxCacheStatusSeq = seq;
+-    renderCacheStatus(node, "正在检查分段缓存…", "muted");
+-    try {
+-        const response = await api.fetchApi("/minimax/director/first_pass_cache_status", {
+-            method: "POST",
+-            headers: { "Content-Type": "application/json" },
+-            body: JSON.stringify(cacheStatusPayload(director, node)),
+-        });
++    ui.body.textContent = lines.join("\n");
++}
++
++function cacheStatusSelectionError(timelineData) {
++    if (!timelineData || typeof timelineData !== "string") return "";
++    try {
++        const timeline = JSON.parse(timelineData);
++        const enabled = Boolean(timeline?.runSelectEnabled ?? timeline?.run_select_enabled);
++        const segments = Array.isArray(timeline?.segments) ? timeline.segments : [];
++        const selection = timeline?.runSelection ?? timeline?.run_selection;
++        if (enabled && segments.length && Array.isArray(selection) && selection.length === 0) {
++            return "缓存检查跳过：已开启「选择运行」，但当前没有勾选片段。请勾选至少一段，或关闭「选择运行」。";
++        }
++    } catch {
++        /* The backend will report malformed timeline data. */
++    }
++    return "";
++}
++
++async function refreshFirstPassCacheStatus(node) {
++    if (!isRefineNode(node)) return;
++    ensureFirstPassCacheUI(node);
++    const director = connectedDirector(node);
++    if (!director) {
++        renderCacheStatus(node, "未找到相连的 MiniMax H3 Director。", "warn");
++        return;
++    }
++    const previousController = node._mmxCacheStatusAbortController;
++    const payload = cacheStatusPayload(director, node);
++    const selectionError = cacheStatusSelectionError(payload.timeline_data);
++    const requestKey = JSON.stringify(payload);
++    if (!selectionError && previousController && node._mmxCacheStatusRequestKey === requestKey) {
++        return;
++    }
++    const seq = (node._mmxCacheStatusSeq || 0) + 1;
++    node._mmxCacheStatusSeq = seq;
++    if (selectionError) {
++        previousController?.abort();
++        node._mmxCacheStatusAbortController = null;
++        node._mmxCacheStatusRequestKey = "";
++        renderCacheStatus(node, selectionError, "warn");
++        return;
++    }
++    previousController?.abort();
++    const controller = new AbortController();
++    node._mmxCacheStatusAbortController = controller;
++    node._mmxCacheStatusRequestKey = requestKey;
++    renderCacheStatus(node, "正在检查分段缓存…", "muted");
++    try {
++        const response = await api.fetchApi("/minimax/director/first_pass_cache_status", {
++            method: "POST",
++            headers: { "Content-Type": "application/json" },
++            body: requestKey,
++            signal: controller.signal,
++        });
+         const data = await response.json();
+         if (seq !== node._mmxCacheStatusSeq) return;
+         if (!response.ok || data?.error) {
+@@ -714,11 +749,17 @@ async function refreshFirstPassCacheStatus(node) {
+             ? (data.can_confirm_refine ? "ok" : (data.exists ? "warn" : "muted"))
+             : (data.matches ? "ok" : (data.exists ? "warn" : "muted"));
+         renderCacheStatus(node, data, tone);
+-    } catch (error) {
+-        if (seq !== node._mmxCacheStatusSeq) return;
+-        renderCacheStatus(node, `缓存检查失败：${error?.message || error}`, "error");
+-    }
+-}
++    } catch (error) {
++        if (error?.name === "AbortError") return;
++        if (seq !== node._mmxCacheStatusSeq) return;
++        renderCacheStatus(node, `缓存检查失败：${error?.message || error}`, "error");
++    } finally {
++        if (node._mmxCacheStatusAbortController === controller) {
++            node._mmxCacheStatusAbortController = null;
++            node._mmxCacheStatusRequestKey = "";
++        }
++    }
++}
+ 
+ function scheduleCacheStatusRefresh(node, delay = 120) {
+     clearTimeout(node._mmxCacheStatusTimer);

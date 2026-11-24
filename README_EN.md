@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
+2026-11-24: Local Director updated to `aff2579` with cache/tail/tracking overlays retained. The installed core lacks RelayVSR, and Pika is not generation-validated. **An updated node is not full feature support.** See the [compatibility and patch-maintenance report](docs/releases/2026-11-24-director-aff2579-compatibility.en.md).
+
 Version 1.18.5 fixes BF16/FP16 curve-table interpolation with FP32 coefficients. Only the small time table is temporarily cast to FP32; model-wide precision and workflow wiring are unchanged. See the [release note](docs/releases/2026-10-31-h3-adaln-curve-dtype.en.md) for the auxiliary-tensor audit and regression scope.
 
 > **Experimental Preview**
