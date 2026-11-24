@@ -3,14 +3,13 @@
 Imports only pure Director submodules; never starts Director or reads a cache.
 """
 import importlib
-from pathlib import Path
 import sys
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 import pytest
 import torch
 
-from tests.path_helpers import comfy_root
+from .path_helpers import comfy_root
 
 
 @pytest.fixture
