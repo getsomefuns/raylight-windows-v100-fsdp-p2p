@@ -476,18 +476,19 @@ ComfyUI 实际加载的 `E:\ComfyUI-py310\ComfyUI\custom_nodes\raylight` 是由�
 
 ```powershell
 cd E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
-.\scripts\deploy-to-comfyui.ps1 -ComfyUIRoot E:\ComfyUI-py310\ComfyUI
+.\scripts\deploy-to-comfyui.ps1 -SourceRoot E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p -ComfyUIRoot E:\ComfyUI-py310\ComfyUI
 ```
 
 部署工具从不可变的 Git `HEAD` 归档生成副本（不会复制尚未提交的工作树内容），写入 `.raylight-deployed-commit` 来源标记，先在临时目录完成 SHA-256 与来源提交校验，再替换运行目录；首次部署失败会删除无效目标，覆盖部署失败会恢复原部署。只检查是否发生部署漂移而不修改文件：
 
 ```powershell
 .\scripts\deploy-to-comfyui.ps1 `
+  -SourceRoot E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p `
   -ComfyUIRoot E:\ComfyUI-py310\ComfyUI `
   -VerifyOnly
 ```
 
-`DEPLOYMENT_VERIFIED` 表示所有受管理文件和来源提交一致，且除了 `__pycache__`、pytest/Ruff 缓存等明确运行时缓存及部署来源标记外，没有未管理文件。Ray 工作目录位于系统临时目录，不再写入节点源码树。普通用户仍可按下一节直接克隆到 `custom_nodes\raylight`；上述单一源码结构用于本项目的开发和实机部署。
+`DEPLOYMENT_VERIFIED` 表示所有受管理文件和来源提交一致，且除了 `__pycache__`、pytest/Ruff 缓存等明确运行时缓存及部署来源标记外，没有未管理文件。PowerShell5.1调用时应显式传入上面的`-SourceRoot`，避免参数默认值取到空`PSScriptRoot`；PowerShell7同样支持。Ray工作目录位于系统临时目录，不再写入节点源码树。普通用户仍可按下一节直接克隆到`custom_nodes\raylight`；上述单一源码结构用于本项目的开发和实机部署。
 
 本机原始日志、遥测、接触表和其他不进入 Git 的证据统一保存在正式工作树的 `.local/artifacts` 下；`.local` 已被 Git 忽略。可维护的结论、计划和精简测试汇总仍保存在 `docs`。
 

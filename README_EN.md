@@ -408,18 +408,19 @@ E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
 
 ```powershell
 cd E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p
-.\scripts\deploy-to-comfyui.ps1 -ComfyUIRoot E:\ComfyUI-py310\ComfyUI
+.\scripts\deploy-to-comfyui.ps1 -SourceRoot E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p -ComfyUIRoot E:\ComfyUI-py310\ComfyUI
 ```
 
 The tool materializes the immutable Git `HEAD` archive (never uncommitted worktree content), records the source commit in `.raylight-deployed-commit`, verifies hashes and source identity in a staging directory, and then replaces the live tree. A failed first deployment removes the invalid target; a failed replacement restores the prior deployment. Check for drift without changing the deployment:
 
 ```powershell
 .\scripts\deploy-to-comfyui.ps1 `
+  -SourceRoot E:\ComfyUI-py310\raylight-windows-v100-fsdp-p2p `
   -ComfyUIRoot E:\ComfyUI-py310\ComfyUI `
   -VerifyOnly
 ```
 
-`DEPLOYMENT_VERIFIED` means every managed file and the recorded source commit match. No unmanaged files exist apart from explicit runtime caches such as `__pycache__`, pytest/Ruff state, and deployment identity metadata. Ray's working directory lives under the system temporary directory rather than the node source tree. Regular users may still clone directly into `custom_nodes\raylight` as described below; the single-source layout is the development and local deployment policy for this project machine.
+`DEPLOYMENT_VERIFIED` means every managed file and the recorded source commit match. No unmanaged files exist apart from explicit runtime caches such as `__pycache__`,pytest/Ruff state,and deployment identity metadata. Pass `-SourceRoot` explicitly as above with Windows PowerShell5.1 to avoid an empty default PSScriptRoot during parameter binding; PowerShell7 accepts the same command. Ray's working directory is under system temp,not the node source tree. Regular users may clone into custom_nodes/raylight as described below; the single-source layout is this machine's development/deployment policy.
 
 Raw local logs, telemetry, contact sheets, and other evidence excluded from Git are consolidated under `.local/artifacts` in the canonical worktree; `.local` is Git-ignored. Maintainable conclusions, plans, and compact test summaries remain under `docs`.
 
