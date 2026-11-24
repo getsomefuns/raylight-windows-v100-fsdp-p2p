@@ -420,7 +420,7 @@ The tool materializes the immutable Git `HEAD` archive (never uncommitted worktr
   -VerifyOnly
 ```
 
-`DEPLOYMENT_VERIFIED` means every managed file and the recorded source commit match. No unmanaged files exist apart from explicit runtime caches such as `__pycache__`,pytest/Ruff state,and deployment identity metadata. Pass `-SourceRoot` explicitly as above with Windows PowerShell5.1 to avoid an empty default PSScriptRoot during parameter binding; PowerShell7 accepts the same command. Ray's working directory is under system temp,not the node source tree. Regular users may clone into custom_nodes/raylight as described below; the single-source layout is this machine's development/deployment policy.
+`DEPLOYMENT_VERIFIED` means every managed file and the recorded source commit match. No unmanaged files exist apart from explicit runtime caches such as `__pycache__`,pytest/Ruff state,and deployment identity metadata. Development deployment/verification uses PowerShell7 and an explicit SourceRoot as above; this does not certify Windows PowerShell5.1 children inheriting another host's module paths. Normal ComfyUI startup is unchanged. Ray's working directory is under system temp,not the node source tree. Regular users may clone into custom_nodes/raylight as described below; the single-source layout is this machine's development/deployment policy.
 
 Raw local logs, telemetry, contact sheets, and other evidence excluded from Git are consolidated under `.local/artifacts` in the canonical worktree; `.local` is Git-ignored. Maintainable conclusions, plans, and compact test summaries remain under `docs`.
 
