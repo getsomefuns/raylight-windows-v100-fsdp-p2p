@@ -8,6 +8,7 @@ import functools
 import importlib
 import time
 import statistics
+import uuid
 from collections import OrderedDict
 from datetime import timedelta
 from pathlib import Path
@@ -1147,48 +1148,72 @@ class RayWorker:
         torch.cuda.empty_cache()
         gc.collect()
 
-    def clear_sampling_vram(self):
+    def clear_sampling_vram(self, strict=False):
         """Release worker-side CUDA memory after a Ray sampling node finishes.
 
         Keep the ModelPatcher object alive so cached ComfyUI workflows can run
         the sampler again without requiring the Ray UNet loader node to rerun.
         """
         import comfy.model_management as comfy_model_management
+        cleanup_errors = []
 
         try:
             comfy_model_management.unload_all_models()
         except Exception as e:
             print(f"[Rank {self.local_rank}] unload_all_models failed in clear_sampling_vram: {e}")
+            cleanup_errors.append(f"unload_all_models: {e}")
 
         if self.model is not None:
             try:
                 self.model.unpatch_model(device_to=getattr(self.model, "offload_device", None))
             except Exception as e:
                 print(f"[Rank {self.local_rank}] model.unpatch_model() failed in clear_sampling_vram: {e}")
+                cleanup_errors.append(f"unpatch_model: {e}")
             try:
                 self.model.cleanup()
             except Exception as e:
                 print(f"[Rank {self.local_rank}] model.cleanup() failed in clear_sampling_vram: {e}")
+                cleanup_errors.append(f"model.cleanup: {e}")
 
         if self.cached_base_model is not None and self.cached_base_model is not self.model:
             try:
                 self.cached_base_model.cleanup()
             except Exception as e:
                 print(f"[Rank {self.local_rank}] cached model cleanup failed in clear_sampling_vram: {e}")
+                cleanup_errors.append(f"cached model cleanup: {e}")
 
         gc.collect()
         if torch.cuda.is_available():
             try:
                 torch.cuda.synchronize()
-            except Exception:
-                pass
+            except Exception as error:
+                cleanup_errors.append(f"cuda.synchronize: {error}")
             torch.cuda.empty_cache()
             try:
                 torch.cuda.ipc_collect()
-            except Exception:
-                pass
+            except Exception as error:
+                cleanup_errors.append(f"cuda.ipc_collect: {error}")
         comfy_model_management.soft_empty_cache()
+        if strict and cleanup_errors:
+            raise RuntimeError("Worker GPU cleanup failed: " + "; ".join(cleanup_errors))
         return True
+
+    def get_relay_vsr_identity(self):
+        from raylight.relayvsr.admission import identity_string
+        context = ray.get_runtime_context()
+        if not hasattr(self, "_relay_vsr_generation"):
+            self._relay_vsr_generation = uuid.uuid4().hex
+        return {"rank": int(self.local_rank), "actor_id": identity_string(context.get_actor_id()),
+                "job_id": identity_string(context.get_job_id()), "node_id": identity_string(context.get_node_id()),
+                "generation": self._relay_vsr_generation,
+                "gpu_uuid": str(torch.cuda.get_device_properties(self.device).uuid)}
+
+    def enter_relay_vsr_gpu_lease(self, operation_id, owner):
+        lease = self._gpu_lifecycle.acquire_external_lease(
+            operation_id, owner, cleanup=lambda: self.clear_sampling_vram(strict=True),
+            free_bytes=lambda: int(torch.cuda.mem_get_info(self.device)[0]),
+        )
+        return lease.to_mapping()
 
     def enter_external_gpu_lease(self, operation_id, owner):
         """Release worker CUDA residency and lease this rank to main-process TP2."""

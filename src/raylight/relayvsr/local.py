@@ -86,9 +86,10 @@ class _LocalPool:
 
 def release_local_pool():
     global _POOL
-    pool, _POOL = _POOL, None
+    pool = _POOL
     if pool is not None:
         pool.close()
+        _POOL = None
 
 
 def run_local_flash(vae_path, samples, images, detail, worker_count=2,
@@ -113,7 +114,9 @@ def run_local_flash(vae_path, samples, images, detail, worker_count=2,
         # and no lease is acquired by local threads. Refuse all connected Ray
         # sessions rather than risk foreign work, even on a kept pool's reuse.
         if ray.is_initialized():
-            raise RuntimeError("RelayVSR local decode requires ending the existing Ray session first")
+            from .admission import current_flash_authorization
+            if current_flash_authorization() is None:
+                raise RuntimeError("RelayVSR local decode requires ending the existing Ray session first or an owning Director GPU lease")
         admitted = True
         if prepare is not None:
             prepare()
