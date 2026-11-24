@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-1.19.0 迁移候选（2026-11-24）：新版官方核心的兼容修复、Director双卡RelayVSR及新旧完整单测已通过隔离验证；完整媒体与正式迁移／烟测正在收尾，尚未发布。保留既有FSDP/P2P、TP2、安全FP16及Director功能，不手改ComfyUI／Director源码。见[中文升级说明](docs/releases/2026-11-24-relayvsr-production-migration.zh-CN.md)和[实测报告](docs/reports/2026-11-24-relayvsr-production-migration.zh-CN.md)。
+1.19.0（2026-11-24）：已完成固定官方核心升级、Raylight兼容修复及Director双卡RelayVSR正式工作流验收，保留既有FSDP/P2P、TP2、安全FP16及Director功能。不手改ComfyUI／Director源码，旧环境可校验回滚副本保留。见[中文升级说明](docs/releases/2026-11-24-relayvsr-production-migration.zh-CN.md)和[实测报告](docs/reports/2026-11-24-relayvsr-production-migration.zh-CN.md)。
 
 1.18.5 修复压缩时间曲线模型的 BF16/FP16 时间表与 FP32 插值系数冲突。只将小型时间表临时转为 FP32，不改变模型主体精度或现有工作流。辅助张量核查、回归范围及使用说明见 [中文发布说明](docs/releases/2026-10-31-h3-adaln-curve-dtype.zh-CN.md)。
 
@@ -452,7 +452,7 @@ CPU offload 数据可能进入页面文件。页面文件可以推迟 OOM，但�
 | Ray | 2.57.0 |
 | xFuser | 0.4.5 |
 | yunchang | 0.6.4 |
-| ComfyUI | 0.46.0，固定官方提交 `2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884`；迁移状态见本次报告 |
+| ComfyUI | 0.46.0，固定官方提交 `2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884` |
 | 核心配套包 | kitchen 0.2.42 / aimdo 0.6.0 / frontend 1.59.11 |
 | Raylight 上游基线 | 1.9.0，提交 `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf` |
 | Diffusion Attention | Base 使用 `XFORMERS_MEMORY_EFFICIENT`；O12 可选 Sol-Attn V100；不安装 FlashAttention |

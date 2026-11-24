@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-1.19.0 migration candidate (2026-11-24): official-core compatibility,Director dual-V100 RelayVSR and complete old/new suites pass in isolation; full media and production activation/smoke are finishing,not yet released. Existing FSDP/P2P,TP2,safeFP16 and Director functions are retained without hand-editing core/Director source. See the [upgrade notes](docs/releases/2026-11-24-relayvsr-production-migration.en.md) and [measured report](docs/reports/2026-11-24-relayvsr-production-migration.en.md).
+1.19.0 (2026-11-24): the pinned official-core migration,Raylight compatibility and real production Director/dual-V100 RelayVSR workflows pass acceptance. Existing FSDP/P2P,TP2,safeFP16 and Director functions remain,without hand-edited core/Director source. Verified rollback copies are retained. See the [upgrade notes](docs/releases/2026-11-24-relayvsr-production-migration.en.md) and [measured report](docs/reports/2026-11-24-relayvsr-production-migration.en.md).
 
 Version 1.18.5 fixes BF16/FP16 curve-table interpolation with FP32 coefficients. Only the small time table is temporarily cast to FP32; model-wide precision and workflow wiring are unchanged. See the [release note](docs/releases/2026-10-31-h3-adaln-curve-dtype.en.md) for the auxiliary-tensor audit and regression scope.
 
@@ -388,7 +388,7 @@ The physical carrier-board or PCIe slot arrangement is not a software condition.
 | Ray | 2.57.0 |
 | xFuser | 0.4.5 |
 | yunchang | 0.6.4 |
-| ComfyUI | 0.46.0, pinned official `2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884`; migration status in the dated report |
+| ComfyUI | 0.46.0, pinned official `2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884` |
 | Core companions | kitchen0.2.42 / aimdo0.6.0 / frontend1.59.11 |
 | Diffusion attention | Base uses `XFORMERS_MEMORY_EFFICIENT`; O12 optionally uses Sol-Attn V100; no FlashAttention |
 

@@ -1,5 +1,5 @@
 # Companion pins for official ComfyUI 2fcb6ce (0.46.0).
-# Candidate validation profile; production migration acceptance is still pending.
+# Validated official-core/Director VSR migration profile, 2026-11-24.
 # Install the Torch 2.12/cu126 profile first; do not replace the NVIDIA driver.
 -r requirements-windows-v100-torch212.txt
 

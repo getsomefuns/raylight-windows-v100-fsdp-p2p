@@ -77,9 +77,9 @@ Task4 acceptance addendum: fresh31-frame1MP/x4 A/B/A controls identified the lau
 
 - [x] Test backup/restore logic with temporary fixtures; cover partial failure without touching user caches/media.
 - [x] Capture recoverable Python/packages/core/Director/Raylight/startup state and restore into a disposable isolation; verify hashes and original workflow.
-- [ ] Check production queue idle, stop only scoped server processes, update official core and exact dependencies, replay/preserve Director overlays and deploy accepted Raylight commit.
-- [ ] Smoke old Director and VSR in production, verify deployment hashes; on failure restore prior runtime immediately and report the failed gate.
-- [ ] Update bilingual installation/usage/version/test records; full regression status and safety review, then non-force GitHub push/version record as authorized. Keep recovery backups and original isolated VSR environment.
+- [x] Check production queue idle, stop only scoped server processes, update official core and exact dependencies, replay/preserve Director overlays and deploy accepted Raylight commit.
+- [x] Smoke old Director and VSR in production, verify deployment hashes; on failure restore prior runtime immediately and report the failed gate.
+- [x] Update bilingual installation/usage/version/test records; full regression status and safety review, then non-force GitHub push/version record as authorized. Keep recovery backups and original isolated VSR environment.
 
 ## 执行记录 / Execution record
 

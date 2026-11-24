@@ -1,6 +1,6 @@
 # Official-core migration / Director + dual-V100 RelayVSR regression
 
-Status: **isolated acceptance passed; production migration/smoke pending**. Date: 2026-11-24.
+Status: **isolated acceptance and production migration/workflow/media gates passed**. Date: 2026-11-24. Release1.19.0.
 Chinese: [中文](2026-11-24-relayvsr-production-migration.zh-CN.md).
 
 ## Purpose and controls
@@ -127,4 +127,17 @@ Additional retained trials: a private GPU probe initially imported before Raylig
 
 Final isolated gates passed:964new-core tests,950legacy tests/14genuinely unavailable native-interface skips,35subtests both,and5frontend tests. All six renewed VSR videos fully decode with their original240/120frames at24fps; raw480p/x2,1MP/x2/x4 are bitwise equal. The declared public UI parameters were verified through the actual frontend. Backup/live hashes match72,115runtime files and297user-state files. [Compact data attachment](data/2026-11-24-relayvsr-production-migration.json) contains timings,geometry,utilization,power and separate memory/commit/phase peaks without raw logs or user media.
 
-Still required: formal migration+both workflow smokes,final version documents and GitHub release. Production acceptance is not yet claimed.
+## Production activation and real smokes
+
+Official core2fcb6ce and ten exact companion wheels activated offline; all34official requirements pass. Torch2.12/cu126,driver577.00 and Director13eba63 overlays remain unchanged. All622candidate deployment files match the immutable7de3241 archive; later release commits change documentation/profile metadata only,with runtime tree unchanged from reviewed5eae991. Four VSR checkpoints were copied to the already mapped shared model store without overwrites. User workflows,segment caches,input media and previous outputs are preserved.
+
+| Normal-launcher functional smoke | Actual output at24fps | Total s | Conditioning s | H3 sample stage s | H3 decode s | VSR stage s | SaveVideo s |
+|---|---|---:|---:|---:|---:|---:|---:|
+|Original Director,no VSR|864×480,124f,5.1667s|353.221|42.1|233.1|15.9|—|6.318|
+|Public UI-derived Director+VSR|1728×960,56f,2.3333s|208.896|37.4|111.6|9.7|38.8|4.511|
+
+The second case actually logged four Flash windows/twoGPU workers,28.251s within the38.8s VSR stage. It reused the existing H3 actor pair; no second sample was hidden in the decoder. Both videos fully decode and retain alignedAAC(5.167/2.334s). First/middle/end contacts show normal nonblack output. These differently sized smokes are functional deployment evidence,**not** a matched old/new or with/without-VSR speed comparison. The353.221s normal-launcher cold run is higher than the earlier310.911s instrumented isolated control; do not claim a production-wide acceleration or substitute it for the separately paired experiment.
+
+Before shutdown idle GPU memory1138/1094MiB represented retained H3 contexts/staging,not Flash weights. The owned normal-launcher/server/Ray tree was stopped afterward. Expected optional KJTriton/TAE fallbacks remain; the pinned Torch allocator setter emits a deprecation warning but its live restore contract is verified. A headless PowerShell console-title warning is a private launch-host limitation,not a failed sample or video export. Full traces/media/backup manifests stay private; the public attachment contains allow-listed measurements only.
+
+Final release-metadata audit caught node `__version__` still1.18.5 versus package1.19.0. Added an AST/regex consistency regression (RED mismatch→GREEN),changed only that node version literal,and verified the entire entrypoint otherwise matches5eae991. Final full suites on production/new and genuinely restored/old Python/core are965passed(114.77s) and951passed/14native absences(151.96s),35subtests both. Earlier post-migration964/950counts precede that one added regression and remain historical evidence. No initial compatibility failure was hidden by a skip; final runtime algorithms/frontend scripts remain the reviewed ones.

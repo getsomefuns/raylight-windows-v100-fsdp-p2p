@@ -1,6 +1,6 @@
 # 1.19.0 — official-core compatibility and Director dual-V100 RelayVSR
 
-Status: isolated acceptance passed; production activation/smoke and GitHub release pending. This candidate record is not yet a completed production deployment.
+Status: isolated acceptance and official-core production migration passed. Both real production smoke workflows and complete frame/audio media checks pass; recoverable pre-migration copies remain available.
 
 ## Shipped scope
 
@@ -21,7 +21,7 @@ Detailed cases,failed trials,stage times,resource measurements and numerical sco
 - Matched864×480/124f/24fps5.1667s controls: old/new cold319.887/310.911s; warm241.586/234.263s. One pair is not a stable general speedup. Old/new H3 pixels differ (SSIM0.784984); no broad lossless/aesthetic-equivalence claim. Cold host memory increased; warm values are close.
 - Post-fix480×864/240f/24fps10s/x2 pure total112.913/112.084/111.362s; logged Flash71.371/71.357/71.278s. Median total+1.50%,Flash essentially unchanged versus the already optimized dual baseline, inside the original10% gate.
 - Reviewed-code three-segment VSR/continuity,stale-final rejection before sampling and same-settings selective rerun pass. Native minimum/keep-tail produces141frames24fps5.875s; the cold functional run overlapped recovery copying and is not a matched speed comparison.
-- Complete240frame480p/x2 and120frame1MP/x2/x4 raw outputs are finiteFP32 and bitwise identical to independent official same-latent Flash. Post-fix1MP/x4 Flash538.205s versus historical534.571s; complete media checks pass. Serial new/old suites964/950passed,14legacy-native absences,35subtests both; frontend5passed.
+- Complete240frame480p/x2 and120frame1MP/x2/x4 raw outputs are finiteFP32 and bitwise identical to independent official same-latent Flash. Post-fix1MP/x4 Flash538.205s versus historical534.571s; complete media checks pass. Final serial new/old suites965/951passed,14legacy-native absences,35subtests both; frontend5passed. This includes an added node/package-version consistency test,RED1.18.5vs1.19.0→GREEN1.19.0; sampling/decoder code did not change.
 -72,115file recoverable runtime snapshot plus297file user-state snapshot. A newly restored old Python/core/all-node runtime and its actual Ray workers generated a valid124frame video. This is a real recovery rehearsal,not only a package list or untested copy.
 
 Native-reference diagnostic totals and memory include additional CPU/reference images,not pure production throughput. Whole-board NVML peaks are distinct from Torch allocated/reserved peaks; system commit is not physical RAM or measured paging traffic.
@@ -30,7 +30,9 @@ Native-reference diagnostic totals and memory include additional CPU/reference i
 
 Use the unchanged environment-root `start_raylight_p2p.ps1`,then load [Director + VSR UI example](../../example_workflows/Minimax_H3_Director_DualV100_RelayVSR.json). The tested candidate uses4GiB reserve; the launcher's default3GiB is not changed. Match x2/x4UNet and FlashVAE; example settings are fixed42,H3Turbo4/4steps,864×480/56f24fps,VSR1step/euler/simple/CFG1/denoise1/detail1. Models belong in diffusion_models/vae. See the bilingual README for full wiring and standalone usage.
 
-The migration upgrades official core and only exact offline companion wheels; it must not replace Torch,drivers,other ComfyUI environments,Director overlays,user media or segment caches. Verify the immutable Raylight deployment and run both an old Director workflow and the actual UI-derived VSR graph before release. Strong browser refresh is required after frontend upgrade.
+The completed migration upgrades only the pinned official core and ten exact offline companion wheels. Torch,drivers,other ComfyUI environments,Director overlays,user workflows/media and segment caches are preserved; four VSR checkpoint copies were added to the shared model directory without overwrites. All34official requirements and the immutable622file candidate deployment were verified. Strong browser refresh is required after frontend upgrade.
+
+Normal-launcher production smoke: original864×480/124f/24fps Director353.221s; public56frame/24fps Director+VSR208.896s,output1728×960. Both include real two-rank sampling,complete video and aligned AAC. The VSR case actually ran dual Flash; the unconnected case did not enter it. These different-sized functional smokes are not a speed comparison or an acceleration promise. Services/workers were stopped afterward; before shutdown the idle boards were1138/1094MiB,not retained Flash weights. See the report/data for all stage and resource values.
 
 Recovery backups and the ready old-runtime rehearsal are retained below `.local/backups/production-relayvsr-20261124` and `.local/environments/production-relayvsr-recovery-rehearsal`. Stop the owned server/workers before rollback; restore the recorded old core62b3c94,Python/dependencies and deployed nodec403c91 from these copies. Preserve failed state first. Do not blindly replace user workflows/media/caches; restore a changed database/configuration only if required. Keep the original standalone VSR isolation for manual reference.
 

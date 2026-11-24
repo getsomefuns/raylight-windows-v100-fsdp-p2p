@@ -1,6 +1,6 @@
 # RelayVSR production migration assessment / proposed design
 
-Date: 2026-11-24. Status: user approved route A and continuous development, with production migration and push conditional on acceptance. In progress; production has not been upgraded or deployed. See the dated implementation plan and local execution ledger.
+Date: 2026-11-24. Status: approved route A implemented; isolated and production workflow/media gates pass for1.19.0. Retain this pre-implementation assessment as history; current results are in the dated release/report and execution ledger.
 
 ## Goal and constraints
 
@@ -50,4 +50,4 @@ Vendoring the entire upstream model/detection/VAE stack into Raylight is not rec
 8. Before production changes, preserve core changes/untracked files, recoverable Python/dependency state, Director bundle/patches, Raylight deployment manifest and startup configuration. Rehearse rollback in isolation; do not touch user media/caches.
 9. Deploy the exact accepted commit only after queue shutdown and backup; verify hashes and dependencies, smoke-test old Director and VSR in production, update bilingual README/release/testing records and reproducible workflows, then sync GitHub under authorization. Never publish models, user media, logs or backups.
 
-Route A is approved and isolated development is in progress; production migration remains gated on full acceptance. See `../plans/2026-11-24-relayvsr-production-migration.md`. The original 14 failures and dependency table describe the pre-implementation baseline, not current results. Inventory found 15 installed node directories, superseding the historical count of 13. Keep the existing standalone VSR environment for manual checks/reference; it is not another Raylight source worktree.
+Route A was implemented after passing the specified gates; see `../plans/2026-11-24-relayvsr-production-migration.md` and the release/report for evidence. The14original failures and old dependency table describe the pre-implementation baseline,not current results. All15installed node directories and Director overlays were preserved. The original standalone VSR isolation and verified old recovery runtime remain for manual checks/rollback; neither is another editable Raylight source worktree.

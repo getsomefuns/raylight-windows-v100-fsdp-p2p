@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "date": "2026-11-24",
-  "status": "isolated acceptance passed; formal migration pending",
+  "status": "formal workflows passed; release1.19.0",
   "units": {
     "host": "GiB = 2**30 bytes",
     "gpu": "observed NVML MiB",
@@ -3133,6 +3133,196 @@
           "1": 335.67
         }
       }
+    },
+    {
+      "case": "formal-director",
+      "family": "formal-director",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 124,
+        "fps": 24,
+        "seconds": 5.166666666666667
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 353.221,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "c95ca7d42c4f0bb6ca03bed54cf0cc7165569e3ba43cd647a032d126120262c3",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 42.1,
+          "sampling_s": 233.1,
+          "decode_s": 15.9
+        }
+      ],
+      "node_timings": {
+        "4": {
+          "class_type": "VAELoader",
+          "seconds": 0.8459408
+        },
+        "3": {
+          "class_type": "VAELoader",
+          "seconds": 8.2351973
+        },
+        "13": {
+          "class_type": "RayInitializer",
+          "seconds": 37.400146
+        },
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.7467975
+        },
+        "12": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.0206627
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 4.1052271
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.3356236
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 295.1263242
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0194505
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0219602
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0203351
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0050976
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 6.3182208
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 53.8788,
+          "private_commit": 93.9461,
+          "system_ram_used": 68.783,
+          "system_commit": 117.2637,
+          "pagefile_used_estimate": 1.0924
+        },
+        "gpu_peak_mib": {
+          "0": 9223.0,
+          "1": 9201.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 353.93,
+          "1": 347.37
+        }
+      }
+    },
+    {
+      "case": "formal-public-vsr",
+      "family": "formal-director-vsr",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 1728,
+        "height": 960,
+        "frames": 56,
+        "fps": 24,
+        "seconds": 2.3333333333333335
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 208.896,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "f90143f2526e0299278c7a952d683b6f24a4398295b2b00935e12afde3ec2406",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 37.4,
+          "sampling_s": 111.6,
+          "decode_s": 9.7,
+          "vsr_s": 38.8
+        }
+      ],
+      "node_timings": {
+        "21": {
+          "class_type": "VAELoader",
+          "seconds": 0.3245162
+        },
+        "20": {
+          "class_type": "UNETLoader",
+          "seconds": 0.4321551
+        },
+        "22": {
+          "class_type": "MiniMaxH3DirectorRelayVSR",
+          "seconds": 0.0009993
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 203.5588718
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0185079
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0186988
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0175367
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0019947
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 4.5107856
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 49.877,
+          "private_commit": 68.3707,
+          "system_ram_used": 63.7198,
+          "system_commit": 91.2509,
+          "pagefile_used_estimate": 1.0922
+        },
+        "gpu_peak_mib": {
+          "0": 9311.0,
+          "1": 9289.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 307.11,
+          "1": 310.69
+        }
+      },
+      "flash_reported_seconds": [
+        28.251
+      ]
     }
   ],
   "negative_cache_check": {
@@ -3147,6 +3337,16 @@
     "user_state_files_verified": 297,
     "actual_restored_director_workflow_passed": true
   },
-  "runtime_code_identity": "5eae991; subsequent release commits change only documentation,profile metadata and the verified public UI defaults",
-  "coverage_note": "Representative existing H3 features and VSR; no new full LTX GPU campaign; historical missing monitor exit status is not invented"
+  "runtime_code_identity": "5eae991; subsequent changes are release metadata/tests,documentation and verified public UI defaults; node entry differs only in __version__",
+  "coverage_note": "Representative existing H3 features and VSR; no new full LTX GPU campaign; historical missing monitor exit status is not invented",
+  "final_release_tests": {
+    "new_core_passed": 965,
+    "legacy_core_passed": 951,
+    "legacy_native_absences": 14,
+    "subtests_each": 35,
+    "frontend_passed": 5,
+    "new_seconds": 114.77,
+    "legacy_seconds": 151.96,
+    "metadata_regression": "node/package version mismatch RED then1.19.0 GREEN; only node version literal changed"
+  }
 }

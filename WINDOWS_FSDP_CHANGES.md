@@ -6,6 +6,8 @@ The implementation is an experimental, inference-only compatibility layer for na
 
 ## FSDP2 data path
 
+Version1.19.0 also adapts official ComfyUI0.46.0 and adds scoped Director RelayVSR GPU ownership. Native VSR keyframe sampling stays single-GPU; only its exact FP32 Flash windows are parallelized in one process. This is separate from H3 FSDP/P2P and does not turn VSR into a sharded model. See the [bilingual migration release record](docs/releases/2026-11-24-relayvsr-production-migration.en.md) and [measured regression report](docs/reports/2026-11-24-relayvsr-production-migration.en.md).
+
 - Adds a CUDA IPC/P2P implementation for the `all_gather_into_tensor` operation used by PyTorch FSDP2 inference.
 - Retains the previous CUDA P2P `all_to_all_single` route used by Ulysses.
 - Chunks FSDP shards that exceed the persistent 128 MiB per-rank staging buffer.
