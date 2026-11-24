@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from datetime import datetime
 import hashlib
 import importlib.util
 import json
@@ -73,6 +74,35 @@ def require_executed_nodes(events, prompt, prompt_id):
 def resource_peaks(rows):
     keys = ('rss', 'private_commit', 'system_ram_used', 'system_commit', 'pagefile_used_estimate')
     return {key: max((row[key] for row in rows), default=None) for key in keys}
+
+
+def verify_telemetry(host_rows, gpu_lines, monitor_errors, *, execution_start_ns, execution_end_ns, gpu_exit_code):
+    if monitor_errors or gpu_exit_code != 0:
+        raise RuntimeError(f'Acceptance telemetry monitor failed: {monitor_errors}, GPU exit={gpu_exit_code}')
+    tolerance = 2 * 10**9
+    def coverage(stamps, label):
+        stamps=sorted(stamps)
+        if (len(stamps)<2 or stamps[0]>execution_start_ns+tolerance
+                or stamps[-1]<execution_end_ns-tolerance
+                or any(b-a>5*10**9 for a,b in zip(stamps,stamps[1:]))):
+            raise RuntimeError(f'Acceptance telemetry {label} coverage is incomplete')
+    if not host_rows or any(any(row.get(key) is None for key in resource_peaks([])) for row in host_rows):
+        raise RuntimeError('Acceptance telemetry host samples are missing')
+    coverage([row['time_ns'] for row in host_rows],'host')
+    gpu={0:[],1:[]}
+    for line in gpu_lines:
+        columns=line.strip().split(',')
+        try:
+            if len(columns)!=5:raise ValueError('GPU columns')
+            stamp=int(datetime.strptime(columns[0].strip(),'%Y/%m/%d %H:%M:%S.%f').timestamp()*10**9)
+            rank=int(columns[1])
+            for value in columns[2:]:float(value)
+            gpu[rank].append(stamp)
+        except (ValueError,KeyError,OSError) as error:
+            raise RuntimeError('Acceptance telemetry contains invalid GPU samples') from error
+    for rank,stamps in gpu.items():coverage(stamps,f'GPU {rank}')
+    return {'status':'passed','host_samples':len(host_rows),'gpu_samples':{str(k):len(v) for k,v in gpu.items()},
+            'nominal_interval_seconds':.5,'coverage_tolerance_seconds':2.,'maximum_allowed_gap_seconds':5.}
 
 
 def summarize_nodes(events, prompt, prompt_id):
@@ -192,7 +222,13 @@ def main(argv=None):
     dump('prompt.json', prompt)
     start_offset = args.log.stat().st_size
     stop = threading.Event()
-    monitor = threading.Thread(target=sample_resources, args=(args.server_pid, stop, args.output / 'resources.jsonl'))
+    monitor_errors=[]
+    def monitor_resources():
+        try:
+            sample_resources(args.server_pid,stop,args.output/'resources.jsonl')
+        except BaseException as error:
+            monitor_errors.append(f'{type(error).__name__}: {error}')
+    monitor = threading.Thread(target=monitor_resources)
     client = uuid.uuid4().hex
     connection = websocket.create_connection(f'ws://127.0.0.1:{args.port}/ws?clientId={client}', suppress_origin=True, timeout=1)
     counts = {}
@@ -206,6 +242,10 @@ def main(argv=None):
     events, errors = [], []
     receiver = threading.Thread(target=base.receive_node_events, args=(connection, stop, events, errors))
     started = time.perf_counter()
+    workflow_checks_passed=False
+    record=None
+    result=None
+    gpu_health=None
     monitor.start()
     receiver.start()
     try:
@@ -231,17 +271,23 @@ def main(argv=None):
                             handle.seek(start_offset)
                             log = handle.read().decode('utf-8', errors='replace')
                         (args.output / 'server.log').write_text(log, encoding='utf-8')
-                        dump('result.json', {'observed_seconds': observed_seconds, 'execution_seconds': execution_seconds(record),
+                        result={'observed_seconds': observed_seconds, 'execution_seconds': execution_seconds(record),
                             'prompt_id': prompt_id, 'director_stages': director_stages(record),
                             'prompt_sha256': digest, 'node_timings': summarize_nodes(events, prompt, prompt_id),
-                            'status': record.get('status'), 'minimum_gpu_operations': args.minimum_operations})
+                            'status': record.get('status'), 'workflow_status':record.get('status',{}).get('status_str'),
+                            'acceptance_status':'pending','minimum_gpu_operations': args.minimum_operations}
+                        dump('result.json',result)
                         verify_gpu_work(record, log, minimum_operations=args.minimum_operations, mode=mode)
                         require_executed_nodes(events, prompt, prompt_id)
+                        workflow_checks_passed=True
                         return 0
                     stop.wait(2)
                 raise TimeoutError('Case timeout; server is NOT automatically interrupted')
             finally:
-                smi.terminate()
+                gpu_health=smi.poll()
+                if gpu_health is None:
+                    gpu_health=0  # Expected controlled stop, not an early monitor exit.
+                    smi.terminate()
                 smi.wait(timeout=15)
     finally:
         stop.set()
@@ -251,8 +297,28 @@ def main(argv=None):
         dump('events.json', {'events': events, 'errors': errors})
         dump('socket-message-counts.json', counts)
         path = args.output / 'resources.jsonl'
+        host_rows=[]
         if path.exists():
-            dump('resource-peaks.json', resource_peaks([json.loads(line) for line in path.read_text().splitlines()]))
+            host_rows=[json.loads(line) for line in path.read_text().splitlines()]
+            dump('resource-peaks.json', resource_peaks(host_rows))
+        acceptance={'status':'failed','reason':'workflow/execution gate did not pass','monitor_errors':monitor_errors}
+        if workflow_checks_passed:
+            try:
+                stamps={kind:data['timestamp']*10**6 for kind,data in record['status']['messages']
+                        if kind in ('execution_start','execution_success')}
+                acceptance=verify_telemetry(host_rows,(args.output/'gpu.csv').read_text().splitlines(),monitor_errors,
+                    execution_start_ns=stamps['execution_start'],execution_end_ns=stamps['execution_success'],gpu_exit_code=gpu_health)
+            except BaseException as error:
+                acceptance.update(reason=str(error))
+                if result is not None:
+                    result['acceptance_status']='failed'
+                    dump('result.json',result)
+                dump('telemetry-acceptance.json',acceptance)
+                raise
+        if result is not None:
+            result['acceptance_status']=acceptance['status']
+            dump('result.json',result)
+        dump('telemetry-acceptance.json',acceptance)
 
 
 if __name__ == '__main__':

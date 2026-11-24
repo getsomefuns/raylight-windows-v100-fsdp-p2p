@@ -102,3 +102,16 @@ def test_preview_probe_counts_message_types_without_storing_image_payload():
     assert module.message_kind(b'\x00\x00\x00\x01private image bytes') == 'binary_1'
     assert module.message_kind('{"type":"progress","data":{"value":2}}') == 'progress'
     assert module.message_kind('not JSON') == 'invalid_json'
+
+
+def test_telemetry_gate_requires_both_gpus_host_health_and_execution_coverage():
+    from datetime import datetime
+    module=campaign()
+    verify=getattr(module,'verify_telemetry',None)
+    assert callable(verify),'Missing independent acceptance telemetry gate'
+    rows=[{'time_ns':(1700000000+n)*10**9,'rss':1,'private_commit':2,'system_ram_used':3,'system_commit':4,'pagefile_used_estimate':0} for n in (9,10,11,12,13)]
+    gpu=[datetime.fromtimestamp(1700000000+n).strftime('%Y/%m/%d %H:%M:%S.000')+f', {rank}, 500, 10, 50' for n in (9,10,11,12,13) for rank in (0,1)]
+    verify(rows,gpu,[],execution_start_ns=1700000010*10**9,execution_end_ns=1700000012*10**9,gpu_exit_code=0)
+    for host,device,errors,exit_code in [(rows,[],[],0),([],gpu,[],0),(rows,gpu,['monitor failed'],0),(rows,gpu,[],1),(rows,[r for r in gpu if ', 1,' not in r],[],0),(rows[:1],gpu,[],0)]:
+        with pytest.raises(RuntimeError,match='telemetry|monitor|coverage|GPU|host'):
+            verify(host,device,errors,execution_start_ns=1700000010*10**9,execution_end_ns=1700000012*10**9,gpu_exit_code=exit_code)

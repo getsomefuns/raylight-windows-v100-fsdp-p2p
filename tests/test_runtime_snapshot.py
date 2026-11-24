@@ -92,3 +92,50 @@ def test_snapshot_rechecks_all_files_before_publishing_complete_status(tmp_path,
     with pytest.raises(ValueError, match='integrity|hash'):
         tool.create_snapshot({'python': source}, tmp_path / 'backup')
     assert not (tmp_path / 'backup').exists()
+
+
+def test_unreadable_source_subtree_cannot_be_silently_omitted(tmp_path, monkeypatch):
+    tool=module()
+    source=tmp_path/'python'
+    source.mkdir()
+    blocked=source/'blocked'
+    blocked.mkdir()
+    (blocked/'required.dll').write_bytes(b'must be backed up')
+    scandir=tool.os.scandir
+    def deny_one_subtree(path):
+        if Path(path)==blocked:
+            raise PermissionError('unreadable source subtree')
+        return scandir(path)
+    monkeypatch.setattr(tool.os,'scandir',deny_one_subtree)
+    with pytest.raises(PermissionError,match='unreadable'):
+        tool.create_snapshot({'python':source},tmp_path/'backup')
+    assert not (tmp_path/'backup').exists()
+    assert (blocked/'required.dll').read_bytes()==b'must be backed up'
+
+
+def test_unreadable_source_root_cannot_publish_an_empty_component(tmp_path,monkeypatch):
+    tool=module()
+    source=tmp_path/'python'
+    source.mkdir()
+    original=tool.os.scandir
+    def deny(path):
+        if Path(path)==source:raise PermissionError('unreadable root')
+        return original(path)
+    monkeypatch.setattr(tool.os,'scandir',deny)
+    with pytest.raises(PermissionError,match='unreadable'):
+        tool.create_snapshot({'python':source},tmp_path/'backup')
+    assert not (tmp_path/'backup').exists()
+
+
+@pytest.mark.parametrize('linked_name',['manifest.json','unexpected-directory'])
+def test_verification_rejects_linked_manifest_or_unlisted_directory(tmp_path,monkeypatch,linked_name):
+    tool=module()
+    source=tmp_path/'setting.ps1'
+    source.write_text('original')
+    snapshot=tmp_path/'backup'
+    tool.create_snapshot({'launcher':source},snapshot)
+    if linked_name!='manifest.json':(snapshot/linked_name).mkdir()
+    original=tool._is_link
+    monkeypatch.setattr(tool,'_is_link',lambda path:Path(path)==snapshot/linked_name or original(path))
+    with pytest.raises(ValueError,match='[Ll]ink|junction'):
+        tool.verify_snapshot(snapshot)

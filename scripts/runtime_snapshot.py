@@ -52,7 +52,7 @@ def _source_files(component, source):
     if source.is_file():
         yield source, Path(source.name)
         return
-    for folder, directories, files in os.walk(source, followlinks=False):
+    for folder, directories, files in os.walk(source, followlinks=False, onerror=_walk_error):
         base = Path(folder)
         directories[:] = [name for name in directories if not _ignored(component, (base / name).relative_to(source))]
         for name in directories:
@@ -66,6 +66,10 @@ def _source_files(component, source):
             if _is_link(path):
                 raise ValueError(f'Capture this link separately; it will not be followed: {path}')
             yield path, relative
+
+
+def _walk_error(error):
+    raise error
 
 
 def _new_stage(destination):
@@ -117,6 +121,8 @@ def create_snapshot(components, destination):
 
 def verify_snapshot(snapshot):
     snapshot = Path(snapshot).resolve(strict=True)
+    if _is_link(snapshot / 'manifest.json'):
+        raise ValueError('Linked snapshot manifest is not a recovery record')
     try:
         manifest = json.loads((snapshot / 'manifest.json').read_text(encoding='utf-8'))
     except (OSError, ValueError) as error:
@@ -131,7 +137,12 @@ def verify_snapshot(snapshot):
                 or not path.is_file() or path.stat().st_size != row['bytes'] or digest(path) != row['sha256']):
             raise ValueError(f'Snapshot integrity/hash failure: {relative}')
         expected.add(relative.as_posix())
-    actual = {path.relative_to(snapshot).as_posix() for path in snapshot.rglob('*') if path.is_file()}
+    actual = set()
+    for folder, directories, files in os.walk(snapshot, followlinks=False, onerror=_walk_error):
+        for name in directories + files:
+            if _is_link(Path(folder) / name):
+                raise ValueError('Unexpected link/junction in recovery snapshot')
+        actual.update((Path(folder) / name).relative_to(snapshot).as_posix() for name in files)
     if len(expected) != manifest['file_count'] or actual != expected | {'manifest.json'}:
         raise ValueError('Snapshot integrity inventory differs from manifest')
     return manifest
