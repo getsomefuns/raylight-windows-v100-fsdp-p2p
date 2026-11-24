@@ -123,3 +123,17 @@ def test_native_sampler_receives_all_configured_parameters(pipeline, monkeypatch
         return (latent,)
     monkeypatch.setattr(nodes, "common_ksampler", sample)
     assert bridge._sample_relay_vsr(torch.zeros(1, 64, 64, 3), pack) is latent
+
+
+def test_zero_vsr_knobs_do_not_collide_with_one_in_ray_final_fingerprints():
+    bridge = module()
+    # The current upstream uses `value or 1`, so its legal zero settings collide.
+    original = lambda plan: {'vsr': True, 'vsr_cfg': 1., 'vsr_denoise': 1., 'vsr_detail': 1.}
+    wrapped = bridge.make_fingerprint_wrapper(original)
+    plan = SimpleNamespace(vsr={'enabled': True, 'cfg': 0., 'denoise': 0., 'detail': 0.})
+    assert wrapped(plan) == original(plan)  # Native Director remains unchanged.
+    marker = bridge._ACTIVE.set((object(), object()))
+    try:
+        assert wrapped(plan) == {'vsr': True, 'vsr_cfg': 0., 'vsr_denoise': 0., 'vsr_detail': 0.}
+    finally:
+        bridge._ACTIVE.reset(marker)

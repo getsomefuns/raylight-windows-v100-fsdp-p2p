@@ -21,8 +21,10 @@ _LOG = logging.getLogger(__name__)
 _ACTIVE = ContextVar("raylight_director_vsr_workers", default=None)
 _EXECUTE_MARKER = "_raylight_director_vsr_execute"
 _SAMPLE_MARKER = "_raylight_director_vsr_sample"
+_FINGERPRINT_MARKER = "_raylight_director_vsr_fingerprint"
 _PATCHED_CLASSES = []
 _PATCHED_ALIASES = []
+_PATCHED_FINGERPRINTS = []
 
 
 def current_director_vsr_workers():
@@ -125,6 +127,24 @@ def make_relay_vsr_wrapper(original):
     return apply
 
 
+def make_fingerprint_wrapper(original):
+    @functools.wraps(original)
+    def fingerprint(plan):
+        result = original(plan)
+        if current_director_vsr_workers() is None or not result.get("vsr"):
+            return result
+        result = dict(result)
+        pack = plan.vsr
+        # Upstream `value or 1` folds the legal value zero into one. Preserve
+        # zeros only in our active Ray Director execution; leave native calls alone.
+        for name in ("cfg", "denoise", "detail"):
+            value = pack.get(name)
+            result[f"vsr_{name}"] = round(float(1. if value is None else value), 4)
+        return result
+    setattr(fingerprint, _FINGERPRINT_MARKER, True)
+    return fingerprint
+
+
 def install_mmh3director_relay_vsr_bridge(*, require_director=False):
     from .vae_decode import _find_director_classes
     changed = False
@@ -139,6 +159,15 @@ def install_mmh3director_relay_vsr_bridge(*, require_director=False):
             if error.name and (error.name.endswith("relay_vsr") or error.name.endswith("relay_vsr.sample")):
                 continue
             raise
+        pack_module = importlib.import_module(f"{root}.director.relay_vsr.pack")
+        original_fingerprint = pack_module.relay_vsr_fingerprint
+        if not getattr(original_fingerprint, _FINGERPRINT_MARKER, False):
+            if tuple(inspect.signature(original_fingerprint).parameters) != ("plan",):
+                raise RuntimeError("Unvalidated Director RelayVSR fingerprint contract")
+            wrapped_fingerprint = make_fingerprint_wrapper(original_fingerprint)
+            pack_module.relay_vsr_fingerprint = wrapped_fingerprint
+            _PATCHED_FINGERPRINTS.append((pack_module, original_fingerprint, wrapped_fingerprint))
+            changed = True
         original = sample_module.apply_segment_relay_vsr
         if not getattr(original, _SAMPLE_MARKER, False):
             if tuple(inspect.signature(original).parameters) != ("frames", "pack"):
@@ -167,3 +196,7 @@ def uninstall_mmh3director_relay_vsr_bridge_for_test():
         if getattr(module, "apply_segment_relay_vsr", None) is wrapped:
             module.apply_segment_relay_vsr = original
     _PATCHED_ALIASES.clear()
+    for module, original, wrapped in reversed(_PATCHED_FINGERPRINTS):
+        if module.relay_vsr_fingerprint is wrapped:
+            module.relay_vsr_fingerprint = original
+    _PATCHED_FINGERPRINTS.clear()
