@@ -94,16 +94,18 @@ def _checkpoint_scale(vae_path):
 def _runtime_env(tmpdir):
     import raylight
     import folder_paths
-    from raylight.nodes import _build_local_runtime_env
     root = Path(folder_paths.__file__).resolve().parent
-    work = tmpdir/"runtime-env"
-    work.mkdir(parents=True, exist_ok=True)
-    env = _build_local_runtime_env(Path(raylight.__file__).resolve().parent, root, work)
-    env["env_vars"].update({
+    source = Path(raylight.__file__).resolve().parent.parent
+    paths = [str(root), str(source)]
+    paths.extend(p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p)
+    # All actors are local. Actor runtime_env cannot upload py_modules or a
+    # working_dir from disk; use the same immutable deployed source via PATH.
+    return {"env_vars": {
+        "PYTHONPATH": os.pathsep.join(dict.fromkeys(paths)),
+        "COMFYUI_BASE_DIRECTORY": str(root),
         "RAY_TMPDIR": str(tmpdir), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
         "PYTHONDONTWRITEBYTECODE": "1",
-    })
-    return env
+    }}
 
 
 class _FlashPool:

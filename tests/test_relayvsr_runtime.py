@@ -189,3 +189,15 @@ def test_owned_pool_never_shuts_down_cluster_with_another_actor(monkeypatch):
     pool.close()
     assert events == ["kill"]
 
+
+def test_actor_runtime_environment_accepts_local_shared_source(tmp_path):
+    from ray._private.utils import parse_runtime_env_for_task_or_actor
+    runtime = load_runtime()
+    env = runtime._runtime_env(tmp_path)
+    try:
+        validated = parse_runtime_env_for_task_or_actor(env)
+    except ValueError as error:
+        pytest.fail(f"Actor environment illegally uploads a local directory: {error}")
+    assert "env_vars" in validated
+    assert "PYTHONPATH" in validated["env_vars"]
+
