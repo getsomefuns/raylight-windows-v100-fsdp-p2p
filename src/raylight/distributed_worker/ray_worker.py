@@ -1822,6 +1822,20 @@ class RayWorker:
         self.vae_model = vae_model
         self._cached_vae_path = vae_path
 
+    @worker_gpu_activity("sampling")
+    def ray_relayvsr_decode_window(self, vae_path, latents, images, detail, job):
+        from raylight.relayvsr.worker import decode_cached_window
+        previous_scope = getattr(self, "_raylight_unilateral_aux_model_load", False)
+        self._raylight_unilateral_aux_model_load = True
+        try:
+            return decode_cached_window(self, vae_path, latents, images, detail, job)
+        finally:
+            self._raylight_unilateral_aux_model_load = previous_scope
+
+    def free_relayvsr_vae(self):
+        from raylight.relayvsr.worker import release_cached_decoder
+        release_cached_decoder(self)
+
     def start_mmh3_vae_preload(self, vae_path):
         preloader = getattr(self, "_vae_preloader", None)
         if preloader is None:
