@@ -28,43 +28,43 @@
 **Files:** `src/raylight/diffusion_models/minimax/core_compat.py` (new focused helpers), `xdit_context_parallel.py`, `tests/test_minimax_core_compat.py`, existing AdaLN/parallel tests.
 **Interfaces:** layout builder accepts payload including optional frame_count; modulation builder returns timestep values, packed modulation segments and final video/audio row indices. Rows can be integers or per-token LongTensors; split/projection consumers must support both.
 
-- [ ] Reproduce 14 failures on existing isolated new core; preserve log and full traceback.
-- [ ] Add real numerical/mask, rank-split and per-row projection regressions; observe RED.
-- [ ] Implement signature-aware layout construction and full native mask/modulation semantics in our code while retaining FP32 curve interpolation and existing memory-saving split/projection.
-- [ ] Run old and new full suites, not just focused files. Expected: no unexplained failures; legacy-native feature absences explicitly reported.
-- [ ] Create `.local/environments/production-relayvsr-candidate` from pinned official core and overlay dependencies; copy installed custom nodes excluding user data and deploy only committed Raylight. Preserve Director overlays. Record exact manifests and all import failures.
-- [ ] Commit compatibility with its tests, record task completion only after verification.
+- [x] Reproduce 14 failures on existing isolated new core; preserve log and full traceback.
+- [x] Add real numerical/mask, rank-split and per-row projection regressions; observe RED.
+- [x] Implement signature-aware layout construction and full native mask/modulation semantics in our code while retaining FP32 curve interpolation and existing memory-saving split/projection.
+- [x] Run old and new full suites, not just focused files. Expected: no unexplained failures; legacy-native feature absences explicitly reported.
+- [x] Create `.local/environments/production-relayvsr-candidate` from pinned official core and overlay dependencies; copy installed custom nodes excluding user data and deploy only committed Raylight. Preserve Director overlays. Record exact manifests and all import failures.
+- [x] Commit compatibility with its tests, record task completion only after verification.
 
 ### Task 2: Scoped GPU ownership for local VSR
 
 **Files:** `src/raylight/relayvsr/local.py`, `admission.py` (new), worker lease boundaries as required, `tests/test_relayvsr_admission.py`.
 **Interfaces:** a context-managed authorized lease applies only to current driver/session/generation and both validated physical GPUs; standalone no-Ray admission remains supported. Unknown sessions remain refused. Cleanup occurs before release.
 
-- [ ] RED tests for active foreign Ray, partial acquisition, wrong device identity, cleanup failure, cancellation and next-operation reuse.
-- [ ] Reuse worker lease coordination with actual post-cleanup verification, not a boolean bypass of is_initialized. Keep model/cache objects and actor lifetime.
-- [ ] GREEN focused tests and both full suites; commit and ledger.
+- [x] RED tests for active foreign Ray, partial acquisition, wrong device identity, cleanup failure, cancellation and next-operation reuse.
+- [x] Reuse worker lease coordination with actual post-cleanup verification, not a boolean bypass of is_initialized. Keep model/cache objects and actor lifetime.
+- [x] GREEN focused tests and both full suites; commit and ledger.
 
 ### Task 3: Director VSR bridge and cache safety
 
 **Files:** `src/raylight/integrations/mmh3director/relay_vsr.py` (new), integration install/context boundaries, tests `test_mmh3director_relay_vsr.py` and cache characterization fixtures.
 **Interfaces:** wrap only `apply_segment_relay_vsr(frames, pack)` inside an active Ray MODEL Director context; forward all pack parameters; use native conditioning/sampling and local dual Flash; restore GPU ownership in finally.
 
-- [ ] RED tests for no context/unconnected passthrough, exact pack forwarding, x2/x4 mismatch, frame count, audio passthrough, cancellation and cleanup order.
-- [ ] Add scoped hook including loaded aliases; unknown contracts fail explicitly. Do not globally replace all VAE decodes or discard Ray/Director caches.
-- [ ] Characterize first/final cache fingerprints and metadata inspection against current Director. Fix relevant compatibility in our integration only; document inability rather than claiming a false cache match.
-- [ ] GREEN focused + complete old/new suites; commit and ledger.
+- [x] RED tests for no context/unconnected passthrough, exact pack forwarding, x2/x4 mismatch, frame count, audio passthrough, cancellation and cleanup order.
+- [x] Add scoped hook including loaded aliases; unknown contracts fail explicitly. Do not globally replace all VAE decodes or discard Ray/Director caches.
+- [x] Characterize first/final cache fingerprints and metadata inspection against current Director. Fix relevant compatibility in our integration only; document inability rather than claiming a false cache match.
+- [x] GREEN focused + complete old/new suites; commit and ledger.
 
 ### Task 4: Workflow/resource acceptance
 
 **Files:** maintained workflow fixtures under `example_workflows`, campaign driver under `scripts/minimax-h3/`, public compact data/report under `docs/reports`; private inputs/logs/videos under `.local/artifacts/relayvsr-production-migration-20261124`.
 **Interfaces:** actual ComfyUI workflow API graphs; 500ms whole-GPU and host resource traces; complete frame/audio validation and stage timings.
 
-- [ ] Test campaign validation RED→GREEN before running graphs; refuse altered seeds/cached sampler outputs being reported as warm GPU work.
-- [ ] Baseline production-version old graphs in isolation; candidate old H3 non-Director and FL2VA/Ref2VA 4/8-step, TP2, LoRA/segment LoRA, SelfLift, Refine, FaceRefine, dual H3 VAE, silent/normal output and preview.
-- [ ] At least three Director segments with VSR and selective cache rerun; verify H3→VSR→H3, cache correctness and idle cleanup.
-- [ ] Standalone 480p/10s/x2 three matched runs, 1MP/5s/x2/x4; all-frame exact Flash reference, media integrity and resource records. Existing reference Flash/total=71.363/110.428s; median regression ≤10%. Investigate old graph regressions >5%.
-- [ ] Full suite and independent whole-change Python/code review; fix important findings RED→GREEN. No production migration if any required gate remains unmet.
-- [ ] Commit acceptance fixtures/reports, not media, credentials, absolute machine paths or full logs.
+- [x] Test campaign validation RED→GREEN before running graphs; refuse altered seeds/cached sampler outputs being reported as warm GPU work.
+- [x] Baseline production-version old graphs in isolation; candidate old H3 non-Director and FL2VA/Ref2VA 4/8-step, TP2, LoRA/segment LoRA, SelfLift, Refine, FaceRefine, dual H3 VAE, silent/normal output and preview.
+- [x] At least three Director segments with VSR and selective cache rerun; verify H3→VSR→H3, cache correctness and idle cleanup.
+- [x] Standalone 480p/10s/x2 three matched runs, 1MP/5s/x2/x4; all-frame exact Flash reference, media integrity and resource records. Existing reference Flash/total=71.363/110.428s; median regression ≤10%. Investigate old graph regressions >5%.
+- [x] Full suite and independent whole-change Python/code review; fix important findings RED→GREEN. No production migration if any required gate remains unmet.
+- [x] Commit acceptance fixtures/reports, not media, credentials, absolute machine paths or full logs.
 
 Task4 acceptance addendum: fresh31-frame1MP/x4 A/B/A controls identified the launcher's `max_split_size_mb:128` allocator policy, not the independent128MiB P2P staging capacity. Allocated Flash peak stays about6.08GB, while reserved memory grows from7.67GB to16.60GB and windows slow. Add a Raylight-only, reentrant VSR allocator scope: read live native settings, temporarily remove only max_split_size_mb during native VSR sampling/Flash, restore and verify the original settings on success/failure before H3 reuse; quarantine on unprovable restoration. Preserve all other allocator options, H3 worker configuration, precision and P2P capacity. RED→GREEN unit/routing tests, native API restoration probe, full suites, actual integrated/cache regressions and full raw/performance verification remain required. This is a root-cause fix to Task4, not an unconditional global startup change.
 
@@ -75,8 +75,8 @@ Task4 acceptance addendum: fresh31-frame1MP/x4 A/B/A controls identified the lau
 **Files:** `scripts/` migration/rollback helpers with tests if newly needed, README.md/README.zh-CN.md as present, CHANGELOG and bilingual release notes; private verified backups below `.local/backups/production-relayvsr-20261124`.
 **Interfaces:** accepted source commit/core/dependency manifest; immutable backup manifest and rehearsed rollback commands.
 
-- [ ] Test backup/restore logic with temporary fixtures; cover partial failure without touching user caches/media.
-- [ ] Capture recoverable Python/packages/core/Director/Raylight/startup state and restore into a disposable isolation; verify hashes and original workflow.
+- [x] Test backup/restore logic with temporary fixtures; cover partial failure without touching user caches/media.
+- [x] Capture recoverable Python/packages/core/Director/Raylight/startup state and restore into a disposable isolation; verify hashes and original workflow.
 - [ ] Check production queue idle, stop only scoped server processes, update official core and exact dependencies, replay/preserve Director overlays and deploy accepted Raylight commit.
 - [ ] Smoke old Director and VSR in production, verify deployment hashes; on failure restore prior runtime immediately and report the failed gate.
 - [ ] Update bilingual installation/usage/version/test records; full regression status and safety review, then non-force GitHub push/version record as authorized. Keep recovery backups and original isolated VSR environment.

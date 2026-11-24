@@ -1,5 +1,7 @@
 # Unreleased: isolated dual-V100 RelayVSR Flash preview
 
+Historical isolated-preview record. Its production/core limitations describe that earlier experiment; see the [subsequent migration record](2026-11-24-relayvsr-production-migration.en.md) for current status.
+
 Isolation only. Production ComfyUI/Python/Director/deployed nodes remain unchanged. No GitHub push
 or production version bump.
 

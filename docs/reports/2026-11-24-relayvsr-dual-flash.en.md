@@ -139,6 +139,8 @@ The URI failure and interrupted spilling experiment are not counted as successfu
 
 ## Regression scope
 
+Historical pre-migration results below, not current compatibility status. The [subsequent migration report](2026-11-24-relayvsr-production-migration.en.md) tracks the14new-core failures and integrated Director acceptance separately.
+
 Production-core baseline:830passed. Final review fixes:869passed,11skipped because old core
 has no native RelayVSR. The isolated new core already had14 failures before this work:
 13 MiniMax AdaLN PackedLayout(frame_count) API mismatches and1 USP signature mismatch involving

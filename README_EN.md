@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-2026-11-24: Local Director updated to `aff2579` with cache/tail/tracking overlays retained. The installed core lacks RelayVSR, and Pika is not generation-validated. **An updated node is not full feature support.** See the [compatibility and patch-maintenance report](docs/releases/2026-11-24-director-aff2579-compatibility.en.md).
+1.19.0 migration candidate (2026-11-24): official-core compatibility,Director dual-V100 RelayVSR and complete old/new suites pass in isolation; full media and production activation/smoke are finishing,not yet released. Existing FSDP/P2P,TP2,safeFP16 and Director functions are retained without hand-editing core/Director source. See the [upgrade notes](docs/releases/2026-11-24-relayvsr-production-migration.en.md) and [measured report](docs/reports/2026-11-24-relayvsr-production-migration.en.md).
 
 Version 1.18.5 fixes BF16/FP16 curve-table interpolation with FP32 coefficients. Only the small time table is temporarily cast to FP32; model-wide precision and workflow wiring are unchanged. See the [release note](docs/releases/2026-10-31-h3-adaln-curve-dtype.en.md) for the auxiliary-tensor audit and regression scope.
 
@@ -59,7 +59,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.18.5; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.19.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
@@ -117,32 +117,54 @@ It does not:
 - shard every model or every ComfyUI node;
 - support GGUF with FSDP, training/backward collectives, multi-node execution, or arbitrary GPU counts.
 
-## RelayVSR dual-V100 Flash (isolated preview only)
+## RelayVSR dual-V100 Flash and Director integration
 
-`RelayVSR Flash Decode (Ray)` retains native single-GPU keyframe sampling and distributes exact
-FP32 Flash windows across two V100s in one process. It starts no Ray cluster, FSDP or NCCL;
-it does not turn two 16GB GPUs into one 32GB memory pool. Older H3/Director/LTX workflows remain unchanged.
+See the [migration report](docs/reports/2026-11-24-relayvsr-production-migration.en.md) for acceptance status.
+An official core with native RelayVSR is required: this migration pins ComfyUI `2fcb6ce` (0.46.0) and
+[companion dependencies](requirements-windows-v100-relayvsr.txt). Updating Raylight alone cannot add the backend to an older core.
 
-Three full 480x864/10s/240-frame/24fps/x2 workflows measure about 71s Flash and 109–110s total,
-against the faster single-GPU control133.272s/183.482s. All240 decoded output frames match native
-single-GPU pixels exactly, without reduced precision,size,steps or output-cache hits.
-See the [measured report](docs/reports/2026-11-24-relayvsr-dual-flash.en.md) and
-[unreleased notes](docs/releases/2026-11-24-relayvsr-flash-preview.en.md).
+Keyframe sampling remains native single-GPU; only Flash decoding windows run on two V100s in the same process, retaining the original FP32 mathematics.
+This is not VSR FSDP, NCCL or a transparent 32GB device. H3 sampling still uses this branch's dual-GPU FSDP/P2P.
 
-1. Use only the isolated ComfyUI with native RelayVSR support. Updating Raylight alone cannot add the missing backend to production's older core.
-2. Import the [silent benchmark API graph](example_workflows/RelayVSR_DualV100_Raylight.json) and select your own source video.
-3. Replace VAELoader+VSRDecode with the new node; wire KSampler samples and the same low-quality images. Match x2/x4 UNet and VAE.
-4. Use worker_count=2,keep_workers=false. No RayInitializer/USP; keep both CUDA devices visible.
+### Director: recommended compact workflow
 
-True retains this node's GPU model weights, always trimming idle scratch; false releases owned
-models by default. ComfyUI IMAGE caches and CUDA contexts are not owned by this decoder.
-Use false when switching workflows; after deliberate retention, end the cache or restart before FSDP.
-End an existing connected Ray session first; the node never kills a cluster for you.
-Only the isolated environment is deployed. Production is not upgraded or deployed.
-[English plan](docs/superpowers/plans/2026-11-24-relayvsr-dual-flash.en.md) /
-[Chinese plan](docs/superpowers/plans/2026-11-24-relayvsr-dual-flash.zh-CN.md).
+1. Keep the existing environment-root `start_raylight_p2p.ps1` entry point and both CUDA devices visible. Restart ComfyUI and hard-refresh the browser after updating.
+2. Load the [Director + dual-V100 VSR UI workflow](example_workflows/Minimax_H3_Director_DualV100_RelayVSR.json). Re-select your H3 model, encoder, VAEs, Turbo4 LoRA and upstream public example image `Minimax_H3_REF2VA_Raylight.jpg`.
+3. Wire `Ray MODEL Adapter (MMH3Director)` to Director's MODEL. Native `UNETLoader` loads `relayvsr_x2_lightx2v_int8_convrot.safetensors`; `VAELoader` loads `relayvsr_flash_vae_x2_fp32.safetensors`. Connect both to the author's `MiniMax H3 Director RelayVSR` settings node, then its VSR output to Director's `vsr` input.
+4. Put these models in `models/diffusion_models` and `models/vae`, including an already mapped shared model directory. For x4, change BOTH to `relayvsr_x4_int8_convrot.safetensors` and `relayvsr_flash_vae_x4_fp32.safetensors`; do not mix scales.
+5. First retain fixed seed42, H3 four steps with matching Turbo4 LoRA,864×480,24fps,56frames; VSR fixed42,one step,euler/simple,CFG/denoise/detail1. No extra standalone decoder or second RayInitializer is needed.
+
+Raylight acquires exclusive GPU leases from the existing two H3 workers, offloads inactive GPU residency, runs native VSR sampling and dual Flash, cleans up, then returns the GPUs to H3.
+It does not destroy Ray workers per segment or delete first-pass AV/segment caches. Flash GPU pools are released by default; ComfyUI image caches, H3 CPU caches and CUDA contexts may still occupy memory. Zero idle memory is not promised.
+Without a VSR connection, no VSR weights or these scoped actions are used.
+
+Changing VSR parameters or model/VAE sources invalidates old VSR finals for filling unselected segments. Refresh affected segments with consistent settings after a rejection.
+The upstream cache-status API lacks the full VSR pack, so the UI explicitly reports that the final VSR match is unverified, not a verified hit or corrupt cache.
+
+### Standalone upscale
+
+For an existing video, use the [silent benchmark API graph](example_workflows/RelayVSR_DualV100_Raylight.json): connect KSampler samples and the same low-quality images to `RelayVSR Flash Decode (Ray)`, choose the matching VAE,worker_count2,keep_workers=false.
+This route starts no Ray cluster and refuses an already connected Ray session rather than killing it. Normal Director workflows retaining H3 workers should use the integrated route above.
+True retention is only for repeated same-VSR workloads; end retention or restart before switching workflows. False is recommended.
+
+### Performance and boundaries
+
+After the fix, three480×864/10s/240frame/24fps/x2 full workflows take approximately111–113s, Flash about71.5s, matching the existing optimized dual-GPU baseline.
+The original single-GPU reference was about133.3s Flash/183.5s total; this historical VSR comparison is not a speedup promise for arbitrary Director workflows.
+Full raw-frame comparisons,1MP x2/x4,multi-segment caches,resource peaks and failed trials are in the [migration report](docs/reports/2026-11-24-relayvsr-production-migration.en.md); the [initial isolated report](docs/reports/2026-11-24-relayvsr-dual-flash.en.md) remains historical evidence.
+
+The launcher's max_split_size_mb128 policy previously doubled retained Flash memory at high resolution and slowed decoding. A VSR-only scope now temporarily removes that limit and verifies restoration after cleanup. H3 worker policy,precision and P2P staging budgets stay unchanged; no new launch option is required.
+Standalone scoping covers Flash only because its KSampler has already run; Director scopes both VSR sampling and Flash. Uncertain cleanup/restoration quarantines subsequent GPU work until restart.
+The128MiB P2P communication budget is a separate setting.
+
+Mind the phase: standalone480p Flash observes about6015/5989MiB, but the earlier native KSampler can still take the whole-run GPU0 peak to16209MiB. Flash peaks are not whole-workflow capacity. Director also scopes VSR sampling; use its integrated measurements rather than substituting standalone numbers.
+
+DynamicVRAM,PDD,multi-head decode and arbitrary third-party CUDA concurrency are not accepted here. Do not extrapolate to untested480p/10s/x4 or arbitrary long clips.
+Pika remains generation-unvalidated. See the bilingual release records for the tested environment,rollback and preserved functionality.
 
 ## O12 optional MiniMax H3 accelerators
+
+New-core compatibility: TE3.3's older whole-model forward cannot safely replace the updated H3 implementation. The Ray MODEL route instead calls TE's native residual controller inside the mask-aware USP/safe-FP16 loop; both ranks must agree before reuse. Omitting TE leaves it off. Cache hits alone do not prove stable end-to-end acceleration; see the1.19 migration report for the measured scope.
 
 O12 does not copy third-party algorithms into Raylight. External nodes patch a MODEL through their normal ComfyUI interface; Raylight serializes only their configuration and calls the installed node implementation inside both real workers.
 
@@ -366,10 +388,11 @@ The physical carrier-board or PCIe slot arrangement is not a software condition.
 | Ray | 2.57.0 |
 | xFuser | 0.4.5 |
 | yunchang | 0.6.4 |
-| ComfyUI | 0.31.0, commit `62b3c94bd45154f6486c7abf1b9efcacee96ea69` |
+| ComfyUI | 0.46.0, pinned official `2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884`; migration status in the dated report |
+| Core companions | kitchen0.2.42 / aimdo0.6.0 / frontend1.59.11 |
 | Diffusion attention | Base uses `XFORMERS_MEMORY_EFFICIENT`; O12 optionally uses Sol-Attn V100; no FlashAttention |
 
-See [environment-windows-v100.json](environment-windows-v100.json) and [requirements-windows-v100-torch212.txt](requirements-windows-v100-torch212.txt) for current machine-readable pins. [requirements-windows-v100.txt](requirements-windows-v100.txt) remains the Python310/Torch2.7 rollback profile.
+See [environment-windows-v100.json](environment-windows-v100.json) and [requirements-windows-v100-relayvsr.txt](requirements-windows-v100-relayvsr.txt) for the target profile, including Torch2.12 and the official-core companions. [requirements-windows-v100.txt](requirements-windows-v100.txt) remains the Python310/Torch2.7 rollback profile.
 
 ## Installation and use
 
@@ -414,9 +437,11 @@ cd <ComfyUI>\custom_nodes
 git clone `
   https://github.com/getsomefuns/raylight-windows-v100-fsdp-p2p.git raylight
 
-& $PY -m pip install -r .\raylight\requirements-windows-v100-torch212.txt
+& $PY -m pip install -r ..\requirements.txt -r .\raylight\requirements-windows-v100-relayvsr.txt
 & $PY -m pip install -e .\raylight
 ```
+
+This assumes a backed-up official ComfyUI pinned to `2fcb6ce`, not an unconditional update to an arbitrary latest core. The older0.31.0 core/companions are a rollback profile and cannot load native RelayVSR.
 
 The O12 V100 environment is `torch==2.12.0+cu126`, which retains `sm_70`; `2.7.0+cu126` is the rollback profile. The originally proposed Torch 2.8 Windows wheel fails the minimum Gloo transport probe and cannot provide this branch's control plane. Do not install FlashAttention or replace cu126 with cu128/cu130 builds intended for newer architectures.
 
@@ -814,7 +839,8 @@ raylight/
 │  ├─ releases/                          bilingual release and upgrade notes
 │  └─ superpowers/plans/                 O1-O8 plans and acceptance gates
 ├─ environment-windows-v100.json         machine-readable validation matrix
-├─ requirements-windows-v100-torch212.txt O12 preferred Windows V100 dependencies
+├─ requirements-windows-v100-torch212.txt O12 base Torch2.12 dependencies
+├─ requirements-windows-v100-relayvsr.txt 1.19 official-core and VSR companion pins
 ├─ requirements-windows-v100.txt         Python310/Torch2.7 rollback dependencies
 ├─ WINDOWS_P2P_CHANGES.md                previous-stage changes
 └─ WINDOWS_FSDP_CHANGES.md               current FSDP changes

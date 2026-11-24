@@ -1,5 +1,7 @@
 # RelayVSR 双 V100 Flash：隔离开发与实测
 
+本页保留最初隔离实验（含当时14项新核心兼容失败）；不是当前版本状态。后续修复与Director集成见[迁移报告](2026-11-24-relayvsr-production-migration.zh-CN.md)。
+
 日期：2026-11-24。状态：本轮隔离RelayVSR验收通过，不是正式环境升级或正式发布。
 
 ## 范围和方案

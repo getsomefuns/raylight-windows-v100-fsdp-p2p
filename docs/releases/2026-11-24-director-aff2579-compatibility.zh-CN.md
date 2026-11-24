@@ -1,5 +1,7 @@
 # 2026-11-24 Director aff2579 更新与兼容核查（非新功能完整验收）
 
+历史迁移前核查：下文旧核心缺少RelayVSR等结论属于当时状态，后续官方核心迁移及功能验收见[新记录](2026-11-24-relayvsr-production-migration.zh-CN.md)。
+
 ## 已完成
 
 - Director 官方基线从 `4c6245e` 更新到 `aff2579`：RelayVSR、素材组批量删除、大导演包导出线程池/素材去重/下载优化等；没有更换为第三方 Director Pro 分支。

@@ -1,0 +1,3152 @@
+{
+  "schema": 1,
+  "date": "2026-11-24",
+  "status": "isolated acceptance passed; formal migration pending",
+  "units": {
+    "host": "GiB = 2**30 bytes",
+    "gpu": "observed NVML MiB",
+    "timing": "seconds"
+  },
+  "measurement": "nominal500ms; whole-board peaks, process-tree RSS/private and system commit are distinct; RSS may double-count shared pages",
+  "cases": [
+    {
+      "case": "baseline-cold",
+      "family": "director",
+      "raylight_code_commit": "c403c91",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 124,
+        "fps": 24,
+        "seconds": 5.166666666666667
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 319.887,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "f03b834c73472578045033d7ececa95a3f6505a346522e396bc50e4d270c389a",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 40.4,
+          "sampling_s": 202.4,
+          "decode_s": 16.2
+        }
+      ],
+      "node_timings": {
+        "4": {
+          "class_type": "VAELoader",
+          "seconds": 1.2583245
+        },
+        "3": {
+          "class_type": "VAELoader",
+          "seconds": 6.8049431
+        },
+        "13": {
+          "class_type": "RayInitializer",
+          "seconds": 37.6815431
+        },
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.6268616
+        },
+        "12": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.0234227
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 3.5407003
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.3073489
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 263.6474387
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0141966
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0249425
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0223777
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.007945
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 5.9097339
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 52.0638,
+          "private_commit": 92.4564,
+          "system_ram_used": 64.8616,
+          "system_commit": 114.7857,
+          "pagefile_used_estimate": 1.449
+        },
+        "gpu_peak_mib": {
+          "0": 9223.0,
+          "1": 9201.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 355.76,
+          "1": 352.49
+        }
+      }
+    },
+    {
+      "case": "baseline-warm",
+      "family": "director",
+      "raylight_code_commit": "c403c91",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 124,
+        "fps": 24,
+        "seconds": 5.166666666666667
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 241.586,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "a1d3aa94f87ae9d16f803c9426dd5d528dff6a1641210a3976aacdf4b10359a2",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 37.3,
+          "sampling_s": 177.6,
+          "decode_s": 16.5
+        }
+      ],
+      "node_timings": {
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.7036358
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 0.0412482
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.1505205
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 234.8968373
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0340902
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0464352
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0144743
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0172477
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 5.6669627
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 43.9628,
+          "private_commit": 59.9382,
+          "system_ram_used": 56.2589,
+          "system_commit": 82.243,
+          "pagefile_used_estimate": 1.4488
+        },
+        "gpu_peak_mib": {
+          "0": 9311.0,
+          "1": 9289.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 355.8,
+          "1": 346.04
+        }
+      }
+    },
+    {
+      "case": "candidate-cold",
+      "family": "director",
+      "raylight_code_commit": "8bea335",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 124,
+        "fps": 24,
+        "seconds": 5.166666666666667
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 310.911,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "f03b834c73472578045033d7ececa95a3f6505a346522e396bc50e4d270c389a",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 41.4,
+          "sampling_s": 192.6,
+          "decode_s": 15.8
+        }
+      ],
+      "node_timings": {
+        "4": {
+          "class_type": "VAELoader",
+          "seconds": 0.6585827
+        },
+        "3": {
+          "class_type": "VAELoader",
+          "seconds": 6.0851952
+        },
+        "13": {
+          "class_type": "RayInitializer",
+          "seconds": 39.2787288
+        },
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.8430876
+        },
+        "12": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.0170909
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 3.6403153
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.3848608
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 253.6714671
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0338302
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0169556
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0517478
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.001999
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 6.2047328
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 57.28,
+          "private_commit": 96.1868,
+          "system_ram_used": 70.1095,
+          "system_commit": 118.5341,
+          "pagefile_used_estimate": 1.4486
+        },
+        "gpu_peak_mib": {
+          "0": 9223.0,
+          "1": 9201.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 353.93,
+          "1": 354.89
+        }
+      }
+    },
+    {
+      "case": "candidate-warm",
+      "family": "director",
+      "raylight_code_commit": "8bea335",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 124,
+        "fps": 24,
+        "seconds": 5.166666666666667
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 234.263,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "a1d3aa94f87ae9d16f803c9426dd5d528dff6a1641210a3976aacdf4b10359a2",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 38.8,
+          "sampling_s": 168.5,
+          "decode_s": 15.9
+        }
+      ],
+      "node_timings": {
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 1.0655236
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 0.0420615
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.1924536
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 226.8614425
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0175944
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0587047
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.039533
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0024261
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 5.9770882
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 43.9159,
+          "private_commit": 59.7743,
+          "system_ram_used": 56.2724,
+          "system_commit": 82.1009,
+          "pagefile_used_estimate": 1.4481
+        },
+        "gpu_peak_mib": {
+          "0": 9301.0,
+          "1": 9279.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 351.65,
+          "1": 349.85
+        }
+      }
+    },
+    {
+      "case": "ref2va4-features-first-r2",
+      "family": "director",
+      "raylight_code_commit": "4351a2d",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 56,
+        "fps": 24,
+        "seconds": 2.3333333333333335
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 247.265,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "e88e275b86f25bc6c707292095a30c4f9893ce040386dbc169e622f3db5878b0",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 41.0,
+          "sampling_s": 142.9,
+          "decode_s": 6.7
+        }
+      ],
+      "node_timings": {
+        "35": {
+          "class_type": "MiniMaxH3DirectorFaceRefine",
+          "seconds": 0.0350098
+        },
+        "32": {
+          "class_type": "MiniMaxH3DirectorSelfLift",
+          "seconds": 0.0
+        },
+        "4": {
+          "class_type": "VAELoader",
+          "seconds": 0.7737213
+        },
+        "3": {
+          "class_type": "VAELoader",
+          "seconds": 8.9948928
+        },
+        "12": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.0134038
+        },
+        "13": {
+          "class_type": "RayInitializer",
+          "seconds": 36.8565475
+        },
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.9121207
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 3.123693
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.1060602
+        },
+        "30": {
+          "class_type": "TESpeedMiniMaxH3",
+          "seconds": 0.0271345
+        },
+        "31": {
+          "class_type": "SolAttnV100",
+          "seconds": 0.127541
+        },
+        "33": {
+          "class_type": "BasicScheduler",
+          "seconds": 0.030881
+        },
+        "34": {
+          "class_type": "MiniMaxH3DirectorRefine",
+          "seconds": 0.2953297
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 195.8400113
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0422451
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0236109
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0334043
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0237361
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 0.0020195
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 55.4456,
+          "private_commit": 91.1556,
+          "system_ram_used": 67.3833,
+          "system_commit": 112.645,
+          "pagefile_used_estimate": 1.4463
+        },
+        "gpu_peak_mib": {
+          "0": 9133.0,
+          "1": 9109.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 304.44,
+          "1": 306.71
+        }
+      },
+      "final_export_intentionally_deferred": true
+    },
+    {
+      "case": "ref2va4-features-refine-r2",
+      "family": "director",
+      "raylight_code_commit": "4351a2d",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 56,
+        "fps": 24,
+        "seconds": 2.3333333333333335
+      },
+      "steps": 2,
+      "seed": 42,
+      "execution_seconds": 225.316,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "e88e275b86f25bc6c707292095a30c4f9893ce040386dbc169e622f3db5878b0",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 38.8,
+          "sampling_s": 54.2,
+          "decode_s": 8.9
+        }
+      ],
+      "node_timings": {
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 1.0416406
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 0.446743
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.1005214
+        },
+        "30": {
+          "class_type": "TESpeedMiniMaxH3",
+          "seconds": 0.0031245
+        },
+        "31": {
+          "class_type": "SolAttnV100",
+          "seconds": 0.0479234
+        },
+        "33": {
+          "class_type": "BasicScheduler",
+          "seconds": 0.0249757
+        },
+        "34": {
+          "class_type": "MiniMaxH3DirectorRefine",
+          "seconds": 0.1355729
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 221.3005272
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0263567
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0029972
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.046907
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0069918
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 2.106281
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 46.2678,
+          "private_commit": 62.5883,
+          "system_ram_used": 58.1305,
+          "system_commit": 84.5137,
+          "pagefile_used_estimate": 1.4463
+        },
+        "gpu_peak_mib": {
+          "0": 10369.0,
+          "1": 9357.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 306.28,
+          "1": 303.46
+        }
+      }
+    },
+    {
+      "case": "ref2va8-te-sol",
+      "family": "director",
+      "raylight_code_commit": "4351a2d",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 56,
+        "fps": 24,
+        "seconds": 2.3333333333333335
+      },
+      "steps": 8,
+      "seed": 42,
+      "execution_seconds": 278.432,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "27873634061309e64c7378e9b3861bd0f9a1ae587d3c9eb500715f8d8cc36b4a",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 39.2,
+          "sampling_s": 189.4,
+          "decode_s": 9.2
+        }
+      ],
+      "node_timings": {
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.9973834
+        },
+        "12": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.024983
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 32.1291712
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.0985808
+        },
+        "30": {
+          "class_type": "TESpeedMiniMaxH3",
+          "seconds": 0.0320003
+        },
+        "31": {
+          "class_type": "SolAttnV100",
+          "seconds": 0.1816034
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 242.0524132
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0466358
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0333687
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0270614
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0064153
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 2.7841722
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 58.695,
+          "private_commit": 98.5399,
+          "system_ram_used": 70.9971,
+          "system_commit": 120.5091,
+          "pagefile_used_estimate": 1.4442
+        },
+        "gpu_peak_mib": {
+          "0": 9561.0,
+          "1": 9443.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 299.28,
+          "1": 300.24
+        }
+      }
+    },
+    {
+      "case": "non-director-ref2va4",
+      "family": "xfuser",
+      "raylight_code_commit": "4351a2d",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 56,
+        "fps": 24,
+        "seconds": 2.3333333333333335
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 168.258,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "c2d506113aca544150f588e449e699f61a35e14c2f7eb58673aaf01fc22e674e",
+      "director_stages": [],
+      "node_timings": {
+        "132": {
+          "class_type": "PrimitiveFloat",
+          "seconds": 0.0
+        },
+        "131": {
+          "class_type": "ComfyMathExpression",
+          "seconds": 0.0009993
+        },
+        "115": {
+          "class_type": "ResolutionSelector",
+          "seconds": 0.0
+        },
+        "138": {
+          "class_type": "PrimitiveStringMultiline",
+          "seconds": 0.0015072
+        },
+        "139": {
+          "class_type": "LoadImage",
+          "seconds": 0.0020049
+        },
+        "128": {
+          "class_type": "CLIPLoader",
+          "seconds": 2.0470977
+        },
+        "136": {
+          "class_type": "MiniMaxH3ReferenceToVideo",
+          "seconds": 29.4843416
+        },
+        "156": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.0212136
+        },
+        "146": {
+          "class_type": "RayInitializer",
+          "seconds": 45.874864
+        },
+        "147": {
+          "class_type": "RayUNETLoader",
+          "seconds": 3.3069201
+        },
+        "149": {
+          "class_type": "RayBasicScheduler",
+          "seconds": 0.6246098
+        },
+        "150": {
+          "class_type": "KSamplerSelect",
+          "seconds": 0.0060032
+        },
+        "148": {
+          "class_type": "RayBasicGuider",
+          "seconds": 0.01615
+        },
+        "151": {
+          "class_type": "XFuserSamplerCustomAdvanced",
+          "seconds": 73.3737569
+        },
+        "121": {
+          "class_type": "VAEDecodeAudio",
+          "seconds": 0.5326528
+        },
+        "122": {
+          "class_type": "VAEDecode",
+          "seconds": 9.5636349
+        },
+        "130": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0035075
+        },
+        "92": {
+          "class_type": "SaveVideo",
+          "seconds": 2.8202402
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 75.2399,
+          "private_commit": 117.9065,
+          "system_ram_used": 87.7272,
+          "system_commit": 139.9535,
+          "pagefile_used_estimate": 1.4426
+        },
+        "gpu_peak_mib": {
+          "0": 13683.0,
+          "1": 3927.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 98.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 341.63,
+          "1": 344.92
+        }
+      }
+    },
+    {
+      "case": "fl2va4",
+      "family": "director",
+      "raylight_code_commit": "4351a2d",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 56,
+        "fps": 24,
+        "seconds": 2.3333333333333335
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 287.841,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "579eba516a5ac5ac49b8894391f036518efe8aca46659bcdf7bdd2f43433b268",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 56.8,
+          "sampling_s": 164.6,
+          "decode_s": 10.3
+        }
+      ],
+      "node_timings": {
+        "13": {
+          "class_type": "RayInitializer",
+          "seconds": 41.0476265
+        },
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.8716051
+        },
+        "12": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.0283897
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 4.3353759
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.8721596
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 237.510925
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0237907
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0223175
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0272673
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0029992
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 2.4356489
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 74.4476,
+          "private_commit": 113.7723,
+          "system_ram_used": 86.8339,
+          "system_commit": 135.7601,
+          "pagefile_used_estimate": 1.4426
+        },
+        "gpu_peak_mib": {
+          "0": 9781.0,
+          "1": 9447.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 313.8,
+          "1": 321.23
+        }
+      }
+    },
+    {
+      "case": "fl2va8",
+      "family": "director",
+      "raylight_code_commit": "4351a2d",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 56,
+        "fps": 24,
+        "seconds": 2.3333333333333335
+      },
+      "steps": 8,
+      "seed": 42,
+      "execution_seconds": 305.609,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "c02b5db8eaa69303a94b3f1791c22fc68941e72a13d1840ec5449488df8d83c3",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 54.4,
+          "sampling_s": 199.2,
+          "decode_s": 11.2
+        }
+      ],
+      "node_timings": {
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.4027402
+        },
+        "12": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.0266198
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 30.3613438
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.122829
+        },
+        "30": {
+          "class_type": "TESpeedMiniMaxH3",
+          "seconds": 0.0366218
+        },
+        "31": {
+          "class_type": "SolAttnV100",
+          "seconds": 0.6505856
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 270.7277375
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0512907
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0592043
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0019993
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.002999
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 2.6814491
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 72.4806,
+          "private_commit": 112.6773,
+          "system_ram_used": 84.6789,
+          "system_commit": 134.5293,
+          "pagefile_used_estimate": 1.4421
+        },
+        "gpu_peak_mib": {
+          "0": 9841.0,
+          "1": 9393.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 300.81,
+          "1": 307.11
+        }
+      }
+    },
+    {
+      "case": "director-vsr-select-second",
+      "family": "director-vsr",
+      "raylight_code_commit": "f2e67c2",
+      "output_geometry": {
+        "width": 1728,
+        "height": 960,
+        "frames": 192,
+        "fps": 24,
+        "seconds": 8.0
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 324.53,
+      "workflow_status": "success",
+      "acceptance_status": "historical health status not recorded; coverage audited",
+      "prompt_sha256": "24faa6a604e2837122e7dd32e484fc9599c3682cbd5963a35237b5d042bd27cd",
+      "director_stages": [
+        {
+          "segment": 2,
+          "conditioning_s": 49.2,
+          "sampling_s": 159.4,
+          "decode_s": 14.1,
+          "vsr_s": 48.2
+        }
+      ],
+      "node_timings": {
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 308.5191516
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0106958
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0280742
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0308067
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0026528
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 15.3154397
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 66.1856,
+          "private_commit": 84.1669,
+          "system_ram_used": 80.2873,
+          "system_commit": 112.6553,
+          "pagefile_used_estimate": 1.5115
+        },
+        "gpu_peak_mib": {
+          "0": 16201.0,
+          "1": 11895.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 350.98,
+          "1": 349.39
+        }
+      }
+    },
+    {
+      "case": "vsr-480-10s-x2-r1",
+      "family": "vsr",
+      "raylight_code_commit": "1844e5a",
+      "output_geometry": {
+        "width": 960,
+        "height": 1728,
+        "frames": 240,
+        "fps": 24,
+        "seconds": 10.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 116.007,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "04ebeb0879421d3890702df1fd122b20c2189ea42dc7cac5bac8fd667155f1e9",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0342134
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 7.7482347
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.6770493
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0407003
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 19.212917
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 71.6646825
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0030495
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.6262344
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 7.4487,
+          "private_commit": 10.7716,
+          "system_ram_used": 22.3327,
+          "system_commit": 30.0001,
+          "pagefile_used_estimate": 1.4411
+        },
+        "gpu_peak_mib": {
+          "0": 16161.0,
+          "1": 9303.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 322.88,
+          "1": 278.71
+        }
+      },
+      "flash_reported_seconds": [
+        71.469
+      ],
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 7.4487,
+          "private_commit": 10.7716,
+          "system_ram_used": 22.3327,
+          "system_commit": 30.0001,
+          "pagefile_used_estimate": 1.4411
+        },
+        "gpu_peak_mib": {
+          "0": 9325.0,
+          "1": 9303.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 268.1,
+          "1": 278.71
+        }
+      }
+    },
+    {
+      "case": "vsr-480-10s-x2-r2",
+      "family": "vsr",
+      "raylight_code_commit": "1844e5a",
+      "output_geometry": {
+        "width": 960,
+        "height": 1728,
+        "frames": 240,
+        "fps": 24,
+        "seconds": 10.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 114.807,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "6be53063d7ed0103cf8cdc1fb1d6183e33330c36c8ebb5be961942c29acb6cf6",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0012553
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 7.3953813
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.4365523
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0377054
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 18.5610496
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 71.4625852
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0001617
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.3579695
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 7.9108,
+          "private_commit": 10.8347,
+          "system_ram_used": 22.8089,
+          "system_commit": 30.0959,
+          "pagefile_used_estimate": 1.4407
+        },
+        "gpu_peak_mib": {
+          "0": 16209.0,
+          "1": 9307.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 334.21,
+          "1": 284.18
+        }
+      },
+      "flash_reported_seconds": [
+        71.311
+      ],
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 7.5076,
+          "private_commit": 10.8347,
+          "system_ram_used": 22.4355,
+          "system_commit": 30.0959,
+          "pagefile_used_estimate": 1.4406
+        },
+        "gpu_peak_mib": {
+          "0": 9309.0,
+          "1": 9307.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 276.57,
+          "1": 284.18
+        }
+      }
+    },
+    {
+      "case": "vsr-480-10s-x2-r3",
+      "family": "vsr",
+      "raylight_code_commit": "1844e5a",
+      "output_geometry": {
+        "width": 960,
+        "height": 1728,
+        "frames": 240,
+        "fps": 24,
+        "seconds": 10.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 113.15,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "787ea529f1479056e062ecd127df55810451db6d70bdb7d3098eb8c5dc8e2432",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0155233
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 8.1351366
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.4494401
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0349851
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 16.330508
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 71.5871798
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.598246
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 7.9931,
+          "private_commit": 10.8802,
+          "system_ram_used": 22.9719,
+          "system_commit": 30.0775,
+          "pagefile_used_estimate": 1.4402
+        },
+        "gpu_peak_mib": {
+          "0": 16209.0,
+          "1": 9307.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 326.18,
+          "1": 283.0
+        }
+      },
+      "flash_reported_seconds": [
+        71.426
+      ],
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 7.5598,
+          "private_commit": 10.8802,
+          "system_ram_used": 22.4506,
+          "system_commit": 30.0775,
+          "pagefile_used_estimate": 1.4402
+        },
+        "gpu_peak_mib": {
+          "0": 9309.0,
+          "1": 9307.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 280.48,
+          "1": 283.0
+        }
+      }
+    },
+    {
+      "case": "vsr-480-10s-x2-raw",
+      "family": "vsr-raw-diagnostic",
+      "raylight_code_commit": "1844e5a",
+      "output_geometry": {
+        "width": 960,
+        "height": 1728,
+        "frames": 240,
+        "fps": 24,
+        "seconds": 10.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 259.494,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "a3e01a45329e92d60cf39f348b48a526f52e2390ba4f7993104ea1304350049a",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.007995
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 7.849219
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.3962834
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0170888
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 17.061107
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 71.4954848
+        },
+        "11": {
+          "class_type": "MigrationVerifyRelayRaw",
+          "seconds": 146.0394253
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0188611
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.6037922
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 11.9492,
+          "private_commit": 14.1826,
+          "system_ram_used": 26.9024,
+          "system_commit": 33.3615,
+          "pagefile_used_estimate": 1.4402
+        },
+        "gpu_peak_mib": {
+          "0": 16209.0,
+          "1": 9307.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 308.95,
+          "1": 286.62
+        }
+      },
+      "flash_reported_seconds": [
+        71.477
+      ],
+      "dual_pre_reference_peaks": {
+        "host_gib": {
+          "rss": 7.5732,
+          "private_commit": 10.9146,
+          "system_ram_used": 22.4609,
+          "system_commit": 30.1356,
+          "pagefile_used_estimate": 1.4402
+        },
+        "gpu_peak_mib": {
+          "0": 16209.0,
+          "1": 9307.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 308.95,
+          "1": 286.62
+        }
+      },
+      "raw_reference": {
+        "case": "vsr-480-10s-x2-raw",
+        "frames": 240,
+        "shape": [
+          240,
+          1728,
+          960,
+          3
+        ],
+        "bitwise_equal": true,
+        "max_abs": 0.0,
+        "rmse": 0.0,
+        "reference_seconds": 145.17007819999708
+      },
+      "whole_case_includes_reference_and_cpu_comparison": true,
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 7.5732,
+          "private_commit": 10.9146,
+          "system_ram_used": 22.4609,
+          "system_commit": 30.1356,
+          "pagefile_used_estimate": 1.44
+        },
+        "gpu_peak_mib": {
+          "0": 9309.0,
+          "1": 9307.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 284.02,
+          "1": 286.62
+        }
+      }
+    },
+    {
+      "case": "vsr-1mp-5s-x2-raw",
+      "family": "vsr-raw-diagnostic",
+      "raylight_code_commit": "1844e5a",
+      "output_geometry": {
+        "width": 1536,
+        "height": 2752,
+        "frames": 120,
+        "fps": 24,
+        "seconds": 5.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 438.169,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "402ef4c8cf920dcc6b2521abaaca988fb69e08271ddff8b778b9726969647e39",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0289578
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 5.7845526
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.4043467
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0275549
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 24.3021971
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 116.0166679
+        },
+        "11": {
+          "class_type": "MigrationVerifyRelayRaw",
+          "seconds": 275.4978528
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0040343
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.1032609
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 14.8757,
+          "private_commit": 17.092,
+          "system_ram_used": 29.9728,
+          "system_commit": 36.5558,
+          "pagefile_used_estimate": 1.4393
+        },
+        "gpu_peak_mib": {
+          "0": 16183.0,
+          "1": 16223.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 338.93,
+          "1": 293.88
+        }
+      },
+      "flash_reported_seconds": [
+        116.02
+      ],
+      "dual_pre_reference_peaks": {
+        "host_gib": {
+          "rss": 10.1607,
+          "private_commit": 14.4804,
+          "system_ram_used": 25.2905,
+          "system_commit": 33.9767,
+          "pagefile_used_estimate": 1.4393
+        },
+        "gpu_peak_mib": {
+          "0": 16139.0,
+          "1": 16223.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 338.93,
+          "1": 293.88
+        }
+      },
+      "raw_reference": {
+        "case": "vsr-1mp-5s-x2-raw",
+        "frames": 120,
+        "shape": [
+          120,
+          2752,
+          1536,
+          3
+        ],
+        "bitwise_equal": true,
+        "max_abs": 0.0,
+        "rmse": 0.0,
+        "reference_seconds": 274.4811023000002
+      },
+      "whole_case_includes_reference_and_cpu_comparison": true,
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 10.1607,
+          "private_commit": 14.4804,
+          "system_ram_used": 25.2905,
+          "system_commit": 33.9767,
+          "pagefile_used_estimate": 1.4389
+        },
+        "gpu_peak_mib": {
+          "0": 16139.0,
+          "1": 16223.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 291.87,
+          "1": 293.88
+        }
+      }
+    },
+    {
+      "case": "vsr-1mp-5s-x4-raw",
+      "family": "vsr-raw-diagnostic",
+      "raylight_code_commit": "1844e5a",
+      "output_geometry": {
+        "width": 3072,
+        "height": 5504,
+        "frames": 120,
+        "fps": 24,
+        "seconds": 5.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 2456.399,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "4171fce73eded7c73e948d010ba6926f1b74068f70c48e214c4af38e8bc7d14d",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0118409
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 6.0648292
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.6233903
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0349477
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 122.6501824
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 771.828435
+        },
+        "11": {
+          "class_type": "MigrationVerifyRelayRaw",
+          "seconds": 1502.0498172
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0036187
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 53.1159855
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 49.8078,
+          "private_commit": 52.1432,
+          "system_ram_used": 66.0765,
+          "system_commit": 72.4503,
+          "pagefile_used_estimate": 1.4372
+        },
+        "gpu_peak_mib": {
+          "0": 16237.0,
+          "1": 16235.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 335.87,
+          "1": 321.24
+        }
+      },
+      "flash_reported_seconds": [
+        771.779
+      ],
+      "dual_pre_reference_peaks": {
+        "host_gib": {
+          "rss": 32.0543,
+          "private_commit": 41.4152,
+          "system_ram_used": 47.5258,
+          "system_commit": 61.1848,
+          "pagefile_used_estimate": 1.4372
+        },
+        "gpu_peak_mib": {
+          "0": 16237.0,
+          "1": 16235.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 335.01,
+          "1": 321.24
+        }
+      },
+      "raw_reference": {
+        "case": "vsr-1mp-5s-x4-raw",
+        "frames": 120,
+        "shape": [
+          120,
+          5504,
+          3072,
+          3
+        ],
+        "bitwise_equal": true,
+        "max_abs": 0.0,
+        "rmse": 0.0,
+        "reference_seconds": 1497.611026599996
+      },
+      "whole_case_includes_reference_and_cpu_comparison": true,
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 32.0543,
+          "private_commit": 41.4152,
+          "system_ram_used": 47.5258,
+          "system_commit": 61.1848,
+          "pagefile_used_estimate": 1.4372
+        },
+        "gpu_peak_mib": {
+          "0": 16237.0,
+          "1": 16235.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 335.01,
+          "1": 321.24
+        }
+      }
+    },
+    {
+      "case": "fresh-x4-split128",
+      "family": "allocator-diagnostic",
+      "raylight_code_commit": "1844e5a",
+      "output_geometry": {
+        "width": 3072,
+        "height": 5504,
+        "frames": 31,
+        "fps": 24,
+        "seconds": 1.2916666666666667
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 250.033,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "31589c8174ea3271ccb3d1f50ec2bf501130aaeec8e484f74f01756cb64028b2",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.001672
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 1.7734122
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.447772
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0290435
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 39.2745338
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 193.9837675
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0020172
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 14.5154842
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 13.8252,
+          "private_commit": 16.9621,
+          "system_ram_used": 30.2894,
+          "system_commit": 37.534,
+          "pagefile_used_estimate": 1.4354
+        },
+        "gpu_peak_mib": {
+          "0": 16223.0,
+          "1": 16235.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 321.33,
+          "1": 301.32
+        }
+      },
+      "flash_reported_seconds": [
+        193.936
+      ],
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 13.8252,
+          "private_commit": 16.9621,
+          "system_ram_used": 30.2894,
+          "system_commit": 37.534,
+          "pagefile_used_estimate": 1.4353
+        },
+        "gpu_peak_mib": {
+          "0": 16223.0,
+          "1": 16235.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 321.33,
+          "1": 301.32
+        }
+      },
+      "background_recovery_copy_may_overlap": true
+    },
+    {
+      "case": "fresh-x4-default",
+      "family": "allocator-diagnostic",
+      "raylight_code_commit": "1844e5a",
+      "output_geometry": {
+        "width": 3072,
+        "height": 5504,
+        "frames": 31,
+        "fps": 24,
+        "seconds": 1.2916666666666667
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 173.921,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "db7d2297e6f7d3fdf78a8b3d806c802ccc7d2abd4b70266cc05ff4504292dd51",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 1.9350403
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.4900975
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0311816
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 22.0391873
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 135.6587559
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0020176
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 13.7671515
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 12.6112,
+          "private_commit": 16.9596,
+          "system_ram_used": 29.2645,
+          "system_commit": 37.7223,
+          "pagefile_used_estimate": 1.4353
+        },
+        "gpu_peak_mib": {
+          "0": 15085.0,
+          "1": 7725.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 331.54,
+          "1": 335.91
+        }
+      },
+      "flash_reported_seconds": [
+        135.619
+      ],
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 12.6112,
+          "private_commit": 16.9596,
+          "system_ram_used": 29.2645,
+          "system_commit": 37.7223,
+          "pagefile_used_estimate": 1.4353
+        },
+        "gpu_peak_mib": {
+          "0": 7757.0,
+          "1": 7725.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 331.54,
+          "1": 335.91
+        }
+      },
+      "background_recovery_copy_may_overlap": true
+    },
+    {
+      "case": "fresh-x4-split128-r2",
+      "family": "allocator-diagnostic",
+      "raylight_code_commit": "1844e5a",
+      "output_geometry": {
+        "width": 3072,
+        "height": 5504,
+        "frames": 31,
+        "fps": 24,
+        "seconds": 1.2916666666666667
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 249.251,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "2b6c36fc166b95bd5d41308c6680707636833b6630aba7c9333f8fcb78f22fe4",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0150293
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 1.6034578
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.4498318
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0299075
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 38.8048493
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 194.2582548
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0050779
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 14.0698837
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 12.1911,
+          "private_commit": 16.9622,
+          "system_ram_used": 29.072,
+          "system_commit": 37.9696,
+          "pagefile_used_estimate": 1.4352
+        },
+        "gpu_peak_mib": {
+          "0": 16237.0,
+          "1": 16235.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 338.93,
+          "1": 334.52
+        }
+      },
+      "flash_reported_seconds": [
+        194.224
+      ],
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 12.1911,
+          "private_commit": 16.9622,
+          "system_ram_used": 29.072,
+          "system_commit": 37.9696,
+          "pagefile_used_estimate": 1.4349
+        },
+        "gpu_peak_mib": {
+          "0": 16203.0,
+          "1": 16235.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 332.7,
+          "1": 334.52
+        }
+      },
+      "background_recovery_copy_may_overlap": true
+    },
+    {
+      "case": "director-vsr-final-three",
+      "family": "director-vsr",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 1728,
+        "height": 960,
+        "frames": 141,
+        "fps": 24,
+        "seconds": 5.875
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 924.84,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "841af0f8694215a21866407b4d0897d8fba5a54e82b42a6508fb40d30b8e2f7c",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 46.0,
+          "sampling_s": 162.2,
+          "decode_s": 6.9,
+          "vsr_s": 43.5
+        },
+        {
+          "segment": 2,
+          "conditioning_s": 46.7,
+          "sampling_s": 182.4,
+          "decode_s": 10.6,
+          "vsr_s": 35.6
+        },
+        {
+          "segment": 3,
+          "conditioning_s": 47.5,
+          "sampling_s": 184.5,
+          "decode_s": 10.5,
+          "vsr_s": 37.1
+        }
+      ],
+      "node_timings": {
+        "4": {
+          "class_type": "VAELoader",
+          "seconds": 0.8950479
+        },
+        "3": {
+          "class_type": "VAELoader",
+          "seconds": 8.3890543
+        },
+        "21": {
+          "class_type": "VAELoader",
+          "seconds": 0.2781014
+        },
+        "20": {
+          "class_type": "UNETLoader",
+          "seconds": 0.555849
+        },
+        "22": {
+          "class_type": "MiniMaxH3DirectorRelayVSR",
+          "seconds": 0.002852
+        },
+        "13": {
+          "class_type": "RayInitializer",
+          "seconds": 37.3206719
+        },
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.8643448
+        },
+        "12": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.0278814
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 4.2955605
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.4428059
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 859.8936246
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0240672
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0059071
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0380058
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0020199
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 11.7801873
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 56.5163,
+          "private_commit": 100.6848,
+          "system_ram_used": 71.9095,
+          "system_commit": 124.8185,
+          "pagefile_used_estimate": 1.195
+        },
+        "gpu_peak_mib": {
+          "0": 9353.0,
+          "1": 9321.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 353.69,
+          "1": 354.14
+        }
+      },
+      "flash_reported_seconds": [
+        25.254,
+        26.768,
+        27.931
+      ],
+      "background_recovery_copy_overlapped_functional_case": true
+    },
+    {
+      "case": "director-vsr-final-select-second",
+      "family": "director-vsr",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 1728,
+        "height": 960,
+        "frames": 141,
+        "fps": 24,
+        "seconds": 5.875
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 320.786,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "b348bf217c1113a492f13ecb92e1a5cbcb739ae5768089aecace1800389f50fa",
+      "director_stages": [
+        {
+          "segment": 2,
+          "conditioning_s": 45.4,
+          "sampling_s": 186.5,
+          "decode_s": 11.1,
+          "vsr_s": 36.5
+        }
+      ],
+      "node_timings": {
+        "22": {
+          "class_type": "MiniMaxH3DirectorRelayVSR",
+          "seconds": 0.0299779
+        },
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.7699955
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 0.0499672
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.0879279
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 308.2674903
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0476983
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0076849
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.032337
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0098548
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 11.4454537
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 58.2192,
+          "private_commit": 75.9053,
+          "system_ram_used": 72.7971,
+          "system_commit": 99.8423,
+          "pagefile_used_estimate": 1.1947
+        },
+        "gpu_peak_mib": {
+          "0": 9373.0,
+          "1": 9351.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 355.76,
+          "1": 349.64
+        }
+      },
+      "flash_reported_seconds": [
+        27.779
+      ]
+    },
+    {
+      "case": "restored-director",
+      "family": "recovery-functional-not-speed-control",
+      "raylight_code_commit": "c403c91",
+      "output_geometry": {
+        "width": 864,
+        "height": 480,
+        "frames": 124,
+        "fps": 24,
+        "seconds": 5.166666666666667
+      },
+      "steps": 4,
+      "seed": 42,
+      "execution_seconds": 371.664,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "3167abd08cf0331e409202942a5923def24e425b9c1de63abe00850b9c7e8107",
+      "director_stages": [
+        {
+          "segment": 1,
+          "conditioning_s": 39.4,
+          "sampling_s": 237.3,
+          "decode_s": 15.6
+        }
+      ],
+      "node_timings": {
+        "4": {
+          "class_type": "VAELoader",
+          "seconds": 0.6929772
+        },
+        "3": {
+          "class_type": "VAELoader",
+          "seconds": 8.1179643
+        },
+        "13": {
+          "class_type": "RayInitializer",
+          "seconds": 56.3689884
+        },
+        "2": {
+          "class_type": "RayMiniMaxH3DualGPUCLIPLoader",
+          "seconds": 0.5999981
+        },
+        "12": {
+          "class_type": "RayLoraLoader",
+          "seconds": 0.0253799
+        },
+        "1": {
+          "class_type": "RayUNETLoader",
+          "seconds": 3.3525556
+        },
+        "14": {
+          "class_type": "RayMMH3DirectorModelAdapter",
+          "seconds": 0.3511532
+        },
+        "5": {
+          "class_type": "MiniMaxH3Director",
+          "seconds": 296.1940427
+        },
+        "9": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0096408
+        },
+        "8": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0214471
+        },
+        "10": {
+          "class_type": "PreviewAny",
+          "seconds": 0.0297535
+        },
+        "6": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0081061
+        },
+        "7": {
+          "class_type": "SaveVideo",
+          "seconds": 5.8733316
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 58.8684,
+          "private_commit": 96.4836,
+          "system_ram_used": 74.0338,
+          "system_commit": 120.2821,
+          "pagefile_used_estimate": 1.1937
+        },
+        "gpu_peak_mib": {
+          "0": 9223.0,
+          "1": 9201.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 346.4,
+          "1": 344.65
+        }
+      }
+    },
+    {
+      "case": "vsr-480-10s-x2-r1-fixed",
+      "family": "vsr",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 960,
+        "height": 1728,
+        "frames": 240,
+        "fps": 24,
+        "seconds": 10.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 112.913,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "49c47a2b875199d2e72f7c5fc909b8c5c7e479620efa11235d9553d42c474c9f",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0263468
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 8.1860092
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.5290098
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0402956
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 16.0369023
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 71.5154508
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0031337
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.5707311
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 7.5556,
+          "private_commit": 10.7785,
+          "system_ram_used": 25.669,
+          "system_commit": 32.3029,
+          "pagefile_used_estimate": 1.1911
+        },
+        "gpu_peak_mib": {
+          "0": 16161.0,
+          "1": 5991.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 321.0,
+          "1": 275.05
+        }
+      },
+      "flash_reported_seconds": [
+        71.371
+      ],
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 7.5556,
+          "private_commit": 10.7785,
+          "system_ram_used": 25.669,
+          "system_commit": 32.3029,
+          "pagefile_used_estimate": 1.1911
+        },
+        "gpu_peak_mib": {
+          "0": 6009.0,
+          "1": 5991.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 270.79,
+          "1": 275.05
+        }
+      }
+    },
+    {
+      "case": "vsr-480-10s-x2-r2-fixed",
+      "family": "vsr",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 960,
+        "height": 1728,
+        "frames": 240,
+        "fps": 24,
+        "seconds": 10.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 112.084,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "68a4689528c08c9d74584ba881cbf8b5e5d560aaaf97ab8197885ffe912767ca",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0062054
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 7.8329731
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.4085945
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0378618
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 15.6953391
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 71.4884265
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0031331
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.6067869
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 7.7933,
+          "private_commit": 10.8377,
+          "system_ram_used": 25.9074,
+          "system_commit": 32.37,
+          "pagefile_used_estimate": 1.1911
+        },
+        "gpu_peak_mib": {
+          "0": 16209.0,
+          "1": 5989.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 316.75,
+          "1": 283.9
+        }
+      },
+      "flash_reported_seconds": [
+        71.357
+      ],
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 7.7933,
+          "private_commit": 10.8377,
+          "system_ram_used": 25.9074,
+          "system_commit": 32.37,
+          "pagefile_used_estimate": 1.1911
+        },
+        "gpu_peak_mib": {
+          "0": 6015.0,
+          "1": 5989.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 286.15,
+          "1": 283.9
+        }
+      }
+    },
+    {
+      "case": "vsr-480-10s-x2-r3-fixed",
+      "family": "vsr",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 960,
+        "height": 1728,
+        "frames": 240,
+        "fps": 24,
+        "seconds": 10.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 111.362,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "2ac67d7387cf60fef22de871495b33f682d2f88bc0acecd97a43b27844f26db6",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0015199
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 7.4261938
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.3534864
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0216552
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 15.5303033
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 71.3985381
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.003095
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.1582452
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 7.7174,
+          "private_commit": 10.893,
+          "system_ram_used": 25.8251,
+          "system_commit": 32.436,
+          "pagefile_used_estimate": 1.191
+        },
+        "gpu_peak_mib": {
+          "0": 16209.0,
+          "1": 5989.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 330.45,
+          "1": 282.73
+        }
+      },
+      "flash_reported_seconds": [
+        71.278
+      ],
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 7.7174,
+          "private_commit": 10.893,
+          "system_ram_used": 25.8251,
+          "system_commit": 32.436,
+          "pagefile_used_estimate": 1.1908
+        },
+        "gpu_peak_mib": {
+          "0": 6015.0,
+          "1": 5989.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 284.37,
+          "1": 282.73
+        }
+      }
+    },
+    {
+      "case": "vsr-480-10s-x2-raw-fixed",
+      "family": "vsr-raw-diagnostic",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 960,
+        "height": 1728,
+        "frames": 240,
+        "fps": 24,
+        "seconds": 10.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 262.394,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "95f2d6a36df80517d36489a4bffe9e914282879909dbfd475924d7c8a5675773",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0067803
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 7.6839304
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.4050976
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0378079
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 15.5542224
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 71.3665412
+        },
+        "11": {
+          "class_type": "MigrationVerifyRelayRaw",
+          "seconds": 150.5133385
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0031666
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.8178707
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 11.9521,
+          "private_commit": 14.1514,
+          "system_ram_used": 30.057,
+          "system_commit": 35.6863,
+          "pagefile_used_estimate": 1.1906
+        },
+        "gpu_peak_mib": {
+          "0": 16209.0,
+          "1": 5989.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 350.67,
+          "1": 294.04
+        }
+      },
+      "flash_reported_seconds": [
+        71.351
+      ],
+      "dual_pre_reference_peaks": {
+        "host_gib": {
+          "rss": 8.0705,
+          "private_commit": 10.9149,
+          "system_ram_used": 26.1886,
+          "system_commit": 32.4541,
+          "pagefile_used_estimate": 1.1906
+        },
+        "gpu_peak_mib": {
+          "0": 16209.0,
+          "1": 5989.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 350.67,
+          "1": 294.04
+        }
+      },
+      "raw_reference": {
+        "case": "vsr-480-10s-x2-raw-fixed",
+        "frames": 240,
+        "shape": [
+          240,
+          1728,
+          960,
+          3
+        ],
+        "bitwise_equal": true,
+        "max_abs": 0.0,
+        "rmse": 0.0,
+        "reference_seconds": 149.7250297999999,
+        "finite": true,
+        "output_dtype": "torch.float32",
+        "reference_allocator": "official native/default split policy, independently configured"
+      },
+      "whole_case_includes_reference_and_cpu_comparison": true,
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 7.7389,
+          "private_commit": 10.9149,
+          "system_ram_used": 25.8517,
+          "system_commit": 32.4541,
+          "pagefile_used_estimate": 1.1906
+        },
+        "gpu_peak_mib": {
+          "0": 6015.0,
+          "1": 5989.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 284.7,
+          "1": 294.04
+        }
+      }
+    },
+    {
+      "case": "vsr-1mp-5s-x2-raw-fixed",
+      "family": "vsr-raw-diagnostic",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 1536,
+        "height": 2752,
+        "frames": 120,
+        "fps": 24,
+        "seconds": 5.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 402.872,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "cfdd0ec7aa518f046fa863efbb888051341ebd8dd033dcfe6f08dcc5cdc77009",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.017763
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 5.7366109
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.4015593
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.0352919
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 23.5607398
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 115.8821285
+        },
+        "11": {
+          "class_type": "MigrationVerifyRelayRaw",
+          "seconds": 240.9291251
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0042542
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 16.2989282
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 14.8857,
+          "private_commit": 17.0972,
+          "system_ram_used": 33.0968,
+          "system_commit": 38.7424,
+          "pagefile_used_estimate": 1.1906
+        },
+        "gpu_peak_mib": {
+          "0": 16116.0,
+          "1": 6336.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 331.63,
+          "1": 302.7
+        }
+      },
+      "flash_reported_seconds": [
+        115.864
+      ],
+      "dual_pre_reference_peaks": {
+        "host_gib": {
+          "rss": 9.7453,
+          "private_commit": 14.4861,
+          "system_ram_used": 27.868,
+          "system_commit": 36.0329,
+          "pagefile_used_estimate": 1.1906
+        },
+        "gpu_peak_mib": {
+          "0": 16116.0,
+          "1": 6336.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 331.63,
+          "1": 302.7
+        }
+      },
+      "raw_reference": {
+        "case": "vsr-1mp-5s-x2-raw-fixed",
+        "frames": 120,
+        "shape": [
+          120,
+          2752,
+          1536,
+          3
+        ],
+        "bitwise_equal": true,
+        "max_abs": 0.0,
+        "rmse": 0.0,
+        "reference_seconds": 239.96154269999533,
+        "finite": true,
+        "output_dtype": "torch.float32",
+        "reference_allocator": "official native/default split policy, independently configured"
+      },
+      "whole_case_includes_reference_and_cpu_comparison": true,
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 9.7453,
+          "private_commit": 14.4861,
+          "system_ram_used": 27.868,
+          "system_commit": 36.0329,
+          "pagefile_used_estimate": 1.1906
+        },
+        "gpu_peak_mib": {
+          "0": 11800.0,
+          "1": 6336.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 289.8,
+          "1": 302.7
+        }
+      }
+    },
+    {
+      "case": "vsr-1mp-5s-x4-raw-fixed",
+      "family": "vsr-raw-diagnostic",
+      "raylight_code_commit": "5eae991",
+      "output_geometry": {
+        "width": 3072,
+        "height": 5504,
+        "frames": 120,
+        "fps": 24,
+        "seconds": 5.0
+      },
+      "steps": 1,
+      "seed": 42,
+      "execution_seconds": 1836.749,
+      "workflow_status": "success",
+      "acceptance_status": "passed",
+      "prompt_sha256": "1cf00f3ce7a0874597976a7f36830f1ad636b9dd484ecb65105dea2c0e868062",
+      "director_stages": [],
+      "node_timings": {
+        "1": {
+          "class_type": "LoadVideo",
+          "seconds": 0.0041248
+        },
+        "2": {
+          "class_type": "GetVideoComponents",
+          "seconds": 5.7909473
+        },
+        "3": {
+          "class_type": "UNETLoader",
+          "seconds": 0.6651598
+        },
+        "5": {
+          "class_type": "RelayVSRConditioning",
+          "seconds": 0.053475
+        },
+        "6": {
+          "class_type": "KSampler",
+          "seconds": 128.5134215
+        },
+        "7": {
+          "class_type": "RayRelayVSRDecode",
+          "seconds": 538.2328652
+        },
+        "11": {
+          "class_type": "MigrationVerifyRelayRaw",
+          "seconds": 1109.2632082
+        },
+        "8": {
+          "class_type": "CreateVideo",
+          "seconds": 0.0032253
+        },
+        "9": {
+          "class_type": "SaveVideo",
+          "seconds": 54.21903
+        }
+      },
+      "whole_case_peaks": {
+        "host_gib": {
+          "rss": 49.8088,
+          "private_commit": 52.1456,
+          "system_ram_used": 67.6837,
+          "system_commit": 73.8355,
+          "pagefile_used_estimate": 1.1905
+        },
+        "gpu_peak_mib": {
+          "0": 16240.0,
+          "1": 7745.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 342.45,
+          "1": 335.67
+        }
+      },
+      "flash_reported_seconds": [
+        538.205
+      ],
+      "readonly_backup_verification_overlapped_diagnostic": true,
+      "dual_pre_reference_peaks": {
+        "host_gib": {
+          "rss": 31.5989,
+          "private_commit": 41.4168,
+          "system_ram_used": 49.5728,
+          "system_commit": 62.7912,
+          "pagefile_used_estimate": 1.1905
+        },
+        "gpu_peak_mib": {
+          "0": 16240.0,
+          "1": 7745.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 341.93,
+          "1": 335.67
+        }
+      },
+      "raw_reference": {
+        "case": "vsr-1mp-5s-x4-raw-fixed",
+        "frames": 120,
+        "shape": [
+          120,
+          5504,
+          3072,
+          3
+        ],
+        "bitwise_equal": true,
+        "max_abs": 0.0,
+        "rmse": 0.0,
+        "reference_seconds": 1105.7049923999948,
+        "finite": true,
+        "output_dtype": "torch.float32",
+        "reference_allocator": "official native/default split policy, independently configured"
+      },
+      "whole_case_includes_reference_and_cpu_comparison": true,
+      "flash_window_peaks": {
+        "host_gib": {
+          "rss": 31.5989,
+          "private_commit": 41.4168,
+          "system_ram_used": 49.5728,
+          "system_commit": 62.7912,
+          "pagefile_used_estimate": 1.1905
+        },
+        "gpu_peak_mib": {
+          "0": 7909.0,
+          "1": 7745.0
+        },
+        "gpu_util_peak_percent": {
+          "0": 100.0,
+          "1": 100.0
+        },
+        "gpu_power_observed_peak_w": {
+          "0": 341.93,
+          "1": 335.67
+        }
+      }
+    }
+  ],
+  "negative_cache_check": {
+    "expected_rejection_passed": true,
+    "cache_files_unchanged": true,
+    "remote_samples_started": 0,
+    "changed_setting": "detail 1.0 -> 0.85",
+    "same_seed": 42
+  },
+  "recovery": {
+    "runtime_files_verified": 72115,
+    "user_state_files_verified": 297,
+    "actual_restored_director_workflow_passed": true
+  },
+  "runtime_code_identity": "5eae991; subsequent release commits change only documentation,profile metadata and the verified public UI defaults",
+  "coverage_note": "Representative existing H3 features and VSR; no new full LTX GPU campaign; historical missing monitor exit status is not invented"
+}

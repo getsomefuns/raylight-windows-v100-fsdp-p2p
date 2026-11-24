@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-2026-11-24：本地 Director 已安全更新到 `aff2579` 并保留缓存/尾帧/跟踪补丁。当前核心缺 RelayVSR 后端，Pika 也尚未实机验收，**不能把节点更新视为新功能已可用**。见 [兼容核查与补丁维护说明](docs/releases/2026-11-24-director-aff2579-compatibility.zh-CN.md)。
+1.19.0 迁移候选（2026-11-24）：新版官方核心的兼容修复、Director双卡RelayVSR及新旧完整单测已通过隔离验证；完整媒体与正式迁移／烟测正在收尾，尚未发布。保留既有FSDP/P2P、TP2、安全FP16及Director功能，不手改ComfyUI／Director源码。见[中文升级说明](docs/releases/2026-11-24-relayvsr-production-migration.zh-CN.md)和[实测报告](docs/reports/2026-11-24-relayvsr-production-migration.zh-CN.md)。
 
 1.18.5 修复压缩时间曲线模型的 BF16/FP16 时间表与 FP32 插值系数冲突。只将小型时间表临时转为 FP32，不改变模型主体精度或现有工作流。辅助张量核查、回归范围及使用说明见 [中文发布说明](docs/releases/2026-10-31-h3-adaln-curve-dtype.zh-CN.md)。
 
@@ -69,7 +69,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.18.5；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.19.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
@@ -134,32 +134,54 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
   加载的 Diffusion Model。
 - 当前不支持 GGUF + FSDP、多于两个 rank、多机和训练反向传播。
 
-## RelayVSR 双 V100 Flash（仅隔离预览）
+## RelayVSR 双 V100 Flash 与 Director 集成
 
-新增 `RelayVSR Flash Decode (Ray)`，保留官方单卡关键帧采样，将原版FP32 Flash独立窗口分配到两张V100。
-采用同进程GPU执行器，不创建Ray集群，不用FSDP或NCCL，也不把两卡显存变成一个32GB池。
-不会改动原有MiniMax H3 / Director / LTX工作流。
+迁移验收状态以[本次报告](docs/reports/2026-11-24-relayvsr-production-migration.zh-CN.md)为准。
+需要包含原生 RelayVSR 的官方核心；本次固定 ComfyUI `2fcb6ce`（0.46.0），配套依赖见
+[requirements-windows-v100-relayvsr.txt](requirements-windows-v100-relayvsr.txt)。只更新 Raylight，不能给旧核心补齐 VSR 后端。
 
-480×864、10秒、240帧、24fps、x2的三轮完整工作流：Flash约71秒，全流程约109–110秒；
-更快的单卡对照为133.272秒 / 183.482秒。完整视频解码后的240帧与单卡逐像素一致，
-不是通过改精度、尺寸、步数或缓存命中提速。详情、资源峰值及失败实验见
-[中文实测报告](docs/reports/2026-11-24-relayvsr-dual-flash.zh-CN.md)和
-[未发布说明](docs/releases/2026-11-24-relayvsr-flash-preview.zh-CN.md)。
+VSR 关键帧采样仍是官方单卡路径，只有耗时的 Flash 解码窗口分配给两张 V100，同进程双 GPU 执行，保留 FP32 原版运算。
+这不是 VSR FSDP、NCCL 或透明的 32GB 显存池。H3 采样仍走本分支原有双卡 FSDP/P2P。
 
-使用方式：
+### Director：推荐的紧凑工作流
 
-1. 只在已有原生RelayVSR的隔离ComfyUI使用；原正式核心仍缺该后端，仅更新Raylight不能补齐。
-2. 导入[静音基准API工作流](example_workflows/RelayVSR_DualV100_Raylight.json)，重新选择自己的输入视频。
-3. 新节点替换`VAELoader + VSRDecode`，samples接KSampler，images接同一份原低清视频；x2/x4模型和VAE需配对。
-4. `worker_count=2`、`keep_workers=false`。不添加RayInitializer或USP，不隐藏第二张CUDA设备。
+1. 启动方式不变：运行环境根目录的 `start_raylight_p2p.ps1`，保持两张 CUDA 设备可见；升级后重启 ComfyUI 并强制刷新浏览器。
+2. 载入[Director + 双卡 VSR 界面工作流](example_workflows/Minimax_H3_Director_DualV100_RelayVSR.json)。重新选择本机 H3 模型、编码器、VAE、Turbo4 LoRA，以及上游公开示例图 `Minimax_H3_REF2VA_Raylight.jpg`。
+3. `Ray MODEL Adapter (MMH3Director)` 的 MODEL 接 Director；原生 `UNETLoader` 加载 `relayvsr_x2_lightx2v_int8_convrot.safetensors`，`VAELoader` 加载 `relayvsr_flash_vae_x2_fp32.safetensors`，两者接作者的 `MiniMax H3 Director RelayVSR` 参数节点，再把其 VSR 输出接 Director 的 `vsr`。
+4. 模型分别放在 `models/diffusion_models`、`models/vae`（已映射的共享模型目录同样有效）。x4 时同时改为 `relayvsr_x4_int8_convrot.safetensors` 和 `relayvsr_flash_vae_x4_fp32.safetensors`，不能混配。
+5. 先保持示例的固定种子 42、H3 四步／对应 Turbo4 LoRA、864×480、24fps、56 帧；VSR 固定种子 42、一步、euler/simple、CFG/denoise/detail 均为 1。不需要额外的独立 VSR 解码节点或第二个 RayInitializer。
 
-`keep_workers=true`只保留本节点GPU模型权重，空闲计算缓存仍归还；false默认完整回收自有模型。
-ComfyUI图像缓存和CUDA上下文不在本节点回收范围。已有本进程Ray会话须先结束，节点不会替用户杀集群。
-true仅建议同一VSR工作流复用，切换其他FSDP工作流前先结束缓存或重启；平常用false。
-新功能目前只部署到本项目的隔离环境，正式环境未升级、未部署；不要直接照搬正式环境升级。
-[中文计划](docs/superpowers/plans/2026-11-24-relayvsr-dual-flash.zh-CN.md) / [English plan](docs/superpowers/plans/2026-11-24-relayvsr-dual-flash.en.md)。
+Raylight 自动在 VSR 开始前取得现有两个 H3 worker 的独占 GPU 租约，卸载非活跃显存；原生 VSR 采样和双卡 Flash 完成、清理后再交回 H3。
+不会为每段销毁 Ray workers，也不删除一采 AV／分段缓存。默认不保留 Flash GPU 模型池；ComfyUI 图像缓存、H3 CPU 缓存和 CUDA 上下文可能仍占资源，不能宣称空闲内存归零。
+不连接 VSR 时，原工作流不加载 VSR 模型，也不进入这些处理。
+
+VSR 参数、模型或 VAE 来源改变后，旧 VSR 成片不能充当未选段的有效输出；遇到拒绝时先用一致设置刷新相关段。
+作者的缓存检查接口未提供完整 VSR 参数，界面因此显示“VSR 最终匹配未验证”，不是已确认匹配，也不是缓存损坏。
+
+### 独立超分
+
+已有视频可用[静音基准 API 工作流](example_workflows/RelayVSR_DualV100_Raylight.json)：`KSampler.samples` 与同一份低清 `images` 接 `RelayVSR Flash Decode (Ray)`，选择配套 Flash VAE，`worker_count=2`、`keep_workers=false`。
+该路线不创建 Ray 集群；如本进程已有 Ray 会话，必须先结束它，节点不会替用户杀集群。保留 H3 workers 的日常 Director 工作流应使用上一节的集成路线。
+`keep_workers=true` 只为同类 VSR 连跑保留自有 GPU 模型；切换其他工作流前结束保留或重启。通常保持 false。
+
+### 性能与边界
+
+修复后 480×864、10 秒、240 帧、24fps、2× 三次全流程约 111–113 秒，Flash 约 71.5 秒，与既有双卡优化基线相当。
+原单卡参考约 133.3 秒 Flash／183.5 秒全程，仅作同一 VSR 实验的历史对照，不代表所有 Director 工作流都会得到该加速比。
+完整原始帧比较、1MP 2×／4×、多段缓存、资源峰值及失败实验见[迁移报告](docs/reports/2026-11-24-relayvsr-production-migration.zh-CN.md)；最初隔离实验见[历史报告](docs/reports/2026-11-24-relayvsr-dual-flash.zh-CN.md)。
+
+启动脚本的 `max_split_size_mb:128` 曾造成高分辨率 Flash 保留显存翻倍并变慢。现在只在 VSR 作用域内临时移除该限制，清理后验证恢复；H3 worker 策略、精度和 P2P 分块预算不变，无需新启动参数。
+独立节点只作用于 Flash（其 KSampler 已经执行）；Director 集成覆盖 VSR 采样和 Flash。恢复／清理不可确认时拒绝后续 GPU 工作并要求重启。
+P2P 的 128MiB 是通信缓冲预算，与此 allocator 参数不是一回事。
+
+注意阶段口径：独立480p基准的Flash窗口约占6015/5989MiB，但前面的原生KSampler仍可让整轮GPU0峰值达到16209MiB。不能把Flash峰值当全工作流容量。Director集成的VSR采样也受作用域保护，资源结果需看对应集成案例，不能套用独立数字。
+
+本次不启用 DynamicVRAM，不验收 PDD、多头解码或任意第三方并发 CUDA 线程；不推断未测试的 480p/10 秒/4× 或任意长片容量。
+Pika 仍未实机验收。测试环境、回滚说明和原有功能范围见本次中英文发布记录。
 
 ## O12 MiniMax H3 可选加速节点
+
+新核心兼容说明：TE 3.3 的旧整模型 forward 替换不能直接覆盖新版 H3。Ray MODEL 路线改为在保留新版 mask、USP 和安全 FP16 的循环中调用 TE 的原生残差缓存控制器，两个 rank 一致同意才复用；不连接 TE 则不启用。命中缓存不等于已经证明整个工作流稳定提速，具体实测范围见 1.19 迁移报告。
 
 O12 不把第三方实现复制进 Raylight，而是提供一层窄范围桥接：外部节点仍按普通 ComfyUI 方式写入 MODEL patch，Raylight 只把可序列化配置送进两个真实 worker，并在那里调用已安装的原节点。
 
@@ -430,13 +452,14 @@ CPU offload 数据可能进入页面文件。页面文件可以推迟 OOM，但�
 | Ray | 2.57.0 |
 | xFuser | 0.4.5 |
 | yunchang | 0.6.4 |
-| ComfyUI | 0.31.0，提交 `62b3c94bd45154f6486c7abf1b9efcacee96ea69` |
+| ComfyUI | 0.46.0，固定官方提交 `2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884`；迁移状态见本次报告 |
+| 核心配套包 | kitchen 0.2.42 / aimdo 0.6.0 / frontend 1.59.11 |
 | Raylight 上游基线 | 1.9.0，提交 `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf` |
 | Diffusion Attention | Base 使用 `XFORMERS_MEMORY_EFFICIENT`；O12 可选 Sol-Attn V100；不安装 FlashAttention |
 
 机器可读版本清单见
 [environment-windows-v100.json](environment-windows-v100.json)，Python 依赖见
-[requirements-windows-v100-torch212.txt](requirements-windows-v100-torch212.txt)。旧
+[requirements-windows-v100-relayvsr.txt](requirements-windows-v100-relayvsr.txt)（包含Torch2.12基础profile及本次核心配套包）。旧
 [requirements-windows-v100.txt](requirements-windows-v100.txt) 保留为 Python310/Torch2.7 回滚 profile。
 
 ## 用户指南
@@ -490,12 +513,13 @@ cd <ComfyUI>\custom_nodes
 git clone `
   https://github.com/getsomefuns/raylight-windows-v100-fsdp-p2p.git raylight
 
-& $PY -m pip install -r .\raylight\requirements-windows-v100-torch212.txt
+& $PY -m pip install -r ..\requirements.txt -r .\raylight\requirements-windows-v100-relayvsr.txt
 & $PY -m pip install -e .\raylight
 ```
 
 注意：
 
+- 本节以已经备份并固定到官方 `2fcb6ce` 的ComfyUI为前提；不等于无条件升级到任意最新版。旧0.31.0核心／配套包属于回滚配置，不能直接加载原生RelayVSR。
 - O12 V100 验证环境固定为 `torch==2.12.0+cu126`；旧 `2.7.0+cu126` 仅作为回滚 profile。
 - 原候选 `torch==2.8.0+cu126` 的 Windows Gloo 最小探针失败，不能用于本分支的控制面；不要因为外部节点宣称由 2.8 编译就强制停留在 2.8。
 - 不要为这个配置安装 FlashAttention。
@@ -1100,7 +1124,8 @@ raylight/
 │  ├─ superpowers/plans/                 O1-O8 计划与验收门槛
 │  └─ windows-v100-fsdp-test-results-2026-08.csv  FSDP 精简数据
 ├─ environment-windows-v100.json         机器可读验证矩阵
-├─ requirements-windows-v100-torch212.txt O12 推荐锁定依赖
+├─ requirements-windows-v100-torch212.txt O12 Torch2.12 基础锁定依赖
+├─ requirements-windows-v100-relayvsr.txt 1.19 官方核心与VSR配套依赖
 ├─ requirements-windows-v100.txt         Python310/Torch2.7 回滚依赖
 ├─ WINDOWS_P2P_CHANGES.md                上一阶段 P2P 修改说明
 └─ WINDOWS_FSDP_CHANGES.md               当前 FSDP 修改说明

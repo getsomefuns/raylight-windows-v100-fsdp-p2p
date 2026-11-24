@@ -1,32 +1,39 @@
-# RelayVSR 正式迁移：发布说明（验收中，尚未发布）
+# 1.19.0 — 官方核心兼容与 Director 双 V100 RelayVSR
 
-本页仍是本地执行记录草稿。正式环境尚未升级，GitHub 尚未同步；不得将以下已通过的隔离案例当成全部迁移完成。
+状态：隔离验收通过，正式切换／烟测和GitHub发布待完成。本候选记录暂不代表已部署完成。
 
-## 本次变更
+## 本次实现
 
-- 固定官方 ComfyUI `2fcb6ce`，在 Raylight 中适配新版 PackedLayout、视频/音频掩码、逐 token 时间调制及原生 ModelPatcher 的 `fast_disk` 克隆参数，兼容旧核心。没有手工修改 ComfyUI 核心源码。
-- Director 连接原生 RelayVSR 参数包时，自动将 Flash 解码窗口分配给两张 V100。VSR 的关键帧采样仍是原生单卡，Flash 保留 FP32 与原版数学运算，不是将整个 VSR 模型改成 FSDP。
-- 复用现有 H3 workers，但先取得两个实际物理 GPU 的独占租约、严格释放非活跃 H3 显存；Flash 清理完成后再把 GPU 交回 H3。默认不保留 Flash 解码池，不销毁 H3 CPU 模型缓存或 Director 分段缓存。
-- TE 3.3 的旧整模型前向替换与新版核心不兼容。现在仅对 Ray MODEL 接入其原生残差缓存控制器，由两个 rank 一致决定复用或重算，保留 Raylight 的掩码、USP 和安全 FP16。未连接 TE/Sol 的工作流不启用它们。
-- VSR 成片缓存增加模型、VAE 来源文件戳和可识别 patch 配置；无法识别的修改不声称可跨次复用。VSR 参数/来源改变时，拒绝把不兼容的旧成片用于选择运行后的合并，不删除一采 AV 缓存。原生非 Ray Director 不受这些限定包装影响。
-- 修复集成 Flash 的停止响应、清理失败后换 worker 绕过隔离、Ray 断连后误走单机路径等边界。清理状态不可信时必须重启 ComfyUI，不能仅重建 workers 继续。
-- 验收工具将“工作流成功”与“验收通过”分开：缺主存监控、缺任一 GPU、时段覆盖不完整或监控异常都不能通过。回滚工具拒绝漏读目录、损坏副本、链接清单或非空恢复目标。
+- 固定官方ComfyUI `2fcb6ce`（0.46.0），前端1.59.11、kitchen0.2.42、aimdo0.6.0、模板0.11.118、文档0.5.17。保留Python3.12.10、Torch2.12.0+cu126、驱动577.00及现有Director `aff2579`+本地补丁，不手改ComfyUI或Director源码。
+- 兼容新旧H3 PackedLayout、音视频去噪mask、逐token时间调制和patcher的`fast_disk`克隆参数；保留安全FP16与既有H3 FSDP/P2P能力。
+- Ray MODEL支持的Director连接原生RelayVSR参数包后，关键帧采样仍走原生单卡，Flash独立窗口以原版FP32在双V100并行。不是给VSR模型做FSDP，也不是32GB显存池或Windows NCCL。
+- 向已有H3 workers取得两张真实物理GPU的独占租约，严格卸载非活跃显存；Flash清理、分配器恢复验证后才归还。不销毁H3 CPU patcher／actor或Director缓存，默认释放Flash GPU模型池。
+- 仅在VSR作用域临时移除原生`max_split_size_mb`，结束后恢复完整实时配置。Director覆盖VSR采样和Flash，独立节点仅覆盖Flash。不改H3策略、精度、环境变量和P2P128MiB预算。清理／恢复不可信时隔离进程，等待线程或换actor也不能继续，必须重启。
+- TE3.3改为在保留mask的USP循环中调用其原生残差控制器，双rank一致同意后复用，不安装不兼容的旧整模型forward。无关原生TE及未连接TE的工作流不变。
+- VSR最终缓存身份包含模型／VAE来源戳和可识别patch设置；选择运行时拒绝不兼容旧成片，不删除可用的一采AV缓存。作者检查接口不含完整VSR参数，因此界面明确显示最终匹配未验证，不误报命中。
+- 加入取消／所有权边界、严格资源监测验收和可校验的新目录恢复工具。不创建第二源码工作树或长期后端服务。
 
-## 已有实测证据
+## 实测与限制
 
-- 新核心全量 `951 passed`；旧核心 `937 passed, 14 skipped`（旧核心确实没有对应原生接口）；前端 5 项通过。未跳过最初 14 个兼容失败。
-- Director Ref2VA/FL2VA 4/8 步、原非 Director XFuser、TP2/原生 CLIP、分段 LoRA、SelfLift、缓存二采、56/56 帧 FaceRefine、双卡 H3 VAE、静音/正常音轨及实际实时预览均有隔离案例。
-- 同图、同种子、864×480、124 帧、24fps 的旧/新冷启动为 `319.887 / 310.911s`，热启动为 `241.586 / 234.263s`。这是单组对照，不是稳定通用加速结论。
-- 480×864、240 帧、24fps、2× 的三次纯工作流为 `116.007 / 114.807 / 113.150s`；Flash 为 `71.469 / 71.311 / 71.426s`。相对既有双卡基线的中位数变化分别约 `+4.0% / +0.09%`，在 10% 不退步门槛内。
-- 同 latent 的全部 240 帧 480p/2×，以及全部 120 帧 1MP/2×，均与官方单卡 Flash 原始输出逐像素一致，`max_abs=0, RMSE=0`。
+完整案例、失败实验、各阶段时间与资源口径见[中文报告](../reports/2026-11-24-relayvsr-production-migration.zh-CN.md)／[English](../reports/2026-11-24-relayvsr-production-migration.en.md)。
 
-## 尚未完成的发布门槛
+- 现有Director Ref2VA／FL2VA4／8步、原非Director XFuser、TP2／原生CLIP、分段LoRA、SelfLift、缓存Refine、FaceRefine56／56帧、双卡H3 VAE、静音／正常音轨和真实实时预览均有隔离工作流记录。
+- 同图同种子864×480、124帧、24fps、5.1667秒：旧／新冷启动319.887／310.911秒，热启动241.586／234.263秒。仅一组对照，不宣称普遍稳定提速。新旧H3像素不相同（SSIM0.784984），不承诺广义审美一致或无损。新核心冷启动主存较高，热态接近。
+- 修复后480×864、240帧、24fps、10秒、2×三轮纯流程112.913／112.084／111.362秒，日志Flash71.371／71.357／71.278秒。相对已有双卡优化基线，总耗时中位数+1.50%，Flash基本不变，仍在原定10%门槛内。
+- 审查后真实三段VSR／段间引导、变参采样前拒绝错误旧成片、同参只重跑第二段均通过。原生最短帧数／保留尾部最终输出141帧、24fps、5.875秒。冷态功能轮与备份复制重叠，不当成匹配性能比较。
+- 完整480p／2×的240帧、1MP／2×和4×的120帧原始输出均为有限FP32，与独立官方同latent Flash逐像素一致。修复后1MP／4× Flash538.205秒、历史534.571秒，完整媒体检查通过。串行新／旧核心964／950通过、旧核心14项原生接口缺失，两侧35子测试；前端5项通过。
+- 可恢复运行快照72,115文件，另有297文件用户状态备份。真正恢复出的旧Python／核心／全部节点及其真实Ray workers完成124帧正常视频，不是只有依赖清单或未验证复制。
 
-1. 1MP/5s/4× 的全部原始帧对照，以及完整媒体校验。
-2. 审查修复提交的三段 H3→VSR→H3、同参选择重跑、变参旧成片拒绝实测。
-3. 可校验备份、真正恢复出的旧 Python/核心/节点工作流演练；正式环境迁移和烟测。
-4. 最终中英文 README、数据附件、版本标签及 GitHub 发布。
+原生参考诊断总耗时与内存还包括额外CPU／参考图像，不是纯生产吞吐。整卡NVML峰值与Torch allocated／reserved分开；系统commit不等于物理RAM或实际分页流量。
 
-## 不变的边界
+## 使用与迁移
 
-仅验收 Windows TCC、双 V100 16GB、Python 3.12.10、Torch 2.12.0+cu126；不更换驱动、不启用 DynamicVRAM，不承诺未来 TE/Director/ComfyUI 版本自动兼容。原 Director 保留现有本地补丁。旧/新 H3 控制视频不逐像素一致（本次 SSIM 0.784984），不能把功能回归或 TE 命中数当作质量无损证明；VSR 的同 latent 原始像素对照是另一项独立验收。
+仍用环境根目录`start_raylight_p2p.ps1`，导入[Director＋VSR界面样例](../../example_workflows/Minimax_H3_Director_DualV100_RelayVSR.json)。本次候选测试使用4GiB预留，启动器默认3GiB未改。x2／x4 UNet与FlashVAE必须配对。示例固定42、H3 Turbo4／四步、864×480／56帧24fps，VSR一步／euler／simple／CFG1／denoise1／detail1。模型放diffusion_models／vae。完整连线及独立超分用法见中英文README。
+
+正式迁移只切换固定官方核心与精确离线配套wheel，不替换Torch、驱动、其他ComfyUI环境、Director补丁、用户媒体或分段缓存。核验不可变Raylight部署后，必须实跑原Director工作流和真实前端导出的VSR图，再发布。前端升级后重启并强制刷新浏览器。
+
+保留`.local/backups/production-relayvsr-20261124`备份及`.local/environments/production-relayvsr-recovery-rehearsal`可启动旧环境。回滚先停止本次服务／workers，保留失败状态，再由副本恢复记录中的旧核心62b3c94、Python／依赖和部署节点c403c91。不要整体覆盖用户工作流、媒体或缓存；仅在必要时恢复变化的数据库／配置。原始独立VSR隔离环境也保留作手测参考。
+
+## 明确不宣称的范围
+
+只验收Windows、双16GB V100、TCC、NVLink。DynamicVRAM、PDD／多头Flash、任意第三方CUDA并发、多GPU数量、完整480p／10秒／4×及任意长片／高分辨率都不在本轮验收内。Pika仍未实机验收。LTX相关兼容测试保留，但本次没有重跑全套LTX GPU生成。未来核心／Director／TE版本仍需重新核验。

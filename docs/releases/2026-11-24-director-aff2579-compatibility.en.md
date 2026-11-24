@@ -1,5 +1,7 @@
 # Director aff2579 update: compatibility audit, not full feature acceptance
 
+Historical pre-migration audit. The old-core RelayVSR limitation below is tracked by the [later official-core migration](2026-11-24-relayvsr-production-migration.en.md); it is not the current feature-status summary.
+
 Independent review found two outstanding overlay issues: cache-status inspection
 does not reconstruct FaceRefine/RelayVSR fingerprints (UI match state may be
 wrong, while executor reuse still uses the real plan), and metadata reference

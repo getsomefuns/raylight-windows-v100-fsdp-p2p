@@ -1,5 +1,7 @@
 # 未发布：RelayVSR 双 V100 Flash 隔离预览
 
+历史隔离预览记录：以下正式环境／核心限制属于当时阶段，当前状态见[后续迁移记录](2026-11-24-relayvsr-production-migration.zh-CN.md)。
+
 只在隔离环境验证；正式核心、Python、Director、部署节点均未更改，未推送GitHub，不改变正式版本号。
 
 - 新增 `RelayVSR Flash Decode (Ray)`：保留官方单卡关键帧采样，独立Flash窗口在两张GPU计算。

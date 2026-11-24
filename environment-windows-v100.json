@@ -1,8 +1,9 @@
 {
-  "schema_version": 3,
-  "tested_date": "2026-09-10",
-  "profile_updated_date": "2026-09-10",
-  "scope": "native Windows, one machine, two ranks, FSDP2 inference enabled, Ulysses/Ring/CFG degree 0, DP degree 1",
+  "schema_version": 4,
+  "tested_date": "2026-11-24",
+  "profile_updated_date": "2026-11-24",
+  "scope": "native Windows, one machine, exactly two V100 ranks; H3 FSDP/P2P and optional TP2; scoped Director dual-GPU RelayVSR Flash",
+  "migration_status": "candidate acceptance finishing; formal activation/smoke pending",
   "hardware": {
     "gpus": 2,
     "model": "Tesla V100-SXM2-16GB",
@@ -25,6 +26,13 @@
     "ray": "2.57.0",
     "xfuser": "0.4.5",
     "yunchang": "0.6.4",
+    "comfy-aimdo": "0.6.0",
+    "comfy-kitchen": "0.2.42",
+    "comfyui-frontend-package": "1.59.11",
+    "comfyui-workflow-templates": "0.11.118",
+    "comfyui-embedded-docs": "0.5.17",
+    "Pillow": "12.3.0",
+    "av": "18.1.0",
     "te_speed_minimax_h3": "3.3 (optional)",
     "solattn_v100": "1.1.1 route from the optional 1.2.0 package"
   },
@@ -37,7 +45,9 @@
     "requirements": "requirements-windows-v100.txt"
   },
   "repositories": {
-    "comfyui": "62b3c94bd45154f6486c7abf1b9efcacee96ea69",
+    "comfyui": "2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884",
+    "comfyui_director_official_base": "aff2579",
+    "comfyui_director_preserved_overlay": "13eba63",
     "raylight_upstream_base": "9a7c33d52b3d35e29f75ecff3c227de987f0d4cf",
     "raylight_release_branch": "windows-v100-fsdp-p2p",
     "comfyui_easy_use": "595e0738a9e3f8d0d9c4d875461b2d2c9e7559c7",
@@ -49,8 +59,9 @@
     "world_size": 2,
     "control_plane": "Gloo/TCPStore",
     "cuda_data_plane": "all_gather_into_tensor and all_to_all_single",
-    "validated_model": "LTX 2.3 22B FP8 scaled Diffusion Model",
-    "fsdp_cpu_offload": false,
+    "validated_models": ["LTX 2.3 22B FP8 scaled Diffusion Model (historical GPU campaign)", "MiniMax H3 FP8-scaled FL2VA/Ref2VA (current migration GPU regression)"],
+    "public_h3_example_fsdp_cpu_offload": true,
+    "historical_ltx_fsdp_cpu_offload": false,
     "gguf_supported": false,
     "performance_target_20_percent_faster_than_single_gpu": false
   },
@@ -65,6 +76,30 @@
     "maximum_validated_remote_payload_bytes": 805306368,
     "maximum_synthetic_all_gather_shard_bytes": 402653184,
     "maximum_validated_ltx_collective_input_bytes": 115343360,
-    "o12_default_runtime_requirements": "requirements-windows-v100-torch212.txt"
-  }
+    "o12_default_runtime_requirements": "requirements-windows-v100-torch212.txt",
+    "official_core_migration_requirements": "requirements-windows-v100-relayvsr.txt"
+  },
+  "parallelism_profiles": {
+    "h3_director_public_example": {"ulysses_degree": 2, "ring_degree": 1, "cfg_degree": 1, "dp_degree": 1},
+    "historical_ltx_fsdp_acceptance": {"ulysses_degree": 0, "ring_degree": 0, "cfg_degree": 0, "dp_degree": 1}
+  },
+  "relayvsr": {
+    "keyframe_sampling": "native single GPU; not FSDP",
+    "flash_decode": "two devices in one process; original FP32 windows",
+    "default_keep_workers": false,
+    "allocator": "temporarily remove max_split_size_mb in VSR scope; verify exact restoration",
+    "requires_p2p_pool": false,
+    "director_ownership": "exclusive leases from the current owned H3 worker pair",
+    "dynamic_vram": false,
+    "full_480p_10s_x4_validated": false,
+    "raw_reference_gate": "every output frame, finite FP32, same latent official Flash"
+  },
+  "pre_migration_python312_profile": {
+    "comfyui": "62b3c94bd45154f6486c7abf1b9efcacee96ea69",
+    "comfy-aimdo": "0.4.13",
+    "comfy-kitchen": "0.2.30",
+    "frontend": "1.48.7",
+    "torch": "2.12.0+cu126"
+  },
+  "current_gpu_campaign": "Representative MiniMax H3 Director/non-Director plus RelayVSR; not a fresh full LTX campaign"
 }
