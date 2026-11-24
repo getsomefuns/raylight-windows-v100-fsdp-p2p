@@ -1,0 +1,1711 @@
+{
+  "id": "a96804da-b636-4643-829f-07f11f512a4a",
+  "revision": 0,
+  "last_node_id": 22,
+  "last_link_id": 18,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "RayUNETLoader",
+      "pos": [
+        1091.3931640625,
+        150
+      ],
+      "size": [
+        279.4732421875,
+        102
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "ray_actors_init",
+          "name": "ray_actors_init",
+          "type": "RAY_ACTORS_INIT",
+          "link": 1
+        },
+        {
+          "localized_name": "lora",
+          "name": "lora",
+          "shape": 7,
+          "type": "RAY_LORA",
+          "link": 2
+        },
+        {
+          "localized_name": "unet_name",
+          "name": "unet_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "unet_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "weight_dtype",
+          "name": "weight_dtype",
+          "type": "COMBO",
+          "widget": {
+            "name": "weight_dtype"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "ray_actors",
+          "name": "ray_actors",
+          "type": "RAY_ACTORS",
+          "links": [
+            16
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RayUNETLoader"
+      },
+      "widgets_values": [
+        "minimax_h3_ref2va_pruned_fp8_scaled.safetensors",
+        "fp16_h3_safe"
+      ],
+      "widgets_values_named": {
+        "unet_name": "minimax_h3_ref2va_pruned_fp8_scaled.safetensors",
+        "weight_dtype": "fp16_h3_safe"
+      }
+    },
+    {
+      "id": 2,
+      "type": "RayMiniMaxH3DualGPUCLIPLoader",
+      "pos": [
+        553.396484375,
+        150
+      ],
+      "size": [
+        417.9966796875,
+        126
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "ray_actors_init",
+          "name": "ray_actors_init",
+          "type": "RAY_ACTORS_INIT",
+          "link": 3
+        },
+        {
+          "localized_name": "clip_name",
+          "name": "clip_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "clip_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "execution_mode",
+          "name": "execution_mode",
+          "type": "COMBO",
+          "widget": {
+            "name": "execution_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "text_encoder_attention",
+          "name": "text_encoder_attention",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "text_encoder_attention"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "clip",
+          "name": "clip",
+          "type": "CLIP",
+          "links": [
+            7
+          ]
+        },
+        {
+          "localized_name": "ray_actors_init",
+          "name": "ray_actors_init",
+          "type": "RAY_ACTORS_INIT",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "MiniMax H3 Text Encoder (Dual V100 TP2)",
+      "properties": {
+        "Node name for S&R": "RayMiniMaxH3DualGPUCLIPLoader"
+      },
+      "widgets_values": [
+        "MMH3\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "tp2",
+        "AUTO"
+      ],
+      "widgets_values_named": {
+        "clip_name": "MMH3\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "execution_mode": "tp2",
+        "text_encoder_attention": "AUTO"
+      }
+    },
+    {
+      "id": 3,
+      "type": "VAELoader",
+      "pos": [
+        120,
+        150
+      ],
+      "size": [
+        270,
+        58
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "vae名称",
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VAE",
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            5
+          ]
+        }
+      ],
+      "title": "Video VAE",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.46.0",
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "MMH3\\minimax_h3_video_vae_fp16.safetensors"
+      ],
+      "widgets_values_named": {
+        "vae_name": "MMH3\\minimax_h3_video_vae_fp16.safetensors"
+      }
+    },
+    {
+      "id": 4,
+      "type": "VAELoader",
+      "pos": [
+        120,
+        358
+      ],
+      "size": [
+        270,
+        58
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "vae名称",
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VAE",
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            6
+          ]
+        }
+      ],
+      "title": "Audio VAE",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.46.0",
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "MMH3\\minimax_h3_audio_vae_fp32.safetensors"
+      ],
+      "widgets_values_named": {
+        "vae_name": "MMH3\\minimax_h3_audio_vae_fp32.safetensors"
+      }
+    },
+    {
+      "id": 5,
+      "type": "MiniMaxH3Director",
+      "pos": [
+        1896.7302734375003,
+        150
+      ],
+      "size": [
+        1000,
+        1602
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "MODEL",
+          "link": 4
+        },
+        {
+          "localized_name": "video_vae",
+          "name": "video_vae",
+          "type": "VAE",
+          "link": 5
+        },
+        {
+          "localized_name": "audio_vae",
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 6
+        },
+        {
+          "localized_name": "clip",
+          "name": "clip",
+          "type": "CLIP",
+          "link": 7
+        },
+        {
+          "localized_name": "i2v_groups",
+          "name": "i2v_groups",
+          "shape": 7,
+          "type": "MMX_DIR_GROUP",
+          "link": null
+        },
+        {
+          "localized_name": "r2v_groups",
+          "name": "r2v_groups",
+          "shape": 7,
+          "type": "MMX_DIR_GROUP",
+          "link": null
+        },
+        {
+          "localized_name": "semantic_bridge",
+          "name": "semantic_bridge",
+          "shape": 7,
+          "type": "MMX_DIR_SEMANTIC_BRIDGE",
+          "link": null
+        },
+        {
+          "localized_name": "selflift",
+          "name": "selflift",
+          "shape": 7,
+          "type": "MMX_DIR_SELFLIFT",
+          "link": null
+        },
+        {
+          "localized_name": "refine",
+          "name": "refine",
+          "shape": 7,
+          "type": "MMX_DIR_REFINE",
+          "link": null
+        },
+        {
+          "localized_name": "face_refine",
+          "name": "face_refine",
+          "shape": 7,
+          "type": "MMX_DIR_FACE_REFINE",
+          "link": null
+        },
+        {
+          "localized_name": "sigmas",
+          "name": "sigmas",
+          "shape": 7,
+          "type": "SIGMAS",
+          "link": null
+        },
+        {
+          "localized_name": "vsr",
+          "name": "vsr",
+          "shape": 7,
+          "type": "MMX_DIR_VSR",
+          "link": 8
+        },
+        {
+          "localized_name": "task_type",
+          "name": "task_type",
+          "type": "COMBO",
+          "widget": {
+            "name": "task_type"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "global_prompt",
+          "name": "global_prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "global_prompt"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bd_grp_sample",
+          "name": "bd_grp_sample",
+          "type": "BDGROUP",
+          "widget": {
+            "name": "bd_grp_sample"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cfg",
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "frame_rate",
+          "name": "frame_rate",
+          "type": "FLOAT",
+          "widget": {
+            "name": "frame_rate"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "width",
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "height",
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ref_max_size",
+          "name": "ref_max_size",
+          "type": "INT",
+          "widget": {
+            "name": "ref_max_size"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "total_frames",
+          "name": "total_frames",
+          "type": "INT",
+          "widget": {
+            "name": "total_frames"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "timeline_data",
+          "name": "timeline_data",
+          "type": "STRING",
+          "widget": {
+            "name": "timeline_data"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bd_grp_advanced",
+          "name": "bd_grp_advanced",
+          "shape": 7,
+          "type": "BDGROUP",
+          "widget": {
+            "name": "bd_grp_advanced"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "steps",
+          "name": "steps",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sampler",
+          "name": "sampler",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "sampler"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "scheduler",
+          "name": "scheduler",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "scheduler"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shift_video",
+          "name": "shift_video",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "shift_video"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shift_audio",
+          "name": "shift_audio",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "shift_audio"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bd_grp_perf",
+          "name": "bd_grp_perf",
+          "shape": 7,
+          "type": "BDGROUP",
+          "widget": {
+            "name": "bd_grp_perf"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "clear_vram_between_segments",
+          "name": "clear_vram_between_segments",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "clear_vram_between_segments"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "clear_vram_before_refine",
+          "name": "clear_vram_before_refine",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "clear_vram_before_refine"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "clear_vram_before_face_refine",
+          "name": "clear_vram_before_face_refine",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "clear_vram_before_face_refine"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cache_frames_codec",
+          "name": "cache_frames_codec",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "cache_frames_codec"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "export_source_images",
+          "name": "export_source_images",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "export_source_images"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "export_pre_face_refine",
+          "name": "export_pre_face_refine",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "export_pre_face_refine"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cache_name",
+          "name": "cache_name",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "cache_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "shape": 6,
+          "type": "IMAGE",
+          "links": [
+            9
+          ]
+        },
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "shape": 6,
+          "type": "AUDIO",
+          "links": [
+            11
+          ]
+        },
+        {
+          "localized_name": "fps",
+          "name": "fps",
+          "type": "FLOAT",
+          "links": [
+            10,
+            14
+          ]
+        },
+        {
+          "localized_name": "frame_count",
+          "name": "frame_count",
+          "type": "INT",
+          "links": [
+            15
+          ]
+        },
+        {
+          "localized_name": "source_images",
+          "name": "source_images",
+          "shape": 6,
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "localized_name": "report",
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            13
+          ]
+        },
+        {
+          "localized_name": "images_pre_refine",
+          "name": "images_pre_refine",
+          "shape": 6,
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "localized_name": "images_pre_face_refine",
+          "name": "images_pre_face_refine",
+          "shape": 6,
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3Director"
+      },
+      "widgets_values": [
+        "r2v — 参考主体生视频(Reference to Video)",
+        "<Picture 1> shows three green armored robots. Preserve every robot's identity, armor silhouette, green material and relative position. They walk forward from a violet portal into a rain-soaked neon avenue while the camera performs one slow continuous orbit. Natural synchronized metal footsteps, rain and distant city ambience. No text, logos or watermarks.",
+        "采样设置",
+        1,
+        0,
+        "randomize",
+        24,
+        864,
+        480,
+        864,
+        141,
+        "{\"version\":5,\"editMode\":\"segment\",\"timelineMode\":\"prompt_batch\",\"totalFrames\":141,\"frameRate\":24,\"width\":864,\"height\":480,\"refMaxSize\":864,\"output\":{\"mode\":\"fixed\",\"aspectRatio\":\"自定义\",\"megapixels\":0.4,\"multiple\":32,\"longEdge\":864,\"width\":864,\"height\":480,\"maxExportFrames\":0,\"exportMode\":\"all\",\"audioMode\":\"generate\",\"exportSourceImages\":false,\"exportPreFaceRefine\":false,\"refImageSize\":\"match\",\"continuityEnabled\":false,\"continuityOverlapFrames\":22,\"continuityMode\":\"guide\",\"continuityRedraw\":0.1,\"continuityKeepTail\":true},\"videoClips\":[],\"video\":{\"fileName\":\"\",\"videoFile\":\"\",\"subfolder\":\"\",\"type\":\"input\",\"frames\":[],\"frameMap\":[],\"sourceFrameCount\":124,\"deletedSourceRanges\":[]},\"global\":{\"taskType\":\"r2v — 参考主体生视频(Reference to Video)\",\"prompt\":\"<Picture 1> shows three green armored robots. Preserve every robot's identity, armor silhouette, green material and relative position. They walk forward from a violet portal into a rain-soaked neon avenue while the camera performs one slow continuous orbit. Natural synchronized metal footsteps, rain and distant city ambience. No text, logos or watermarks.\",\"refs\":[{\"index\":0,\"imageFile\":\"Minimax_H3_REF2VA_Raylight.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"referenceVideo\":{\"videoFile\":\"\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"},\"continuousReference\":false,\"genImage\":{\"imageFile\":\"\"},\"loras\":[],\"refAudios\":[],\"refVideos\":[],\"commonEnabled\":false,\"commonCollapsed\":false},\"segments\":[{\"id\":\"s0\",\"start\":0,\"length\":141,\"frameCount\":141,\"durationSec\":5.6,\"prompt\":\"\",\"negativePrompt\":\"\",\"taskType\":\"r2v — 参考主体生视频(Reference to Video)\",\"refs\":[{\"index\":0,\"imageFile\":\"Minimax_H3_REF2VA_Raylight.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"refAudios\":[],\"refVideos\":[],\"genImage\":{\"imageFile\":\"\",\"fileName\":\"\"},\"startImage\":null,\"endImage\":null,\"continuityFromPrev\":false,\"refImageSize\":\"match\",\"loras\":[]}],\"gen\":{\"defaultFrameCount\":124},\"runSelectEnabled\":false,\"runSelection\":[],\"liveTaePreview\":true,\"batchDetailMode\":\"solo\",\"batchWorkspaces\":{\"r2v\":{\"selectedIndex\":0,\"editMode\":\"segment\",\"runSelectEnabled\":false,\"runSelection\":[],\"segments\":[{\"id\":\"s0\",\"start\":0,\"length\":141,\"frameCount\":141,\"durationSec\":5.6,\"prompt\":\"\",\"taskType\":\"r2v — 参考主体生视频(Reference to Video)\",\"refs\":[{\"index\":0,\"imageFile\":\"Minimax_H3_REF2VA_Raylight.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"referenceVideo\":{\"videoFile\":\"\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"},\"genImage\":{\"imageFile\":\"\",\"fileName\":\"\"},\"negativePrompt\":\"\",\"loras\":[],\"refAudios\":[],\"refVideos\":[],\"refImageSize\":\"match\",\"_videoFrameCount\":141,\"previewFps\":24}],\"globalCommon\":{\"commonEnabled\":false,\"commonCollapsed\":false,\"prompt\":\"<Picture 1> shows three green armored robots. Preserve every robot's identity, armor silhouette, green material and relative position. They walk forward from a violet portal into a rain-soaked neon avenue while the camera performs one slow continuous orbit. Natural synchronized metal footsteps, rain and distant city ambience. No text, logos or watermarks.\",\"refs\":[{\"index\":0,\"imageFile\":\"Minimax_H3_REF2VA_Raylight.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"refAudios\":[],\"refVideos\":[]}}}}",
+        "高级采样",
+        25,
+        "res_multistep",
+        "simple",
+        12,
+        3,
+        false,
+        false,
+        "性能",
+        true,
+        false,
+        false,
+        "raw",
+        "raylight_vsr_example",
+        ""
+      ],
+      "widgets_values_named": {
+        "task_type": "r2v — 参考主体生视频(Reference to Video)",
+        "global_prompt": "<Picture 1> shows three green armored robots. Preserve every robot's identity, armor silhouette, green material and relative position. They walk forward from a violet portal into a rain-soaked neon avenue while the camera performs one slow continuous orbit. Natural synchronized metal footsteps, rain and distant city ambience. No text, logos or watermarks.",
+        "bd_grp_sample": "采样设置",
+        "cfg": 1,
+        "seed": 0,
+        "control_after_generate": "randomize",
+        "frame_rate": 24,
+        "width": 864,
+        "height": 480,
+        "ref_max_size": 864,
+        "total_frames": 141,
+        "timeline_data": "{\"version\":5,\"editMode\":\"segment\",\"timelineMode\":\"prompt_batch\",\"totalFrames\":141,\"frameRate\":24,\"width\":864,\"height\":480,\"refMaxSize\":864,\"output\":{\"mode\":\"fixed\",\"aspectRatio\":\"自定义\",\"megapixels\":0.4,\"multiple\":32,\"longEdge\":864,\"width\":864,\"height\":480,\"maxExportFrames\":0,\"exportMode\":\"all\",\"audioMode\":\"generate\",\"exportSourceImages\":false,\"exportPreFaceRefine\":false,\"refImageSize\":\"match\",\"continuityEnabled\":false,\"continuityOverlapFrames\":22,\"continuityMode\":\"guide\",\"continuityRedraw\":0.1,\"continuityKeepTail\":true},\"videoClips\":[],\"video\":{\"fileName\":\"\",\"videoFile\":\"\",\"subfolder\":\"\",\"type\":\"input\",\"frames\":[],\"frameMap\":[],\"sourceFrameCount\":124,\"deletedSourceRanges\":[]},\"global\":{\"taskType\":\"r2v — 参考主体生视频(Reference to Video)\",\"prompt\":\"<Picture 1> shows three green armored robots. Preserve every robot's identity, armor silhouette, green material and relative position. They walk forward from a violet portal into a rain-soaked neon avenue while the camera performs one slow continuous orbit. Natural synchronized metal footsteps, rain and distant city ambience. No text, logos or watermarks.\",\"refs\":[{\"index\":0,\"imageFile\":\"Minimax_H3_REF2VA_Raylight.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"referenceVideo\":{\"videoFile\":\"\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"},\"continuousReference\":false,\"genImage\":{\"imageFile\":\"\"},\"loras\":[],\"refAudios\":[],\"refVideos\":[],\"commonEnabled\":false,\"commonCollapsed\":false},\"segments\":[{\"id\":\"s0\",\"start\":0,\"length\":141,\"frameCount\":141,\"durationSec\":5.6,\"prompt\":\"\",\"negativePrompt\":\"\",\"taskType\":\"r2v — 参考主体生视频(Reference to Video)\",\"refs\":[{\"index\":0,\"imageFile\":\"Minimax_H3_REF2VA_Raylight.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"refAudios\":[],\"refVideos\":[],\"genImage\":{\"imageFile\":\"\",\"fileName\":\"\"},\"startImage\":null,\"endImage\":null,\"continuityFromPrev\":false,\"refImageSize\":\"match\",\"loras\":[]}],\"gen\":{\"defaultFrameCount\":124},\"runSelectEnabled\":false,\"runSelection\":[],\"liveTaePreview\":true,\"batchDetailMode\":\"solo\",\"batchWorkspaces\":{\"r2v\":{\"selectedIndex\":0,\"editMode\":\"segment\",\"runSelectEnabled\":false,\"runSelection\":[],\"segments\":[{\"id\":\"s0\",\"start\":0,\"length\":141,\"frameCount\":141,\"durationSec\":5.6,\"prompt\":\"\",\"taskType\":\"r2v — 参考主体生视频(Reference to Video)\",\"refs\":[{\"index\":0,\"imageFile\":\"Minimax_H3_REF2VA_Raylight.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"referenceVideo\":{\"videoFile\":\"\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"},\"genImage\":{\"imageFile\":\"\",\"fileName\":\"\"},\"negativePrompt\":\"\",\"loras\":[],\"refAudios\":[],\"refVideos\":[],\"refImageSize\":\"match\",\"_videoFrameCount\":141,\"previewFps\":24}],\"globalCommon\":{\"commonEnabled\":false,\"commonCollapsed\":false,\"prompt\":\"<Picture 1> shows three green armored robots. Preserve every robot's identity, armor silhouette, green material and relative position. They walk forward from a violet portal into a rain-soaked neon avenue while the camera performs one slow continuous orbit. Natural synchronized metal footsteps, rain and distant city ambience. No text, logos or watermarks.\",\"refs\":[{\"index\":0,\"imageFile\":\"Minimax_H3_REF2VA_Raylight.jpg\",\"fileName\":\"\",\"type\":\"input\",\"subfolder\":\"\"}],\"refAudios\":[],\"refVideos\":[]}}}}",
+        "bd_grp_advanced": "高级采样",
+        "steps": 25,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "shift_video": 12,
+        "shift_audio": 3,
+        "export_source_images": false,
+        "export_pre_face_refine": false,
+        "bd_grp_perf": "性能",
+        "clear_vram_between_segments": true,
+        "clear_vram_before_refine": false,
+        "clear_vram_before_face_refine": false,
+        "cache_frames_codec": "raw",
+        "cache_name": "raylight_vsr_example",
+        "minimax_director_ui": ""
+      }
+    },
+    {
+      "id": 6,
+      "type": "CreateVideo",
+      "pos": [
+        3016.7302734375003,
+        150
+      ],
+      "size": [
+        284.158203125,
+        174
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "图像",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 9
+        },
+        {
+          "localized_name": "音频",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 11
+        },
+        {
+          "localized_name": "帧率",
+          "name": "fps",
+          "type": "FLOAT",
+          "widget": {
+            "name": "fps"
+          },
+          "link": 10
+        },
+        {
+          "localized_name": "bit_depth",
+          "name": "bit_depth",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "bit_depth"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "color_space",
+          "name": "color_space",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "color_space"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "chroma_subsampling",
+          "name": "chroma_subsampling",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "chroma_subsampling"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "codec",
+          "name": "codec",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "codec"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "视频",
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            12
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.46.0",
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [
+        30,
+        8,
+        "sRGB",
+        "auto",
+        "none"
+      ],
+      "widgets_values_named": {
+        "fps": 30,
+        "bit_depth": 8,
+        "color_space": "sRGB",
+        "chroma_subsampling": "auto",
+        "codec": "none"
+      }
+    },
+    {
+      "id": 7,
+      "type": "SaveVideo",
+      "pos": [
+        3420.8884765625003,
+        150
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "视频",
+          "name": "video",
+          "type": "VIDEO",
+          "link": 12
+        },
+        {
+          "localized_name": "文件名前缀",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "格式",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "编解码器",
+          "name": "format.codec",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format.codec"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "编码器",
+          "name": "codec",
+          "shape": 7,
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "codec"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "video",
+          "name": "video",
+          "type": "VIDEO",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.46.0",
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/raylight_relayvsr/director_ref2va",
+        "auto",
+        "auto",
+        "auto"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "video/raylight_relayvsr/director_ref2va",
+        "format": "auto",
+        "format.codec": "auto",
+        "codec": "auto"
+      }
+    },
+    {
+      "id": 8,
+      "type": "PreviewAny",
+      "pos": [
+        3016.7302734375003,
+        1018
+      ],
+      "size": [
+        210,
+        122
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "源",
+          "name": "source",
+          "type": "*",
+          "link": 13
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "字符串",
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "Director 运行报告",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.46.0",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 9,
+      "type": "PreviewAny",
+      "pos": [
+        3016.7302734375003,
+        474
+      ],
+      "size": [
+        210,
+        122
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "源",
+          "name": "source",
+          "type": "*",
+          "link": 14
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "字符串",
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "fps",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.46.0",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 10,
+      "type": "PreviewAny",
+      "pos": [
+        3016.7302734375003,
+        746
+      ],
+      "size": [
+        210,
+        122
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "源",
+          "name": "source",
+          "type": "*",
+          "link": 15
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "字符串",
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "frame_count",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.46.0",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "widgets_values_named": {}
+    },
+    {
+      "id": 12,
+      "type": "RayLoraLoader",
+      "pos": [
+        120,
+        566
+      ],
+      "size": [
+        270,
+        82
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "prev_ray_lora",
+          "name": "prev_ray_lora",
+          "shape": 7,
+          "type": "RAY_LORA",
+          "link": null
+        },
+        {
+          "localized_name": "lora_name",
+          "name": "lora_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "lora_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "strength_model",
+          "name": "strength_model",
+          "type": "FLOAT",
+          "widget": {
+            "name": "strength_model"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "ray_lora",
+          "name": "ray_lora",
+          "type": "RAY_LORA",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RayLoraLoader"
+      },
+      "widgets_values": [
+        "MMH3\\Ref2va\\lightx2v\\minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+        1
+      ],
+      "widgets_values_named": {
+        "lora_name": "MMH3\\Ref2va\\lightx2v\\minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+        "strength_model": 1
+      }
+    },
+    {
+      "id": 13,
+      "type": "RayInitializer",
+      "pos": [
+        120,
+        798
+      ],
+      "size": [
+        313.396484375,
+        370
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "wait_for",
+          "name": "wait_for",
+          "shape": 7,
+          "type": "*",
+          "link": null
+        },
+        {
+          "localized_name": "ray_cluster_address",
+          "name": "ray_cluster_address",
+          "type": "STRING",
+          "widget": {
+            "name": "ray_cluster_address"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ray_cluster_namespace",
+          "name": "ray_cluster_namespace",
+          "type": "STRING",
+          "widget": {
+            "name": "ray_cluster_namespace"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "GPU",
+          "name": "GPU",
+          "type": "INT",
+          "widget": {
+            "name": "GPU"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ulysses_degree",
+          "name": "ulysses_degree",
+          "type": "INT",
+          "widget": {
+            "name": "ulysses_degree"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ring_degree",
+          "name": "ring_degree",
+          "type": "INT",
+          "widget": {
+            "name": "ring_degree"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cfg_degree",
+          "name": "cfg_degree",
+          "type": "INT",
+          "widget": {
+            "name": "cfg_degree"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "dp_degree",
+          "name": "dp_degree",
+          "type": "INT",
+          "widget": {
+            "name": "dp_degree"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sync_ulysses",
+          "name": "sync_ulysses",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "sync_ulysses"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "clear_vram_after_sampling",
+          "name": "clear_vram_after_sampling",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "clear_vram_after_sampling"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "FSDP",
+          "name": "FSDP",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "FSDP"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "FSDP_CPU_OFFLOAD",
+          "name": "FSDP_CPU_OFFLOAD",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "FSDP_CPU_OFFLOAD"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "XFuser_attention",
+          "name": "XFuser_attention",
+          "type": "COMBO",
+          "widget": {
+            "name": "XFuser_attention"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "skip_comm_test",
+          "name": "skip_comm_test",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "skip_comm_test"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "use_mmap",
+          "name": "use_mmap",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "use_mmap"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "ray_actors_init",
+          "name": "ray_actors_init",
+          "type": "RAY_ACTORS_INIT",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RayInitializer"
+      },
+      "widgets_values": [
+        "local",
+        "default",
+        2,
+        2,
+        1,
+        1,
+        1,
+        true,
+        false,
+        true,
+        true,
+        "XFORMERS_MEMORY_EFFICIENT",
+        true,
+        true
+      ],
+      "widgets_values_named": {
+        "ray_cluster_address": "local",
+        "ray_cluster_namespace": "default",
+        "GPU": 2,
+        "ulysses_degree": 2,
+        "ring_degree": 1,
+        "cfg_degree": 1,
+        "dp_degree": 1,
+        "sync_ulysses": true,
+        "clear_vram_after_sampling": false,
+        "FSDP": true,
+        "FSDP_CPU_OFFLOAD": true,
+        "XFuser_attention": "XFORMERS_MEMORY_EFFICIENT",
+        "skip_comm_test": true,
+        "use_mmap": true
+      }
+    },
+    {
+      "id": 14,
+      "type": "RayMMH3DirectorModelAdapter",
+      "pos": [
+        1490.8664062500002,
+        150
+      ],
+      "size": [
+        285.8638671875,
+        26
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "ray_actors",
+          "name": "ray_actors",
+          "type": "RAY_ACTORS",
+          "link": 16
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RayMMH3DirectorModelAdapter"
+      }
+    },
+    {
+      "id": 20,
+      "type": "UNETLoader",
+      "pos": [
+        120,
+        1318
+      ],
+      "size": [
+        270,
+        82
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "UNet名称",
+          "name": "unet_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "unet_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "数据类型",
+          "name": "weight_dtype",
+          "type": "COMBO",
+          "widget": {
+            "name": "weight_dtype"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "模型",
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            17
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.46.0",
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "relayvsr_x2_lightx2v_int8_convrot.safetensors",
+        "default"
+      ],
+      "widgets_values_named": {
+        "unet_name": "relayvsr_x2_lightx2v_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    {
+      "id": 21,
+      "type": "VAELoader",
+      "pos": [
+        120,
+        1550
+      ],
+      "size": [
+        270,
+        58
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "vae名称",
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VAE",
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            18
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.46.0",
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "relayvsr_flash_vae_x2_fp32.safetensors"
+      ],
+      "widgets_values_named": {
+        "vae_name": "relayvsr_flash_vae_x2_fp32.safetensors"
+      }
+    },
+    {
+      "id": 22,
+      "type": "MiniMaxH3DirectorRelayVSR",
+      "pos": [
+        553.396484375,
+        426
+      ],
+      "size": [
+        302.9478515625,
+        246
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "MODEL",
+          "link": 17
+        },
+        {
+          "localized_name": "vae",
+          "name": "vae",
+          "type": "VAE",
+          "link": 18
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "steps",
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cfg",
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sampler",
+          "name": "sampler",
+          "type": "COMBO",
+          "widget": {
+            "name": "sampler"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "scheduler",
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": {
+            "name": "scheduler"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "denoise",
+          "name": "denoise",
+          "type": "FLOAT",
+          "widget": {
+            "name": "denoise"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "detail",
+          "name": "detail",
+          "type": "FLOAT",
+          "widget": {
+            "name": "detail"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "vsr",
+          "name": "vsr",
+          "type": "MMX_DIR_VSR",
+          "links": [
+            8
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3DirectorRelayVSR"
+      },
+      "widgets_values": [
+        42,
+        "randomize",
+        1,
+        1,
+        "euler",
+        "simple",
+        1,
+        1
+      ],
+      "widgets_values_named": {
+        "seed": 42,
+        "control_after_generate": "randomize",
+        "steps": 1,
+        "cfg": 1,
+        "sampler": "euler",
+        "scheduler": "simple",
+        "denoise": 1,
+        "detail": 1
+      }
+    }
+  ],
+  "links": [
+    [
+      1,
+      2,
+      1,
+      1,
+      0,
+      "RAY_ACTORS_INIT"
+    ],
+    [
+      2,
+      12,
+      0,
+      1,
+      1,
+      "RAY_LORA"
+    ],
+    [
+      3,
+      13,
+      0,
+      2,
+      0,
+      "RAY_ACTORS_INIT"
+    ],
+    [
+      4,
+      14,
+      0,
+      5,
+      0,
+      "MODEL"
+    ],
+    [
+      5,
+      3,
+      0,
+      5,
+      1,
+      "VAE"
+    ],
+    [
+      6,
+      4,
+      0,
+      5,
+      2,
+      "VAE"
+    ],
+    [
+      7,
+      2,
+      0,
+      5,
+      3,
+      "CLIP"
+    ],
+    [
+      8,
+      22,
+      0,
+      5,
+      11,
+      "MMX_DIR_VSR"
+    ],
+    [
+      9,
+      5,
+      0,
+      6,
+      0,
+      "IMAGE"
+    ],
+    [
+      10,
+      5,
+      2,
+      6,
+      2,
+      "FLOAT"
+    ],
+    [
+      11,
+      5,
+      1,
+      6,
+      1,
+      "AUDIO"
+    ],
+    [
+      12,
+      6,
+      0,
+      7,
+      0,
+      "VIDEO"
+    ],
+    [
+      13,
+      5,
+      5,
+      8,
+      0,
+      "STRING"
+    ],
+    [
+      14,
+      5,
+      2,
+      9,
+      0,
+      "FLOAT"
+    ],
+    [
+      15,
+      5,
+      3,
+      10,
+      0,
+      "INT"
+    ],
+    [
+      16,
+      1,
+      0,
+      14,
+      0,
+      "RAY_ACTORS"
+    ],
+    [
+      17,
+      20,
+      0,
+      22,
+      0,
+      "MODEL"
+    ],
+    [
+      18,
+      21,
+      0,
+      22,
+      1,
+      "VAE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.9,
+      "offset": [
+        416,
+        110
+      ]
+    }
+  },
+  "version": 0.4
+}
