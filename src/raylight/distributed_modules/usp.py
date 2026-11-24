@@ -26,6 +26,9 @@ class USPInjectRegistry:
     @classmethod
     def inject(cls, model_patcher, device_to, lowvram_model_memory, force_patch_weights, full_load):
         base_model = model_patcher.model
+        relay_class = getattr(model_base, "WAN22_RelayVSR", None)
+        if relay_class is not None and isinstance(base_model, relay_class):
+            raise ValueError("RelayVSR cannot use generic Wan USP. Use native sampling and RelayVSR Flash Decode (Ray).")
         for registered_cls, inject_func in cls._REGISTRY.items():
             if isinstance(base_model, registered_cls):
                 print(f"[USP] Initializing USP for {registered_cls.__name__}")
