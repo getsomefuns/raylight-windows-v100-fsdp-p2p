@@ -562,6 +562,8 @@ class XFuserSamplerCustomAdvanced:
     CATEGORY = "Raylight/extra/custom_sampling/samplers"
 
     def ray_sample(self, add_noise, noise_seed, guider, sampler, sigmas, latent_image):
+        from raylight.relayvsr.admission import assert_runtime_healthy
+        assert_runtime_healthy()
         _release_main_cuda_for_ray_sampling()
         ray_actors = _extract_ray_actors_from_guider(guider)
         gpu_actors = ray_actors["workers"]

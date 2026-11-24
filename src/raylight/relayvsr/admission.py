@@ -13,6 +13,12 @@ from raylight.text_encoder_parallel.lifecycle import DualGpuLeaseCoordinator, LE
 _ACTIVE = ContextVar("raylight_relayvsr_authorization", default=None)
 _QUARANTINED = []
 _LOG = logging.getLogger(__name__)
+MIN_LEASE_FREE_BYTES = 8 * 2**30
+
+
+def assert_runtime_healthy():
+    if _QUARANTINED:
+        raise RuntimeError('RelayVSR cleanup quarantined this process; restart ComfyUI before GPU reuse')
 
 
 def identity_string(value):
@@ -67,8 +73,9 @@ class FlashAuthorization:
 
 
 def current_flash_authorization():
+    assert_runtime_healthy()
     token = _ACTIVE.get()
-    if token is None or not token.active:
+    if token is None:
         return None
     token.validate()
     return token
@@ -76,6 +83,7 @@ def current_flash_authorization():
 
 @contextmanager
 def authorize_flash(workers, *, cleanup, ray_module=None, device_uuids=None):
+    assert_runtime_healthy()
     if ray_module is None:
         import ray as ray_module
     if _ACTIVE.get() is not None:
@@ -93,7 +101,7 @@ def authorize_flash(workers, *, cleanup, ray_module=None, device_uuids=None):
                 or row.get("node_id") != runtime[2] or not row.get("generation")
                 or row.get("actor_id") != identity_string(worker._actor_id)):
             raise RuntimeError("Foreign or stale RelayVSR worker identity")
-    if {row.get("gpu_uuid") for row in identities} != set(expected):
+    if tuple(row.get("gpu_uuid") for row in identities) != expected:
         raise RuntimeError("RelayVSR worker physical GPUs do not match this driver")
     # Only the strict VSR-specific cleanup entry differs from the mature TP2
     # all-or-nothing coordinator; the original worker/actor remains alive.
@@ -101,7 +109,14 @@ def authorize_flash(workers, *, cleanup, ray_module=None, device_uuids=None):
                                 exit_external_gpu_lease=w.exit_external_gpu_lease) for w in workers]
     coordinator = DualGpuLeaseCoordinator(endpoints, ray_module=ray_module)
     operation, owner = uuid.uuid4().hex, "raylight_relayvsr"
-    coordinator.acquire(operation, owner)
+    leases = coordinator.acquire(operation, owner)
+    if any(lease.free_bytes < MIN_LEASE_FREE_BYTES for lease in leases):
+        try:
+            coordinator.release(operation, owner)
+        except BaseException:
+            _QUARANTINED.append(coordinator)
+            raise
+        raise RuntimeError('RelayVSR requires at least 8 GiB measured free GPU headroom after worker offload')
     token = FlashAuthorization(ray_module, workers, identities, runtime, operation, owner)
     marker = _ACTIVE.set(token)
     try:

@@ -113,9 +113,11 @@ def run_local_flash(vae_path, samples, images, detail, worker_count=2,
         # A cluster-wide free-GPU count does not identify local free devices,
         # and no lease is acquired by local threads. Refuse all connected Ray
         # sessions rather than risk foreign work, even on a kept pool's reuse.
+        from .admission import assert_runtime_healthy, current_flash_authorization
+        assert_runtime_healthy()
+        token = current_flash_authorization()
         if ray.is_initialized():
-            from .admission import current_flash_authorization
-            if current_flash_authorization() is None:
+            if token is None:
                 raise RuntimeError("RelayVSR local decode requires ending the existing Ray session first or an owning Director GPU lease")
         admitted = True
         if prepare is not None:

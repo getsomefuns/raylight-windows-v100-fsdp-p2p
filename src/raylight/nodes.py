@@ -306,6 +306,8 @@ def _probe_ray_actor_payload(payload, expected_world_size: int) -> bool:
 
 
 def _reuse_active_ray_session(session_key: str, expected_world_size: int):
+    from raylight.relayvsr.admission import assert_runtime_healthy
+    assert_runtime_healthy()
     global _ACTIVE_RAY_SESSION
     if _ACTIVE_RAY_SESSION is None or not ray.is_initialized():
         return None
@@ -327,6 +329,8 @@ def _fsdp_model_transition(*, already_loaded: bool, model_loaded: bool) -> str:
 
 
 def _fsdp_actor_model_transition(gpu_actors, unet_path, model_options) -> str:
+    from raylight.relayvsr.admission import assert_runtime_healthy
+    assert_runtime_healthy()
     if not gpu_actors:
         return "recycle"
     try:
@@ -649,6 +653,8 @@ class RayInitializer:
         torch_dist_address: str = "None",
         wait_for: Any = None,
     ):
+        from raylight.relayvsr.admission import assert_runtime_healthy
+        assert_runtime_healthy()
         # THIS IS PYTORCH DIST ADDRESS
         # (TODO) Change so it can be use in cluster of nodes. but it is long waaaaay down in the priority list
         # os.environ['TORCH_CUDA_ARCH_LIST'] = ""

@@ -1196,6 +1196,8 @@ class RayWorker:
         comfy_model_management.soft_empty_cache()
         if strict and cleanup_errors:
             raise RuntimeError("Worker GPU cleanup failed: " + "; ".join(cleanup_errors))
+        if strict and torch.cuda.is_available() and torch.cuda.memory_allocated() > 512 * 2**20:
+            raise RuntimeError('Worker GPU cleanup left more than 512 MiB active residency; refuse RelayVSR lease')
         return True
 
     def get_relay_vsr_identity(self):

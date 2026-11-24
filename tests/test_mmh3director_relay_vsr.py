@@ -110,6 +110,25 @@ def test_wrong_decode_frame_count_does_not_escape_as_video(pipeline, monkeypatch
     assert events[-1] == "return"
 
 
+def test_director_flash_receives_real_interrupt_check_and_cleans_before_lease_return(pipeline, monkeypatch):
+    import comfy.model_management as mm
+    bridge,workers,pack,events=pipeline
+    class Cancelled(Exception):
+        pass
+    def interrupt():
+        raise Cancelled('user stopped Flash')
+    monkeypatch.setattr(mm,'throw_exception_if_processing_interrupted',interrupt)
+    monkeypatch.setattr(bridge,'_sample_relay_vsr',lambda *_args:{'samples':torch.zeros(1)})
+    def decode(*_args,**kwargs):
+        checker=kwargs.get('interrupt_check')
+        assert callable(checker), 'Director must forward cancellation into Flash dispatch'
+        checker()
+    monkeypatch.setattr(bridge,'run_local_flash',decode)
+    with pytest.raises(Cancelled,match='user stopped Flash'):
+        bridge.run_director_relay_vsr(torch.zeros(2,64,64,3),pack,workers)
+    assert events[-3:]==['close','unload','return']
+
+
 def test_native_sampler_receives_all_configured_parameters(pipeline, monkeypatch):
     bridge, _, pack, _ = pipeline
     import comfy_extras.nodes_wan as native
@@ -134,6 +153,7 @@ def test_zero_vsr_knobs_do_not_collide_with_one_in_ray_final_fingerprints():
     assert wrapped(plan) == original(plan)  # Native Director remains unchanged.
     marker = bridge._ACTIVE.set((object(), object()))
     try:
-        assert wrapped(plan) == {'vsr': True, 'vsr_cfg': 0., 'vsr_denoise': 0., 'vsr_detail': 0.}
+        result=wrapped(plan)
+        assert {key:result[key] for key in ('vsr','vsr_cfg','vsr_denoise','vsr_detail')} == {'vsr': True, 'vsr_cfg': 0., 'vsr_denoise': 0., 'vsr_detail': 0.}
     finally:
         bridge._ACTIVE.reset(marker)

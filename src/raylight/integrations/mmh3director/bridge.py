@@ -314,6 +314,8 @@ def dispatch_mmh3director_stage(
     noise_override=None,
 ):
     """Route the current Director stage seam to the existing Ray workers."""
+    from raylight.relayvsr.admission import assert_runtime_healthy
+    assert_runtime_healthy()
 
     # Director 19b6a73 reuses SigmaShift clones through this local cache.  The
     # real model lives in Ray workers, so retaining the main-process proxy clone

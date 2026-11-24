@@ -7,6 +7,12 @@ import pytest
 from raylight.text_encoder_parallel.lifecycle import WorkerGpuLifecycle
 
 
+@pytest.fixture(autouse=True)
+def isolate_process_quarantine(monkeypatch):
+    module=importlib.import_module('raylight.relayvsr.admission')
+    monkeypatch.setattr(module,'_QUARANTINED',[])
+
+
 class Remote:
     def __init__(self, function):
         self.function = function
@@ -177,3 +183,63 @@ def test_local_executor_requires_live_lease_not_a_past_authorization(setup, monk
     assert events.index("close") < events.index("release0")
     with pytest.raises(RuntimeError, match="Ray"):
         local.run_local_flash("unused", latents, images, 1.)
+
+
+def test_cleanup_quarantine_blocks_replacement_actors_and_h3_reuse(setup):
+    workers,events=setup
+    def fail():raise RuntimeError('cleanup failed')
+    with pytest.raises(RuntimeError,match='cleanup'):
+        with authorization(workers,fail):pass
+    replacements=[Worker(0,events),Worker(1,events)]
+    with pytest.raises(RuntimeError,match='[Rr]estart|quarantin'):
+        with authorization(replacements,lambda:None):pass
+    from raylight import nodes
+    with pytest.raises(RuntimeError,match='[Rr]estart|quarantin'):
+        nodes._reuse_active_ray_session('unused',2)
+    with pytest.raises(RuntimeError,match='[Rr]estart|quarantin'):
+        nodes._fsdp_actor_model_transition([],None,{})
+
+
+def test_disconnected_director_token_is_not_standalone_admission(setup, monkeypatch):
+    import ray
+    import torch
+    from raylight.relayvsr import local
+    workers,events=setup
+    with authorization(workers,lambda:None):
+        monkeypatch.setattr(FakeRay,'is_initialized',staticmethod(lambda:False))
+        monkeypatch.setattr(ray,'is_initialized',lambda:False)
+        monkeypatch.setattr(local,'_checkpoint_scale',lambda _:2)
+        with pytest.raises(RuntimeError,match='connected|session|driver'):
+            local.run_local_flash('unused',torch.zeros(1,48,1,8,8),torch.zeros(1,64,64,3),1.,prepare=lambda:events.append('unexpected unload'))
+    assert 'unexpected unload' not in events
+
+
+def test_swapped_rank_gpu_map_is_rejected_before_offload(setup):
+    workers,events=setup
+    workers[0].identity['gpu_uuid']='gpu1'
+    workers[1].identity['gpu_uuid']='gpu0'
+    with pytest.raises(RuntimeError,match='GPU|physical|mapping'):
+        with authorization(workers,lambda:None):pass
+    assert not events
+
+
+def test_zero_measured_headroom_cannot_admit_native_vsr(setup):
+    workers,events=setup
+    original=workers[1].enter_relay_vsr_gpu_lease.function
+    def depleted(operation,owner):
+        response=original(operation,owner)
+        response['free_bytes']=0
+        return response
+    workers[1].enter_relay_vsr_gpu_lease=Remote(depleted)
+    with pytest.raises(RuntimeError,match='headroom|free|memory'):
+        with authorization(workers,lambda:None):pass
+    assert all(worker.lifecycle.snapshot()['state']=='idle' for worker in workers)
+
+
+def test_expired_context_token_is_never_reinterpreted_as_standalone(setup,monkeypatch):
+    from raylight.relayvsr import admission
+    workers,_=setup
+    with authorization(workers,lambda:None) as token:
+        token.active=False
+        with pytest.raises(RuntimeError,match='session|driver'):
+            admission.current_flash_authorization()

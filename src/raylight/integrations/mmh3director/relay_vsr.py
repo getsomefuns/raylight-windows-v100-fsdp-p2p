@@ -1,12 +1,16 @@
 """Opt-in Director VSR routing; unrelated Director/VAE calls stay native."""
 from contextvars import ContextVar
 import functools
+import hashlib
 import importlib
 import inspect
+import json
 import logging
 import math
+from pathlib import Path
 import sys
 import time
+import uuid
 
 import torch
 
@@ -19,12 +23,59 @@ from .vae_decode import extract_vae_source_path
 
 _LOG = logging.getLogger(__name__)
 _ACTIVE = ContextVar("raylight_director_vsr_workers", default=None)
+_CACHE_SCOPE = ContextVar('raylight_director_vsr_cache_scope', default=False)
+_SOURCES = ContextVar('raylight_director_vsr_sources', default=None)
 _EXECUTE_MARKER = "_raylight_director_vsr_execute"
 _SAMPLE_MARKER = "_raylight_director_vsr_sample"
 _FINGERPRINT_MARKER = "_raylight_director_vsr_fingerprint"
 _PATCHED_CLASSES = []
 _PATCHED_ALIASES = []
 _PATCHED_FINGERPRINTS = []
+_PATCHED_CACHE_LOADERS = []
+
+
+def vsr_source_fingerprint(pack):
+    """Stable file stamps plus plain patch options; unknown mutations cannot reuse finals."""
+    result = {}
+    nonce = uuid.uuid4().hex
+    for name, patcher in (('model', pack.get('model')), ('vae', getattr(pack.get('vae'), 'patcher', None))):
+        cached = getattr(patcher, 'cached_patcher_init', None)
+        try:
+            path = Path(cached[1][0]).resolve(strict=True)
+            stat = path.stat()
+            stamp = {'path': str(path), 'bytes': stat.st_size, 'mtime_ns': stat.st_mtime_ns}
+            options = json.dumps(getattr(patcher, 'model_options', {}), sort_keys=True, allow_nan=False)
+            stamp['options_sha256'] = hashlib.sha256(options.encode()).hexdigest()
+            if getattr(patcher, 'patches', None) or getattr(patcher, 'object_patches', None):
+                stamp['unverified_patches'] = nonce
+            result[name] = stamp
+        except (OSError, TypeError, ValueError, IndexError, KeyError):
+            result[name] = {'unverified_source': nonce}
+    return result
+
+
+def make_cache_loader_wrapper(original, cache_module):
+    @functools.wraps(original)
+    def load(node_id, seg, plan, *, allow_stale=False):
+        if allow_stale and (_CACHE_SCOPE.get() or current_director_vsr_workers() is not None):
+            root = cache_module._cache_dir_or_none(node_id)
+            path = None if root is None else root / f'seg_{seg.index:04d}.meta.json'
+            expected = cache_module.segment_cache_fingerprint(seg, plan)
+            try:
+                stored = json.loads(path.read_text(encoding='utf-8')) if path is not None and path.is_file() else {}
+            except (OSError, ValueError):
+                stored = {}
+            if not isinstance(stored, dict):
+                stored = {}
+            if stored.get('vsr') or expected.get('vsr'):
+                def vsr_fields(value):
+                    return {key: item for key, item in value.items()
+                            if key.startswith('vsr') or key == 'raylight_vsr_sources'}
+                if vsr_fields(stored) != vsr_fields(expected):
+                    raise RuntimeError(f'VSR final cache changed for segment {seg.index + 1}; select and rerun this segment before merging. First-pass AV caches are retained.')
+        return original(node_id, seg, plan, allow_stale=allow_stale)
+    setattr(load, '_raylight_vsr_cache_loader', True)
+    return load
 
 
 def current_director_vsr_workers():
@@ -37,15 +88,25 @@ def make_execute_wrapper(original):
     def execute(*args, **kwargs):
         bound = signature.bind_partial(*args, **kwargs).arguments
         model, pack = bound.get("model"), bound.get("vsr")
-        if not isinstance(model, RayMMH3DirectorModelProxy) or not isinstance(pack, dict) or pack.get("enabled") is False:
+        if not isinstance(model, RayMMH3DirectorModelProxy):
             return original(*args, **kwargs)
+        if not isinstance(pack, dict) or pack.get('enabled') is False:
+            marker = _CACHE_SCOPE.set(True)
+            try:
+                return original(*args, **kwargs)
+            finally:
+                _CACHE_SCOPE.reset(marker)
         workers = tuple(model.ray_actors.get("workers", ()))
         if len(workers) != 2:
             raise RuntimeError("Director dual V100 RelayVSR requires both H3 workers")
         marker = _ACTIVE.set(workers)
+        scope_marker = _CACHE_SCOPE.set(True)
+        source_marker = _SOURCES.set(vsr_source_fingerprint(pack))
         try:
             return original(*args, **kwargs)
         finally:
+            _SOURCES.reset(source_marker)
+            _CACHE_SCOPE.reset(scope_marker)
             _ACTIVE.reset(marker)
     setattr(execute, _EXECUTE_MARKER, True)
     return execute
@@ -97,6 +158,7 @@ def _validate_inputs(frames, pack):
 
 @torch.inference_mode()
 def run_director_relay_vsr(frames, pack, workers):
+    import comfy.model_management as mm
     path, scale = _validate_inputs(frames, pack)
     images = frames.detach().to(device="cpu", dtype=torch.float32).contiguous()
     def cleanup():
@@ -107,7 +169,8 @@ def run_director_relay_vsr(frames, pack, workers):
         _release_main_gpu_models()
         sampled = _sample_relay_vsr(images, pack)
         output = run_local_flash(path, sampled["samples"], images, float(pack.get("detail", 1.)),
-            worker_count=2, keep_workers=False, prepare=_release_main_gpu_models)
+            worker_count=2, keep_workers=False, prepare=_release_main_gpu_models,
+            interrupt_check=mm.throw_exception_if_processing_interrupted)
         expected = (images.shape[0], images.shape[1] * scale, images.shape[2] * scale, 3)
         if tuple(output.shape) != expected:
             raise RuntimeError(f"Director RelayVSR output frame/size mismatch: {tuple(output.shape)} != {expected}")
@@ -140,6 +203,7 @@ def make_fingerprint_wrapper(original):
         for name in ("cfg", "denoise", "detail"):
             value = pack.get(name)
             result[f"vsr_{name}"] = round(float(1. if value is None else value), 4)
+        result['raylight_vsr_sources'] = _SOURCES.get() or vsr_source_fingerprint(pack)
         return result
     setattr(fingerprint, _FINGERPRINT_MARKER, True)
     return fingerprint
@@ -160,6 +224,17 @@ def install_mmh3director_relay_vsr_bridge(*, require_director=False):
                 continue
             raise
         pack_module = importlib.import_module(f"{root}.director.relay_vsr.pack")
+        cache_module = importlib.import_module(f'{root}.director.segment_cache')
+        cache_loader = cache_module.load_segment_cache
+        if not getattr(cache_loader, '_raylight_vsr_cache_loader', False):
+            if tuple(inspect.signature(cache_loader).parameters) != ('node_id', 'seg', 'plan', 'allow_stale'):
+                raise RuntimeError('Unvalidated Director final-cache loader contract')
+            wrapped_loader = make_cache_loader_wrapper(cache_loader, cache_module)
+            for name, module in tuple(sys.modules.items()):
+                if name.startswith(f'{root}.director') and getattr(module, 'load_segment_cache', None) is cache_loader:
+                    module.load_segment_cache = wrapped_loader
+                    _PATCHED_CACHE_LOADERS.append((module, cache_loader, wrapped_loader))
+            changed = True
         original_fingerprint = pack_module.relay_vsr_fingerprint
         if not getattr(original_fingerprint, _FINGERPRINT_MARKER, False):
             if tuple(inspect.signature(original_fingerprint).parameters) != ("plan",):
@@ -188,6 +263,10 @@ def install_mmh3director_relay_vsr_bridge(*, require_director=False):
 
 
 def uninstall_mmh3director_relay_vsr_bridge_for_test():
+    for module, original, wrapped in reversed(_PATCHED_CACHE_LOADERS):
+        if module.load_segment_cache is wrapped:
+            module.load_segment_cache = original
+    _PATCHED_CACHE_LOADERS.clear()
     for cls, original, wrapped in reversed(_PATCHED_CLASSES):
         if cls.execute is wrapped:
             cls.execute = original
