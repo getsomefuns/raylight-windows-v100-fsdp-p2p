@@ -3,6 +3,7 @@ from __future__ import annotations
 import collections
 import logging
 import gc
+import inspect
 import os
 import sys
 from typing import TYPE_CHECKING
@@ -45,6 +46,12 @@ except Exception:
 
 
 _RETAINED_FAILED_HOST_REGISTRATIONS = []
+
+
+def _native_disk_policy(fast_disk):
+    if "fast_disk" in inspect.signature(comfy.model_patcher.ModelPatcher.__init__).parameters:
+        return {"fast_disk": fast_disk}
+    return {}
 
 
 class LowVramPatch:
@@ -581,14 +588,19 @@ class FSDPModelPatcher(comfy.model_patcher.ModelPatcher):
         fsdp_state_dict: dict | None = None,
         device_mesh=None,
         is_cpu_offload: bool = False,
+        fast_disk: bool = False,
     ):
+        disk_policy = _native_disk_policy(fast_disk)
         super().__init__(
             model=model,
             load_device=load_device,
             offload_device=offload_device,
             size=size,
             weight_inplace_update=weight_inplace_update,
+            **disk_policy,
         )
+        if fast_disk and not disk_policy:
+            raise ValueError("fast_disk is unavailable on this legacy ComfyUI core")
         self.rank = rank
         self.fsdp_state_dict = fsdp_state_dict
         self.device_mesh = device_mesh
@@ -938,14 +950,19 @@ class PipefusionModelPatcher(comfy.model_patcher.ModelPatcher):
         pipefusion_config: "PipeFusionConfig | None" = None,
         stage_plan: "StagePlan | None" = None,
         parallel_context: "XFuserParallelContext | None" = None,
+        fast_disk: bool = False,
     ):
+        disk_policy = _native_disk_policy(fast_disk)
         super().__init__(
             model=model,
             load_device=load_device,
             offload_device=offload_device,
             size=size,
             weight_inplace_update=weight_inplace_update,
+            **disk_policy,
         )
+        if fast_disk and not disk_policy:
+            raise ValueError("fast_disk is unavailable on this legacy ComfyUI core")
         self.pipefusion_config = pipefusion_config
         self.pipefusion_stage = stage_plan
         self.parallel_context = parallel_context
