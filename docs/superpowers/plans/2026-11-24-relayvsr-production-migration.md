@@ -66,6 +66,10 @@
 - [ ] Full suite and independent whole-change Python/code review; fix important findings RED→GREEN. No production migration if any required gate remains unmet.
 - [ ] Commit acceptance fixtures/reports, not media, credentials, absolute machine paths or full logs.
 
+Task4 acceptance addendum: fresh31-frame1MP/x4 A/B/A controls identified the launcher's `max_split_size_mb:128` allocator policy, not the independent128MiB P2P staging capacity. Allocated Flash peak stays about6.08GB, while reserved memory grows from7.67GB to16.60GB and windows slow. Add a Raylight-only, reentrant VSR allocator scope: read live native settings, temporarily remove only max_split_size_mb during native VSR sampling/Flash, restore and verify the original settings on success/failure before H3 reuse; quarantine on unprovable restoration. Preserve all other allocator options, H3 worker configuration, precision and P2P capacity. RED→GREEN unit/routing tests, native API restoration probe, full suites, actual integrated/cache regressions and full raw/performance verification remain required. This is a root-cause fix to Task4, not an unconditional global startup change.
+
+补充验收：仅在VSR执行期间临时解除PyTorch拆分限制，正常或异常结束均恢复原配置；恢复不可证实则保持worker租约、不允许等待任务继续。Director覆盖VSR采样和Flash；独立解码节点仅覆盖Flash，不宣称已加速此前运行的原生KSampler。与P2P的128MiB通信预算无关。
+
 ### Task 5: Backup, production deployment and release
 
 **Files:** `scripts/` migration/rollback helpers with tests if newly needed, README.md/README.zh-CN.md as present, CHANGELOG and bilingual release notes; private verified backups below `.local/backups/production-relayvsr-20261124`.

@@ -144,6 +144,28 @@ def test_native_sampler_receives_all_configured_parameters(pipeline, monkeypatch
     assert bridge._sample_relay_vsr(torch.zeros(1, 64, 64, 3), pack) is latent
 
 
+def test_only_vsr_sample_and_flash_use_relaxed_allocator(pipeline,monkeypatch):
+    bridge,workers,pack,events=pipeline
+    active=[]
+    @contextmanager
+    def scope():
+        active.append(True)
+        try:yield
+        finally:active.pop();events.append('allocator restored')
+    monkeypatch.setattr(bridge,'native_vsr_allocator',scope,raising=False)
+    def sample(*_):
+        assert active, 'Native VSR sampling retained the H3 split limit'
+        return {'samples':torch.zeros(1)}
+    def decode(*_,**__):
+        assert active, 'Flash decoding retained the H3 split limit'
+        return torch.zeros(1,128,128,3)
+    monkeypatch.setattr(bridge,'_sample_relay_vsr',sample)
+    monkeypatch.setattr(bridge,'run_local_flash',decode)
+    bridge.run_director_relay_vsr(torch.zeros(1,64,64,3),pack,workers)
+    assert not active
+    assert events.index('allocator restored')<events.index('return')
+
+
 def test_zero_vsr_knobs_do_not_collide_with_one_in_ray_final_fingerprints():
     bridge = module()
     # The current upstream uses `value or 1`, so its legal zero settings collide.

@@ -1,6 +1,6 @@
 """Shared-process GPU Flash workers: no Ray startup or pixel serialization."""
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import asdict
 import json
 import logging
@@ -14,6 +14,7 @@ import torch
 
 from .runtime import _checkpoint_scale, dispatch_window_jobs
 from .worker import RelayFlashDecoder, validate_relay_inputs
+from .allocator import native_vsr_allocator
 
 _POOL = None
 _LOCK = threading.Lock()
@@ -108,6 +109,7 @@ def run_local_flash(vae_path, samples, images, detail, worker_count=2,
     succeeded = False
     admitted = False
     trace = []
+    allocator_scope = ExitStack()
     try:
         import ray
         # A cluster-wide free-GPU count does not identify local free devices,
@@ -122,6 +124,7 @@ def run_local_flash(vae_path, samples, images, detail, worker_count=2,
         admitted = True
         if prepare is not None:
             prepare()
+        allocator_scope.enter_context(native_vsr_allocator())
         key = (str(Path(vae_path).resolve()), count)
         if _POOL is not None and _POOL.key != key:
             release_local_pool()
@@ -162,19 +165,26 @@ def run_local_flash(vae_path, samples, images, detail, worker_count=2,
         raise
     finally:
         try:
-            elapsed = time.perf_counter()-started
-            _LOG.info("[Raylight] RelayVSR local Flash %s windows=%d workers=%d seconds=%.3f",
-                      "completed" if succeeded else "failed", len(trace), count, elapsed)
             try:
-                directory = os.environ.get("RAYLIGHT_RELAYVSR_TRACE_DIR")
-                if directory:
-                    path = Path(directory)
-                    path.mkdir(parents=True, exist_ok=True)
-                    record = {"operation": uuid.uuid4().hex, "mode": "local_threads",
-                              "completed": succeeded, "seconds": elapsed, "workers": count,
-                              "windows": trace}
-                    (path/f"{record['operation']}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
-            except OSError:
-                _LOG.exception("RelayVSR diagnostic trace could not be saved")
+                allocator_scope.close()
+            except BaseException:
+                succeeded = False
+                raise
         finally:
-            _LOCK.release()
+            try:
+                elapsed = time.perf_counter()-started
+                _LOG.info("[Raylight] RelayVSR local Flash %s windows=%d workers=%d seconds=%.3f",
+                          "completed" if succeeded else "failed", len(trace), count, elapsed)
+                try:
+                    directory = os.environ.get("RAYLIGHT_RELAYVSR_TRACE_DIR")
+                    if directory:
+                        path = Path(directory)
+                        path.mkdir(parents=True, exist_ok=True)
+                        record = {"operation": uuid.uuid4().hex, "mode": "local_threads",
+                                  "completed": succeeded, "seconds": elapsed, "workers": count,
+                                  "windows": trace}
+                        (path/f"{record['operation']}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+                except OSError:
+                    _LOG.exception("RelayVSR diagnostic trace could not be saved")
+            finally:
+                _LOCK.release()

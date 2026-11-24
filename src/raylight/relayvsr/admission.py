@@ -21,6 +21,10 @@ def assert_runtime_healthy():
         raise RuntimeError('RelayVSR cleanup quarantined this process; restart ComfyUI before GPU reuse')
 
 
+def quarantine_runtime(reason):
+    _QUARANTINED.append(reason)
+
+
 def identity_string(value):
     convert = getattr(value, "hex", None)
     return convert() if callable(convert) else str(value)
@@ -112,6 +116,7 @@ def authorize_flash(workers, *, cleanup, ray_module=None, device_uuids=None):
     leases = coordinator.acquire(operation, owner)
     if any(lease.free_bytes < MIN_LEASE_FREE_BYTES for lease in leases):
         try:
+            assert_runtime_healthy()
             coordinator.release(operation, owner)
         except BaseException:
             _QUARANTINED.append(coordinator)
@@ -127,6 +132,7 @@ def authorize_flash(workers, *, cleanup, ray_module=None, device_uuids=None):
             # Never return the GPUs to H3 while Flash may still own weights or
             # in-flight work. A failed cleanup is deliberately quarantined.
             cleanup()
+            assert_runtime_healthy()
             coordinator.release(operation, owner)
         except BaseException:
             _QUARANTINED.append((token, coordinator))

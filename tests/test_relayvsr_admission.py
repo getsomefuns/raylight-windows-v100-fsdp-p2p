@@ -1,5 +1,6 @@
 """Real lease-state regressions; only Ray RPC and hardware probes are doubled."""
 import importlib
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -243,3 +244,35 @@ def test_expired_context_token_is_never_reinterpreted_as_standalone(setup,monkey
         token.active=False
         with pytest.raises(RuntimeError,match='session|driver'):
             admission.current_flash_authorization()
+
+
+def test_local_allocator_scope_starts_after_prepare_and_ends_after_pool_cleanup(setup,monkeypatch):
+    import ray
+    import torch
+    from pathlib import Path
+    from raylight.relayvsr import local
+    workers,events=setup
+    active=[]
+    @contextmanager
+    def scope():
+        active.append(True);events.append('allocator enter')
+        try:yield
+        finally:active.pop();events.append('allocator restore')
+    def prepare():
+        assert not active
+        events.append('prepare')
+    def close():
+        assert active
+        events.append('pool closed')
+    def dispatch(*args):
+        assert active, 'Local Flash did not relax the allocator'
+        args[5].zero_()
+    monkeypatch.setattr(ray,'is_initialized',lambda:True)
+    monkeypatch.setattr(local,'_checkpoint_scale',lambda _:2)
+    monkeypatch.setattr(local,'_POOL',None)
+    monkeypatch.setattr(local,'_LocalPool',lambda path,count:SimpleNamespace(key=(str(Path(path).resolve()),count),decoders=[],close=close))
+    monkeypatch.setattr(local,'native_vsr_allocator',scope,raising=False)
+    monkeypatch.setattr(local,'dispatch_window_jobs',dispatch)
+    with authorization(workers,local.release_local_pool):
+        local.run_local_flash('unused',torch.zeros(1,48,1,8,8),torch.zeros(1,64,64,3),1.,prepare=prepare)
+    assert events.index('prepare')<events.index('allocator enter')<events.index('pool closed')<events.index('allocator restore')<events.index('release0')

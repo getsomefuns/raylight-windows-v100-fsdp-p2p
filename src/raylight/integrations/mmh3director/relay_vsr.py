@@ -15,6 +15,7 @@ import uuid
 import torch
 
 from raylight.relayvsr.admission import authorize_flash
+from raylight.relayvsr.allocator import native_vsr_allocator
 from raylight.relayvsr.local import release_local_pool, run_local_flash
 from raylight.relayvsr.runtime import _checkpoint_scale
 from .proxy import RayMMH3DirectorModelProxy
@@ -167,13 +168,14 @@ def run_director_relay_vsr(frames, pack, workers):
     started = time.perf_counter()
     with authorize_flash(workers, cleanup=cleanup):
         _release_main_gpu_models()
-        sampled = _sample_relay_vsr(images, pack)
-        output = run_local_flash(path, sampled["samples"], images, float(pack.get("detail", 1.)),
-            worker_count=2, keep_workers=False, prepare=_release_main_gpu_models,
-            interrupt_check=mm.throw_exception_if_processing_interrupted)
-        expected = (images.shape[0], images.shape[1] * scale, images.shape[2] * scale, 3)
-        if tuple(output.shape) != expected:
-            raise RuntimeError(f"Director RelayVSR output frame/size mismatch: {tuple(output.shape)} != {expected}")
+        with native_vsr_allocator():
+            sampled = _sample_relay_vsr(images, pack)
+            output = run_local_flash(path, sampled["samples"], images, float(pack.get("detail", 1.)),
+                worker_count=2, keep_workers=False, prepare=_release_main_gpu_models,
+                interrupt_check=mm.throw_exception_if_processing_interrupted)
+            expected = (images.shape[0], images.shape[1] * scale, images.shape[2] * scale, 3)
+            if tuple(output.shape) != expected:
+                raise RuntimeError(f"Director RelayVSR output frame/size mismatch: {tuple(output.shape)} != {expected}")
     _LOG.info("[Raylight] Director dual-V100 RelayVSR x%d completed frames=%d seconds=%.3f",
               scale, images.shape[0], time.perf_counter() - started)
     return output
