@@ -63,3 +63,35 @@ def test_director_combined_node_is_not_reported_as_preprocessing():
                                        ['execution_success', {'timestamp': 13000}]]}}
     assert module.director_stages(history) == [{'segment': 1, 'conditioning_s': 2.5, 'sampling_s': 12., 'decode_s': 3.5, 'vsr_s': 5.}]
     assert module.execution_seconds(history) == 12.
+
+
+def test_standalone_vsr_validation_keeps_sampler_seed_and_rejects_retained_pool():
+    module = campaign()
+    prompt = {'6': {'class_type': 'KSampler', 'inputs': {'seed': 42}},
+              '7': {'class_type': 'RayRelayVSRDecode', 'inputs': {'worker_count': 2, 'keep_workers': False}},
+              '9': {'class_type': 'SaveVideo', 'inputs': {'filename_prefix': 'video/production_migration/vsr'}}}
+    assert len(module.validate_prompt(prompt, expected_seed=42)) == 64
+    prompt['7']['inputs']['keep_workers'] = True
+    with pytest.raises(ValueError, match='retain|pool'):
+        module.validate_prompt(prompt, expected_seed=42)
+
+
+def test_standalone_cached_sampler_is_not_a_complete_execution():
+    module = campaign()
+    prompt = {'6': {'class_type': 'KSampler'}, '7': {'class_type': 'RayRelayVSRDecode'}}
+    events = [{'prompt_id': 'p', 'node': '7', 'time_ns': 0}]
+    with pytest.raises(RuntimeError, match='cached|execut'):
+        module.require_executed_nodes(events, prompt, 'p')
+    events.insert(0, {'prompt_id': 'p', 'node': '6', 'time_ns': 0})
+    module.require_executed_nodes(events, prompt, 'p')
+
+
+def test_non_director_gate_requires_a_real_two_gpu_xfuser_route():
+    module = campaign()
+    prompt = {'7': {'class_type': 'XFuserSamplerCustomAdvanced', 'inputs': {'noise_seed': 42}},
+              '13': {'class_type': 'RayInitializer', 'inputs': {'GPU': 2, 'FSDP': True}},
+              '9': {'class_type': 'SaveVideo', 'inputs': {'filename_prefix': 'video/production_migration/non-director'}}}
+    assert len(module.validate_prompt(prompt, expected_seed=42)) == 64
+    prompt['13']['inputs']['GPU'] = 1
+    with pytest.raises(ValueError, match='two|2'):
+        module.validate_prompt(prompt, expected_seed=42)

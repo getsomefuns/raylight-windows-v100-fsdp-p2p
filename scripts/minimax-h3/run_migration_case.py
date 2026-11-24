@@ -24,8 +24,21 @@ import websocket
 
 def validate_prompt(prompt, *, expected_seed):
     directors = [n for n in prompt.values() if n.get('class_type') == 'MiniMaxH3Director']
-    if len(directors) != 1 or directors[0]['inputs'].get('seed') != expected_seed:
-        raise ValueError('Expected exactly one Director with the declared fixed seed')
+    if directors:
+        seeds = [n['inputs'].get('seed') for n in directors]
+    else:
+        seeds = [n['inputs'].get('seed', n['inputs'].get('noise_seed')) for n in prompt.values()
+                 if n.get('class_type') in ('KSampler', 'RandomNoise', 'XFuserKSamplerAdvanced', 'XFuserSamplerCustomAdvanced')]
+        decoders = [n['inputs'] for n in prompt.values() if n.get('class_type') == 'RayRelayVSRDecode']
+        if any(n.get('worker_count') != 2 or n.get('keep_workers') is not False for n in decoders):
+            raise ValueError('Standalone gate requires two workers and no retained decoder pool')
+        if not decoders:
+            initializers = [n['inputs'] for n in prompt.values() if n.get('class_type') == 'RayInitializer']
+            xfuser = any(n.get('class_type') in ('XFuserKSamplerAdvanced', 'XFuserSamplerCustomAdvanced') for n in prompt.values())
+            if not xfuser or len(initializers) != 1 or initializers[0].get('GPU') != 2 or not initializers[0].get('FSDP'):
+                raise ValueError('Non-Director acceptance requires the supported two-GPU FSDP XFuser route')
+    if len(seeds) != 1 or seeds[0] != expected_seed:
+        raise ValueError('Expected exactly one primary sampler with the declared fixed seed')
     saves = [n for n in prompt.values() if n.get('class_type') == 'SaveVideo']
     if not saves or any(not n['inputs'].get('filename_prefix', '').startswith('video/production_migration/')
                         or '..' in n['inputs']['filename_prefix'].replace('\\', '/').split('/') for n in saves):
@@ -33,12 +46,28 @@ def validate_prompt(prompt, *, expected_seed):
     return hashlib.sha256(json.dumps(prompt, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def verify_gpu_work(history, log, *, minimum_operations):
+def verify_gpu_work(history, log, *, minimum_operations, mode='director'):
     if history.get('status', {}).get('status_str') != 'success':
         raise RuntimeError('Workflow failed; inspect history.json')
-    operations = set(re.findall(r'MMH3Director remote sampling completed operation=([a-fA-F0-9]+) ranks=2', log))
-    if len(operations) < minimum_operations:
-        raise RuntimeError(f'Only {len(operations)} actual GPU operations; expected at least {minimum_operations}')
+    if mode == 'director':
+        count = len(set(re.findall(r'MMH3Director remote sampling completed operation=([a-fA-F0-9]+) ranks=2', log)))
+    elif mode == 'relayvsr':
+        count = len(re.findall(r'RelayVSR local Flash completed windows=\d+ workers=2 seconds=', log))
+    else:
+        # For non-Director XFuser, successful terminal history plus executed
+        # sampler-node evidence below is the completion witness.
+        return
+    if count < minimum_operations:
+        raise RuntimeError(f'Only {count} actual GPU operations; expected at least {minimum_operations}')
+
+
+def require_executed_nodes(events, prompt, prompt_id):
+    required = {key for key, node in prompt.items() if node.get('class_type') in
+                ('KSampler', 'RayRelayVSRDecode', 'XFuserSamplerCustomAdvanced', 'XFuserKSamplerAdvanced')}
+    actual = {str(event.get('node')) for event in events if event.get('prompt_id') == prompt_id}
+    missing = required - actual
+    if missing:
+        raise RuntimeError(f'Sampler/decoder execution missing (cached?): {sorted(missing)}')
 
 
 def resource_peaks(rows):
@@ -136,6 +165,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     prompt = json.loads(args.prompt.read_text(encoding='utf-8-sig'))
     digest = validate_prompt(prompt, expected_seed=args.seed)
+    types = {node['class_type'] for node in prompt.values()}
+    mode = 'director' if 'MiniMaxH3Director' in types else ('relayvsr' if 'RayRelayVSRDecode' in types else 'xfuser')
     if args.minimum_operations < 0:
         raise ValueError('minimum-operations cannot be negative')
     spec = importlib.util.spec_from_file_location('migration_http_helpers', Path(__file__).with_name('benchmark_cold_warm.py'))
@@ -186,7 +217,8 @@ def main(argv=None):
                             'prompt_id': prompt_id, 'director_stages': director_stages(record),
                             'prompt_sha256': digest, 'node_timings': summarize_nodes(events, prompt, prompt_id),
                             'status': record.get('status'), 'minimum_gpu_operations': args.minimum_operations})
-                        verify_gpu_work(record, log, minimum_operations=args.minimum_operations)
+                        verify_gpu_work(record, log, minimum_operations=args.minimum_operations, mode=mode)
+                        require_executed_nodes(events, prompt, prompt_id)
                         return 0
                     stop.wait(2)
                 raise TimeoutError('Case timeout; server is NOT automatically interrupted')
