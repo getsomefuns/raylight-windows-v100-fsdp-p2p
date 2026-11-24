@@ -4,7 +4,7 @@ Date: 2026-11-24. Status: user approved route A and continuous development, with
 
 ## Goal and constraints
 
-Use the isolated dual-V100 RelayVSR implementation in production Director while preserving existing workflows, audio, segment caches, selective reruns and subsequent H3 sampling. Source changes belong only to this Raylight repository. Do not edit ComfyUI core source, replace Director with a fork, change the GPU driver or touch the external ComfyUI bundle. Updating to a pinned official core is a separate decision requiring approval; this assessment is not that approval.
+Use the isolated dual-V100 RelayVSR implementation in production Director while preserving existing workflows, audio, segment caches, selective reruns and subsequent H3 sampling. Source changes belong only to this Raylight repository. Do not edit ComfyUI core source, replace Director with a fork, change the GPU driver or touch the external ComfyUI bundle. The user approved route A: update the isolated candidate first; production changes remain conditional on passing every acceptance gate.
 
 ## Verified baseline
 
@@ -38,7 +38,7 @@ Vendoring the entire upstream model/detection/VAE stack into Raylight is not rec
 - TP2 lease coordination is reusable groundwork, not ready-made VSR admission. Validate driver/session/generation, physical GPU mapping, exclusive ownership, worker state and actual released memory. Existing clear_sampling_vram can swallow cleanup errors; its True result alone is insufficient evidence.
 - Default keep_workers=false. Preserve refusal for unknown/foreign Ray sessions. On cancellation/OOM/worker loss, finish owned cleanup before returning leases; do not resume the next segment after unresolved cleanup failure. Do not reintroduce the withdrawn actor-Flash prototype.
 
-## Required acceptance gates (all pending)
+## Required acceptance gates (see the execution record for current status)
 
 1. Full suites on old and pinned new cores, including all 14 failures fixed without skip/xfail; numerical native-reference checks for masks, modulation, layouts, curves and continuity.
 2. Real ComfyUI workflow graphs: non-Director H3, Director FL2VA/Ref2VA 4/8-step, TP2, regular/segment LoRA, SelfLift, Refine, FaceRefine and dual H3 VAE. Cover previews, silent/normal audio, cache hits and selective reruns. Representative combinations suffice; do not claim an exhaustive matrix.
@@ -50,4 +50,4 @@ Vendoring the entire upstream model/detection/VAE stack into Raylight is not rec
 8. Before production changes, preserve core changes/untracked files, recoverable Python/dependency state, Director bundle/patches, Raylight deployment manifest and startup configuration. Rehearse rollback in isolation; do not touch user media/caches.
 9. Deploy the exact accepted commit only after queue shutdown and backup; verify hashes and dependencies, smoke-test old Director and VSR in production, update bilingual README/release/testing records and reproducible workflows, then sync GitHub under authorization. Never publish models, user media, logs or backups.
 
-This task only produced an assessment. Confirm approach A's official-core-upgrade boundary before a task-level implementation plan and isolated development. Keep the existing standalone VSR environment for manual checks/reference; it is not another Raylight source worktree.
+Route A is approved and isolated development is in progress; production migration remains gated on full acceptance. See `../plans/2026-11-24-relayvsr-production-migration.md`. The original 14 failures and dependency table describe the pre-implementation baseline, not current results. Inventory found 15 installed node directories, superseding the historical count of 13. Keep the existing standalone VSR environment for manual checks/reference; it is not another Raylight source worktree.
