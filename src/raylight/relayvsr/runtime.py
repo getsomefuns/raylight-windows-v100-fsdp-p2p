@@ -251,6 +251,8 @@ def run_parallel_flash(vae_path, samples, images, detail, worker_count=2,
                     shutdown_cluster=lambda: None)
             elif pool is not None and (not keep_workers or not succeeded):
                 release_relayvsr_pool()
+            elif pool is not None:
+                ray.get([w.release_workspace.remote() for w in workers], timeout=300)
         finally:
             elapsed = time.perf_counter()-started
             _LOG.info("[Raylight] RelayVSR Flash %s windows=%d workers=%d seconds=%.3f",

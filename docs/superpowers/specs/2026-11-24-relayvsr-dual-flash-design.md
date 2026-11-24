@@ -105,3 +105,16 @@ Keep native single-GPU keyframe sampling. No upstream/core edits, no global atte
 FP32 remains the baseline. Acceptance requires numerical continuity, complete frames, actual dual-GPU
 work distribution, at least 1.5x Flash-node throughput and 20% end-to-end latency reduction.
 
+## 实测后修订：同进程双GPU执行器
+
+首个修正传输后的完整Ray冷运行：Flash108.537s、全流程149.240s，均未达到门槛。
+独立窗口计算成立，但Windows创建进程、导入核心和CPU结果序列化不应成为默认必付成本。
+增加 `execution_mode=local_threads|ray_actors`，默认local_threads：同一进程两个GPU执行器，
+每个执行器独占一张卡和一个官方FP32 Flash模型，仍使用同一个窗口计划和有界合并器。
+显式设置VAE.device；加载后只调用其原版RelayFlash.decode，不在并发循环中触发全局模型调度器。
+该分支仅在验证RelayFlash类型、process_output为其原生identity语义后启用，绝不用于普通VAE。
+不是把解码交给CPU，也不改ComfyUI核心。保留Ray模式用于显式借用或跨进程对照。
+local_threads拒绝借用ray_actors，避免静默忽略用户连接。keep_workers在本地模式保留GPU decoder池。
+增加真实小型官方CPU Flash数学等价测试与真实双V100 raw像素/性能测试；验收门槛不变。
+所有失败Ray结果保留，若本地执行器也未达标，仍按实验记录，不能标记加速验收通过。
+

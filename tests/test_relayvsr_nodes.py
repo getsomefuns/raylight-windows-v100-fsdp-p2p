@@ -46,7 +46,7 @@ def test_node_returns_image_and_forwards_only_explicit_workers(monkeypatch):
     monkeypatch.setattr(mm, "unload_all_models", lambda: None)
     monkeypatch.setattr(mm, "soft_empty_cache", lambda: None)
     output = module.RayRelayVSRDecode().decode({"samples": weights}, images,
-        "flash.safetensors", 1., 1, False, ray_actors={"workers": [worker]})
+        "flash.safetensors", 1., 1, False, ray_actors={"workers": [worker]}, execution_mode="ray_actors")
     assert output[0] is result
     assert received["borrowed_workers"] == [worker]
     assert received["worker_count"] == 1

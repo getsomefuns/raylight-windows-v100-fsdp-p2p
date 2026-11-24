@@ -77,3 +77,14 @@ docs/reports/2026-11-24-relayvsr-dual-flash.{zh-CN,en}.md; README/CHANGELOG.
 Execute inline as requested. Record decisions/deviations and actual evidence in this plan's ledger.
 A functional-only result is not performance acceptance; never relax thresholds after observing results.
 
+## Evidence-driven Task4 revision
+
+Ray cold Flash108.537s/workflow149.240s missed both gates. Add an explicit
+execution_mode=local_threads|ray_actors, defaulting to a shared-process two-GPU decoder pool.
+Keep native FP32 Flash/window math; avoid process startup and tensor serialization for the
+default local path. Use explicit devices and invoke only the official Flash model in the
+parallel loop, not concurrent global ComfyUI model scheduling. Ray remains an explicit option.
+Write real reduced Flash equivalence and node-routing RED tests first; repeat raw31-frame and
+full240-frame cold/warm tests. A retained pool must drop unused CUDA allocator workspace after
+decoding so the next native sampler does not OOM. Retain all failed data; thresholds unchanged.
+

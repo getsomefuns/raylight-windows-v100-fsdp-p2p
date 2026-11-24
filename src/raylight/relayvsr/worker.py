@@ -29,10 +29,11 @@ def validate_relay_inputs(latents, images, scale, detail=1.0):
 
 
 class RelayFlashDecoder:
-    def __init__(self, vae_path, dtype="fp32"):
+    def __init__(self, vae_path, dtype="fp32", device=None):
         if dtype != "fp32":
             raise ValueError("Only the validated FP32 RelayFlash decoder is enabled")
         self.vae_path = str(Path(vae_path).resolve())
+        self.device = device
         self.vae = None
 
     def load(self):
@@ -46,7 +47,7 @@ class RelayFlashDecoder:
             import comfy.sd
             import comfy.utils
             sd, metadata = comfy.utils.load_torch_file(self.vae_path, return_metadata=True)
-            vae = comfy.sd.VAE(sd=sd, metadata=metadata, dtype=torch.float32)
+            vae = comfy.sd.VAE(sd=sd, metadata=metadata, dtype=torch.float32, device=self.device)
             vae.throw_exception_if_invalid()
             if not isinstance(vae.first_stage_model, RelayFlash):
                 raise ValueError("Selected VAE is not an official RelayVSR Flash decoder")
@@ -119,4 +120,7 @@ class RelayVSRFlashWorker:
 
     def free_relayvsr_vae(self):
         release_cached_decoder(self)
+
+    def release_workspace(self):
+        torch.cuda.empty_cache()
 
