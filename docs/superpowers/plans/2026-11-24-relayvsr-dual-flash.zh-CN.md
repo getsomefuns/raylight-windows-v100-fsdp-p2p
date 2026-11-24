@@ -1,5 +1,10 @@
 # RelayVSR 双 V100 Flash 加速实现计划
 
+最终状态（2026-11-24）：窗口规划、显式节点、同进程双GPU解码、隔离验收已完成。
+以下Task2/Task3的Ray actor与借用接口是保留的初稿实施历史，已按末尾审查修订撤回，不属于交付功能。
+最终范围以spec末节与[验收报告](../../reports/2026-11-24-relayvsr-dual-flash.zh-CN.md)为准。
+正式部署和远端推送未执行；新版核心既有14项H3失败不能视为整个正式环境已通过升级验收。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 只修改本Raylight，让RelayVSR Flash解码实际分工到双V100并获得可验证的端到端加速。

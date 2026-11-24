@@ -134,6 +134,31 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
   加载的 Diffusion Model。
 - 当前不支持 GGUF + FSDP、多于两个 rank、多机和训练反向传播。
 
+## RelayVSR 双 V100 Flash（仅隔离预览）
+
+新增 `RelayVSR Flash Decode (Ray)`，保留官方单卡关键帧采样，将原版FP32 Flash独立窗口分配到两张V100。
+采用同进程GPU执行器，不创建Ray集群，不用FSDP或NCCL，也不把两卡显存变成一个32GB池。
+不会改动原有MiniMax H3 / Director / LTX工作流。
+
+480×864、10秒、240帧、24fps、x2的三轮完整工作流：Flash约71秒，全流程约109–110秒；
+更快的单卡对照为133.272秒 / 183.482秒。完整视频解码后的240帧与单卡逐像素一致，
+不是通过改精度、尺寸、步数或缓存命中提速。详情、资源峰值及失败实验见
+[中文实测报告](docs/reports/2026-11-24-relayvsr-dual-flash.zh-CN.md)和
+[未发布说明](docs/releases/2026-11-24-relayvsr-flash-preview.zh-CN.md)。
+
+使用方式：
+
+1. 只在已有原生RelayVSR的隔离ComfyUI使用；原正式核心仍缺该后端，仅更新Raylight不能补齐。
+2. 导入[静音基准API工作流](example_workflows/RelayVSR_DualV100_Raylight.json)，重新选择自己的输入视频。
+3. 新节点替换`VAELoader + VSRDecode`，samples接KSampler，images接同一份原低清视频；x2/x4模型和VAE需配对。
+4. `worker_count=2`、`keep_workers=false`。不添加RayInitializer或USP，不隐藏第二张CUDA设备。
+
+`keep_workers=true`只保留本节点GPU模型权重，空闲计算缓存仍归还；false默认完整回收自有模型。
+ComfyUI图像缓存和CUDA上下文不在本节点回收范围。已有本进程Ray会话须先结束，节点不会替用户杀集群。
+true仅建议同一VSR工作流复用，切换其他FSDP工作流前先结束缓存或重启；平常用false。
+新功能目前只部署到本项目的隔离环境，正式环境未升级、未部署；不要直接照搬正式环境升级。
+[中文计划](docs/superpowers/plans/2026-11-24-relayvsr-dual-flash.zh-CN.md) / [English plan](docs/superpowers/plans/2026-11-24-relayvsr-dual-flash.en.md)。
+
 ## O12 MiniMax H3 可选加速节点
 
 O12 不把第三方实现复制进 Raylight，而是提供一层窄范围桥接：外部节点仍按普通 ComfyUI 方式写入 MODEL patch，Raylight 只把可序列化配置送进两个真实 worker，并在那里调用已安装的原节点。

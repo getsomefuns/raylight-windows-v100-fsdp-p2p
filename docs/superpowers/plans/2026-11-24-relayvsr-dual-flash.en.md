@@ -1,5 +1,12 @@
 # RelayVSR Dual-V100 Flash Acceleration Implementation Plan
 
+Final status2026-11-24: exact windows,explicit node,shared-process dual-GPU Flash and isolated
+acceptance are complete. Actor/borrowing items below are retained implementation history and
+were withdrawn after review,not delivered features. The spec's final revision and
+[acceptance report](../../reports/2026-11-24-relayvsr-dual-flash.en.md) define the shipped scope.
+No production deployment or remote push;14 pre-existing newer-core H3 failures still block
+treating this as acceptance of a complete production-core upgrade.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add measurable dual-V100 RelayVSR Flash acceleration through this Raylight fork only.

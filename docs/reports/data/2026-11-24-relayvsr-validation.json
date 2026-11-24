@@ -1,0 +1,223 @@
+{
+  "date": "2026-11-24",
+  "raylight_code_commit": "1de3345",
+  "isolated_core_commit": "2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884",
+  "torch": "2.12.0+cu126",
+  "python": "3.12.10",
+  "legacy_suite": {
+    "passed": 869,
+    "skipped": 11,
+    "subtests_passed": 35
+  },
+  "isolated_suite": {
+    "passed": 865,
+    "failed": 14,
+    "skipped": 1,
+    "subtests_passed": 35,
+    "new_failure_ids": []
+  },
+  "preexisting_failure_ids": [
+    "tests/test_minimax_adaln_curves.py::test_bf16_curve_full_embedding_and_output_on_each_v100[cuda:0]",
+    "tests/test_minimax_adaln_curves.py::test_bf16_curve_full_embedding_and_output_on_each_v100[cuda:1]",
+    "tests/test_minimax_adaln_curves.py::test_curve_auxiliaries_are_not_runtime_parameters",
+    "tests/test_minimax_adaln_curves.py::test_curve_forward_matches_fp32_reference[0.0-table_dtype0]",
+    "tests/test_minimax_adaln_curves.py::test_curve_forward_matches_fp32_reference[0.0-table_dtype1]",
+    "tests/test_minimax_adaln_curves.py::test_curve_forward_matches_fp32_reference[0.0-table_dtype2]",
+    "tests/test_minimax_adaln_curves.py::test_curve_forward_matches_fp32_reference[1000.0-table_dtype0]",
+    "tests/test_minimax_adaln_curves.py::test_curve_forward_matches_fp32_reference[1000.0-table_dtype1]",
+    "tests/test_minimax_adaln_curves.py::test_curve_forward_matches_fp32_reference[1000.0-table_dtype2]",
+    "tests/test_minimax_adaln_curves.py::test_curve_forward_matches_fp32_reference[750.0-table_dtype0]",
+    "tests/test_minimax_adaln_curves.py::test_curve_forward_matches_fp32_reference[750.0-table_dtype1]",
+    "tests/test_minimax_adaln_curves.py::test_curve_forward_matches_fp32_reference[750.0-table_dtype2]",
+    "tests/test_minimax_adaln_curves.py::test_legacy_time_embedder_forward_remains_equivalent",
+    "tests/test_minimax_parallel.py::test_minimax_usp_forward_signature_matches_core"
+  ],
+  "measurements": [
+    {
+      "case": "native_240_x2",
+      "server_seconds": 184.47699999809265,
+      "sampling_seconds": 14.578968999998324,
+      "flash_seconds": 134.42104240000117,
+      "save_seconds": 26.825773999999,
+      "gpu": {
+        "0": {
+          "peak_MiB": 11249.0,
+          "peak_util": 100.0,
+          "peak_power_W": 326.18
+        },
+        "1": {
+          "peak_MiB": 316.0,
+          "peak_util": 2.0,
+          "peak_power_W": 60.87
+        }
+      },
+      "resources_GiB": {
+        "rss": 7.2133331298828125,
+        "private_commit": 9.313789367675781,
+        "system_ram_used": 22.678180694580078,
+        "system_commit": 27.81787872314453,
+        "pagefile_used_estimate": 0.0
+      },
+      "flash_mean_gpu_util": {
+        "0": 98.87832699619771,
+        "1": 0.0
+      },
+      "cached_nodes": []
+    },
+    {
+      "case": "local_final_dual_keep_cold_240_x2",
+      "server_seconds": 109.55599999427795,
+      "sampling_seconds": 13.59389790000023,
+      "flash_seconds": 71.12852530000055,
+      "save_seconds": 16.77225550000003,
+      "gpu": {
+        "0": {
+          "peak_MiB": 11297.0,
+          "peak_util": 100.0,
+          "peak_power_W": 320.74
+        },
+        "1": {
+          "peak_MiB": 5989.0,
+          "peak_util": 100.0,
+          "peak_power_W": 285.23
+        }
+      },
+      "resources_GiB": {
+        "rss": 7.927009582519531,
+        "private_commit": 10.81765365600586,
+        "system_ram_used": 23.324676513671875,
+        "system_commit": 29.021610260009766,
+        "pagefile_used_estimate": 0.0
+      },
+      "flash_mean_gpu_util": {
+        "0": 97.65217391304348,
+        "1": 95.78985507246377
+      },
+      "cached_nodes": []
+    },
+    {
+      "case": "local_final_dual_keep_warm_240_x2",
+      "server_seconds": 109.25599980354309,
+      "sampling_seconds": 13.718103100000008,
+      "flash_seconds": 70.85297100000025,
+      "save_seconds": 16.60537949999889,
+      "gpu": {
+        "0": {
+          "peak_MiB": 11411.0,
+          "peak_util": 100.0,
+          "peak_power_W": 334.45
+        },
+        "1": {
+          "peak_MiB": 6015.0,
+          "peak_util": 100.0,
+          "peak_power_W": 279.51
+        }
+      },
+      "resources_GiB": {
+        "rss": 8.47296142578125,
+        "private_commit": 10.930305480957031,
+        "system_ram_used": 24.083003997802734,
+        "system_commit": 28.847484588623047,
+        "pagefile_used_estimate": 0.0
+      },
+      "flash_mean_gpu_util": {
+        "0": 96.3695652173913,
+        "1": 97.07246376811594
+      },
+      "cached_nodes": []
+    },
+    {
+      "case": "local_final_dual_release_240_x2",
+      "server_seconds": 110.42799997329712,
+      "sampling_seconds": 13.874309099999664,
+      "flash_seconds": 71.36317059999965,
+      "save_seconds": 16.96927709999909,
+      "gpu": {
+        "0": {
+          "peak_MiB": 11249.0,
+          "peak_util": 100.0,
+          "peak_power_W": 330.89
+        },
+        "1": {
+          "peak_MiB": 5991.0,
+          "peak_util": 100.0,
+          "peak_power_W": 276.48
+        }
+      },
+      "resources_GiB": {
+        "rss": 7.481388092041016,
+        "private_commit": 10.782684326171875,
+        "system_ram_used": 22.81438446044922,
+        "system_commit": 28.33987045288086,
+        "pagefile_used_estimate": 0.0
+      },
+      "flash_mean_gpu_util": {
+        "0": 97.05,
+        "1": 94.90714285714286
+      },
+      "cached_nodes": []
+    },
+    {
+      "case": "1mp_5s_x2",
+      "server_seconds": 156.37999987602234,
+      "sampling_seconds": 18.540749800000413,
+      "flash_seconds": 115.79253579999931,
+      "save_seconds": 16.13415989999885,
+      "gpu": {
+        "0": {
+          "peak_MiB": 12706.0,
+          "peak_util": 100.0,
+          "peak_power_W": 308.69
+        },
+        "1": {
+          "peak_MiB": 6336.0,
+          "peak_util": 100.0,
+          "peak_power_W": 290.51
+        }
+      },
+      "resources_GiB": {
+        "rss": 9.607975006103516,
+        "private_commit": 14.302074432373047,
+        "system_ram_used": 24.84920883178711,
+        "system_commit": 31.74492645263672,
+        "pagefile_used_estimate": 0.0
+      },
+      "flash_mean_gpu_util": {
+        "0": 98.11061946902655,
+        "1": 96.23893805309734
+      },
+      "cached_nodes": []
+    },
+    {
+      "case": "1mp_5s_x4",
+      "server_seconds": 666.938000202179,
+      "sampling_seconds": 75.21028380000098,
+      "flash_seconds": 534.5710080000008,
+      "save_seconds": 51.20067990000098,
+      "gpu": {
+        "0": {
+          "peak_MiB": 15514.0,
+          "peak_util": 100.0,
+          "peak_power_W": 340.81
+        },
+        "1": {
+          "peak_MiB": 7725.0,
+          "peak_util": 100.0,
+          "peak_power_W": 339.35
+        }
+      },
+      "resources_GiB": {
+        "rss": 29.583675384521484,
+        "private_commit": 41.18629837036133,
+        "system_ram_used": 44.932640075683594,
+        "system_commit": 58.574100494384766,
+        "pagefile_used_estimate": 0.0
+      },
+      "flash_mean_gpu_util": {
+        "0": 98.65547024952015,
+        "1": 98.15642994241843
+      },
+      "cached_nodes": []
+    }
+  ]
+}

@@ -117,6 +117,31 @@ It does not:
 - shard every model or every ComfyUI node;
 - support GGUF with FSDP, training/backward collectives, multi-node execution, or arbitrary GPU counts.
 
+## RelayVSR dual-V100 Flash (isolated preview only)
+
+`RelayVSR Flash Decode (Ray)` retains native single-GPU keyframe sampling and distributes exact
+FP32 Flash windows across two V100s in one process. It starts no Ray cluster, FSDP or NCCL;
+it does not turn two 16GB GPUs into one 32GB memory pool. Older H3/Director/LTX workflows remain unchanged.
+
+Three full 480x864/10s/240-frame/24fps/x2 workflows measure about 71s Flash and 109–110s total,
+against the faster single-GPU control133.272s/183.482s. All240 decoded output frames match native
+single-GPU pixels exactly, without reduced precision,size,steps or output-cache hits.
+See the [measured report](docs/reports/2026-11-24-relayvsr-dual-flash.en.md) and
+[unreleased notes](docs/releases/2026-11-24-relayvsr-flash-preview.en.md).
+
+1. Use only the isolated ComfyUI with native RelayVSR support. Updating Raylight alone cannot add the missing backend to production's older core.
+2. Import the [silent benchmark API graph](example_workflows/RelayVSR_DualV100_Raylight.json) and select your own source video.
+3. Replace VAELoader+VSRDecode with the new node; wire KSampler samples and the same low-quality images. Match x2/x4 UNet and VAE.
+4. Use worker_count=2,keep_workers=false. No RayInitializer/USP; keep both CUDA devices visible.
+
+True retains this node's GPU model weights, always trimming idle scratch; false releases owned
+models by default. ComfyUI IMAGE caches and CUDA contexts are not owned by this decoder.
+Use false when switching workflows; after deliberate retention, end the cache or restart before FSDP.
+End an existing connected Ray session first; the node never kills a cluster for you.
+Only the isolated environment is deployed. Production is not upgraded or deployed.
+[English plan](docs/superpowers/plans/2026-11-24-relayvsr-dual-flash.en.md) /
+[Chinese plan](docs/superpowers/plans/2026-11-24-relayvsr-dual-flash.zh-CN.md).
+
 ## O12 optional MiniMax H3 accelerators
 
 O12 does not copy third-party algorithms into Raylight. External nodes patch a MODEL through their normal ComfyUI interface; Raylight serializes only their configuration and calls the installed node implementation inside both real workers.
