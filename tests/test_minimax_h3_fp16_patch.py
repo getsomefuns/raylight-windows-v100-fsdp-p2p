@@ -575,3 +575,21 @@ def test_signature_guard_rejects_incompatible_comfyui_api():
 
     with pytest.raises(RuntimeError, match="ComfyUI MiniMax H3 API"):
         validate_minimax_h3_api(_fake_minimax_module(ChangedBlock))
+
+
+@pytest.mark.parametrize("safe,expected", [(False, 3.), (True, 6.)])
+def test_safe_patch_preserves_new_core_attention_override(safe, expected):
+    class NewBlock(torch.nn.Module):
+        def forward(self, x, t_emb, mod_segments, rope_freqs, transformer_options={}, attention=None):
+            return attention(x) if attention is not None else x
+
+    native = _fake_minimax_module(NewBlock)
+    install_minimax_h3_safe_fp16_patch(native)
+    block = NewBlock()
+    block._raylight_h3_safe_fp16 = safe
+    block.norm1, block.norm2 = _IdentityNorm(), _IdentityNorm()
+    block.attn, block.mlp = _RecordingBranch(99.), _RecordingBranch(2.)
+    block.adaln_proj = _Adaln()
+    override = _RecordingBranch(3.)
+    result = block(torch.ones(1, 1), torch.ones(1, 1), [(0, 1, 0)], None, attention=override)
+    assert result.item() == expected

@@ -61,9 +61,13 @@ def test_minimax_core_imports_exist():
 
 
 def test_minimax_usp_forward_signature_matches_core():
-    assert _signature(_function(RAYLIGHT, "usp_dit_forward")) == _signature(
-        _function(CORE, "_forward", "MiniMaxH3Model")
-    )
+    actual = _signature(_function(RAYLIGHT, "usp_dit_forward"))
+    expected = _signature(_function(CORE, "_forward", "MiniMaxH3Model"))
+    if not any(parameter[1] == "denoise_mask" for parameter in expected):
+        # The new explicit optional masks are also accepted by the legacy
+        # **kwargs contract. All original names, kinds and defaults stay exact.
+        actual = [parameter for parameter in actual if parameter[1] not in {"denoise_mask", "audio_denoise_mask"}]
+    assert actual == expected
 
 
 def test_minimax_sequence_split_owns_only_local_storage(monkeypatch):

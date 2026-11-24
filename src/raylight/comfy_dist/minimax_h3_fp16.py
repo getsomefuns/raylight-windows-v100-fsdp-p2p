@@ -274,7 +274,7 @@ def validate_minimax_h3_api(mm_module: Any) -> None:
     block_names = _signature_names(mm_module.DiTBlock.forward) if not missing else []
     mlp_names = _signature_names(mm_module.MLP.forward) if not missing else []
     init_names = _signature_names(mm_module.MiniMaxH3Model.__init__) if not missing else []
-    if missing or block_names != expected_block or mlp_names != ["self", "x"] or "dtype" not in init_names:
+    if missing or block_names not in (expected_block, expected_block + ["attention"]) or mlp_names != ["self", "x"] or "dtype" not in init_names:
         detail = (
             f"missing={missing}, DiTBlock.forward={block_names}, "
             f"MLP.forward={mlp_names}, MiniMaxH3Model.__init__={init_names}"
@@ -298,6 +298,7 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
     original_model_init = mm_module.MiniMaxH3Model.__init__
     original_mlp_forward = mm_module.MLP.forward
     original_block_forward = mm_module.DiTBlock.forward
+    supports_attention_override = "attention" in _signature_names(original_block_forward)
 
     @functools.wraps(original_model_init)
     def safe_model_init(self, *args, **kwargs):
@@ -338,9 +339,15 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
         mod_segments,
         rope_freqs,
         transformer_options={},
+        attention=None,
     ):
         if not getattr(self, _BLOCK_PATCH_MARKER, False):
+            if attention is not None:
+                if not supports_attention_override:
+                    raise TypeError("This native MiniMax H3 block does not accept an attention override")
+                return original_block_forward(self, x, t_emb, mod_segments, rope_freqs, transformer_options, attention=attention)
             return original_block_forward(self, x, t_emb, mod_segments, rope_freqs, transformer_options)
+        attention_fn = self.attn if attention is None else attention
         residual = x if x.dtype is torch.float32 else x.to(torch.float32)
         _trace_safe_fp16_memory("block_residual_ready")
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaln_proj(t_emb)
@@ -348,16 +355,16 @@ def install_minimax_h3_safe_fp16_patch(mm_module: Any | None = None) -> bool:
             self.norm1(residual), shift_msa, scale_msa, mod_segments
         ).to(torch.float16)
         _trace_safe_fp16_memory("block_attention_branch_ready")
-        if getattr(self.attn, "_raylight_accepts_owned_input", False):
+        if getattr(attention_fn, "_raylight_accepts_owned_input", False):
             owned_branch = [branch]
             del branch
-            attention = self.attn(
+            attention = attention_fn(
                 owned_branch,
                 rope_freqs=rope_freqs,
                 transformer_options=transformer_options,
             ).to(torch.float32)
         else:
-            attention = self.attn(
+            attention = attention_fn(
                 branch,
                 rope_freqs=rope_freqs,
                 transformer_options=transformer_options,

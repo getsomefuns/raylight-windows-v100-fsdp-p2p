@@ -1,6 +1,6 @@
 # RelayVSR production migration assessment / proposed design
 
-Date: 2026-11-24. Status: proposal, not approved for execution; no production upgrade or deployment performed.
+Date: 2026-11-24. Status: user approved route A and continuous development, with production migration and push conditional on acceptance. In progress; production has not been upgraded or deployed. See the dated implementation plan and local execution ledger.
 
 ## Goal and constraints
 

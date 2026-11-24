@@ -13,6 +13,7 @@ from raylight.comfy_dist.minimax_h3_fp16 import (
     safe_attention_output_projection,
 )
 from .director_continuity import prepare_director_continuity
+from .core_compat import build_modulation, build_packed_layout
 from ..utils import pad_to_world_size
 
 
@@ -58,9 +59,12 @@ def _split_packed_sequence(h, rope_freqs, mod_segments):
     end = start + local_size
     local_segments = []
     for segment_start, segment_end, row in mod_segments:
+        original_start = segment_start
         segment_start = max(segment_start, start)
         segment_end = min(segment_end, end)
         if segment_start < segment_end:
+            if isinstance(row, torch.Tensor) and row.ndim:
+                row = row[segment_start - original_start:segment_end - original_start].clone()
             local_segments.append((segment_start - start, segment_end - start, row))
     return h[start:end].clone(), rope_freqs[:, start:end].clone(), local_segments
 
@@ -116,11 +120,22 @@ def _project_local_final_segment(
     else:
         rows = h.new_zeros((max_count, h.shape[1]))
         rows[:count].copy_(local_rows)
-    segment_scale = 1.0 + scale[timestep_row]
-    segment_shift = shift[timestep_row]
+    per_token = isinstance(timestep_row, torch.Tensor) and timestep_row.ndim > 0
+    if per_token:
+        offset = overlap_start - segment_start
+        local_indices = timestep_row.new_zeros(max_count)
+        if count:
+            local_indices[:count].copy_(timestep_row[offset:offset + count])
+    else:
+        segment_scale = 1.0 + scale[timestep_row]
+        segment_shift = shift[timestep_row]
     for start in range(0, max_count, chunk_tokens):
         stop = min(start + chunk_tokens, max_count)
         normalized = final_layer.norm(rows[start:stop])
+        if per_token:
+            selected = local_indices[start:stop]
+            segment_scale = 1.0 + scale[selected]
+            segment_shift = shift[selected]
         normalized = (normalized * segment_scale + segment_shift).to(torch.float32)
         projected = projector(normalized)
         output[start:stop].copy_(projected)
@@ -286,7 +301,7 @@ def usp_attn_forward(self, x, rope_freqs=None, transformer_options={}):
     return result
 
 
-def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_payload=None, **kwargs):
+def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_payload=None, denoise_mask=None, audio_denoise_mask=None, **kwargs):
     video_x, audio_x = x[0], x[1]
     video_dtype = video_x.dtype
     audio_dtype = audio_x.dtype
@@ -305,11 +320,9 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     # extra_conds prebuilds the layout once per sampling run
     layout = payload.get("layout")
     if layout is None or layout.signature != (text_len, latent_t, lat_h, lat_w, audio_t):
-        layout = PackedLayout(text_len, latent_t, lat_h, lat_w, audio_t,
-                              keyframes=payload.get("keyframes"),
-                              refs=payload.get("refs"),
-                              frame_count=payload.get("frame_count"))
+        layout = build_packed_layout(PackedLayout, text_len, latent_t, lat_h, lat_w, audio_t, payload)
     payload = prepare_director_continuity(payload, layout, frame_rescale=FRAME_RESCALE)
+    transformer_options["minimax_h3_layout"] = layout
 
     # model_base passes model_sampling.timestep(sigma) = sigma * 1000
     shift_v = float(transformer_options.get("minimax_h3_sigma_shift_video", self.sigma_shift_video))
@@ -318,33 +331,10 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     t_v = float(1.0 - sigma_v)
     t_a = float(1.0 - time_shift_sigma(sigma_v, shift_v, shift_a))
 
-    # distinct timesteps are known analytically: text/pad follow video, cond rows pin near 1
-    vis_aug = float(payload.get("visual_cond_noise_aug", VISUAL_COND_TIMESTEP))
-    aud_aug = float(payload.get("audio_cond_noise_aug", AUDIO_COND_TIMESTEP))
-    has_vis_cond = any(k in ("cond", "ref_img") for _, _, k in layout.segments)
-    has_aud_cond = any(k == "ref_audio" for _, _, k in layout.segments)
-    seg_t = {"text": t_v, "video": t_v, "audio": t_a,
-             "cond": max(t_v, vis_aug), "ref_img": max(t_v, vis_aug),
-             "ref_audio": max(t_a, aud_aug)}
-    unique_t = sorted({t_v, t_a} | ({seg_t["cond"]} if has_vis_cond else set())
-                      | ({seg_t["ref_audio"]} if has_aud_cond else set()))
-    t_row = {t: i for i, t in enumerate(unique_t)}
-    seg_tag = {"text": 1, "video": 0, "audio": 2, "cond": 0, "ref_img": 0, "ref_audio": 2}
-
-    text_tags = payload.get("text_token_tags")
-    mod_segments = []
-    for a, b, kind in layout.segments:
-        row_base = t_row[seg_t[kind]] * 3
-        if kind == "text" and text_tags is not None:
-            # the presentation text span mixes tags (vision pads carry the video modality) split into tag runs
-            tags = text_tags.view(-1).tolist()
-            run_start = 0
-            for i in range(1, b - a + 1):
-                if i == b - a or tags[i] != tags[run_start]:
-                    mod_segments.append((a + run_start, a + i, row_base + int(tags[run_start])))
-                    run_start = i
-        else:
-            mod_segments.append((a, b, row_base + seg_tag[kind]))
+    unique_t, mod_segments, video_seg, audio_seg = build_modulation(
+        layout, payload, t_v, t_a, sigma_v, (latent_t, lat_h, lat_w),
+        VISUAL_COND_TIMESTEP, AUDIO_COND_TIMESTEP, denoise_mask, audio_denoise_mask,
+    )
 
     # embed
     img_update = layout.img_update.to(device)
@@ -434,8 +424,6 @@ def usp_dit_forward(self, x, timestep, context, transformer_options={}, minimax_
     if prefetch_queue is not None:
         comfy.model_prefetch.prefetch_queue_pop(prefetch_queue, device, None)
 
-    video_seg = next((a, b, t_row[seg_t["video"]]) for a, b, k in layout.segments if k == "video")
-    audio_seg = next((a, b, t_row[seg_t["audio"]]) for a, b, k in layout.segments if k == "audio")
     shift, scale = self.final_layer.adaln_proj(t_emb)
     v_local, v_counts = _project_local_final_segment(
         self.final_layer,
