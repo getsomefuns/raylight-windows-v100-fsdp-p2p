@@ -732,7 +732,9 @@ def install_mmh3director_sample_bridge(*, require_director: bool = False) -> boo
     vae_changed = install_mmh3director_vae_decode_bridge(
         require_director=require_director
     )
-    return vae_changed or segment_lora_changed or stage_changed or changed
+    from .relay_vsr import install_mmh3director_relay_vsr_bridge
+    vsr_changed = install_mmh3director_relay_vsr_bridge(require_director=require_director)
+    return vsr_changed or vae_changed or segment_lora_changed or stage_changed or changed
 
 
 def uninstall_mmh3director_sample_bridge_for_test() -> None:
@@ -740,6 +742,8 @@ def uninstall_mmh3director_sample_bridge_for_test() -> None:
     global _original_comfy_sample, _original_director_stage
     global _installed_segment_lora_wrapper, _original_segment_lora_apply
 
+    from .relay_vsr import uninstall_mmh3director_relay_vsr_bridge_for_test
+    uninstall_mmh3director_relay_vsr_bridge_for_test()
     from .vae_decode import uninstall_mmh3director_vae_decode_bridge_for_test
 
     uninstall_mmh3director_vae_decode_bridge_for_test()

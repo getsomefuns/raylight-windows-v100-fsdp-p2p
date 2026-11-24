@@ -1,6 +1,8 @@
 import sys
 import os
 
+WEB_DIRECTORY = "./web"
+
 # Comfy dynamic lib loader cause the module imported as a path instead of normal python path
 # e.g /home/user/ComfyUI/custom_nodes/raylight.src.raylight.etc
 # this code will change it into :
