@@ -72,3 +72,23 @@ def test_snapshot_cannot_copy_itself_or_overwrite_an_existing_destination(tmp_pa
         tool.create_snapshot({'python': source}, source / 'recursive')
     with pytest.raises(FileExistsError):
         tool.create_snapshot({'python': source}, source)
+
+
+def test_snapshot_rechecks_all_files_before_publishing_complete_status(tmp_path, monkeypatch):
+    tool = module()
+    source = tmp_path / 'python'
+    source.mkdir()
+    (source / 'first').write_bytes(b'one')
+    (source / 'second').write_bytes(b'two')
+    original = tool.shutil.copy2
+    copied = []
+    def copy_then_corrupt(first, second):
+        result = original(first, second)
+        copied.append(second)
+        if len(copied) == 2:
+            copied[0].write_bytes(b'changed after copy')
+        return result
+    monkeypatch.setattr(tool.shutil, 'copy2', copy_then_corrupt)
+    with pytest.raises(ValueError, match='integrity|hash'):
+        tool.create_snapshot({'python': source}, tmp_path / 'backup')
+    assert not (tmp_path / 'backup').exists()

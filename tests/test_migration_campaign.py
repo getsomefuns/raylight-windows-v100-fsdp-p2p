@@ -95,3 +95,10 @@ def test_non_director_gate_requires_a_real_two_gpu_xfuser_route():
     prompt['13']['inputs']['GPU'] = 1
     with pytest.raises(ValueError, match='two|2'):
         module.validate_prompt(prompt, expected_seed=42)
+
+
+def test_preview_probe_counts_message_types_without_storing_image_payload():
+    module = campaign()
+    assert module.message_kind(b'\x00\x00\x00\x01private image bytes') == 'binary_1'
+    assert module.message_kind('{"type":"progress","data":{"value":2}}') == 'progress'
+    assert module.message_kind('not JSON') == 'invalid_json'

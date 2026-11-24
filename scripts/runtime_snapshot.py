@@ -110,6 +110,7 @@ def create_snapshot(components, destination):
                 'components': {key: str(value) for key, value in sources.items()},
                 'files': records, 'excluded_core_roots': sorted(CORE_EXTERNAL)}
     (stage / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+    verify_snapshot(stage)
     stage.rename(destination)
     return manifest
 

@@ -115,6 +115,16 @@ def execution_seconds(history):
     return (stamps['execution_success'] - stamps['execution_start']) / 1000.
 
 
+def message_kind(message):
+    if isinstance(message, bytes):
+        return f'binary_{int.from_bytes(message[:4], "big")}' if len(message) >= 4 else 'binary_short'
+    try:
+        value = json.loads(message)
+    except (ValueError, TypeError):
+        return 'invalid_json'
+    return str(value.get('type', 'json_other')) if isinstance(value, dict) else 'json_other'
+
+
 class PerformanceInfo(ctypes.Structure):
     _fields_ = [('cb', ctypes.c_ulong)] + [(name, ctypes.c_size_t) for name in
         ('CommitTotal', 'CommitLimit', 'CommitPeak', 'PhysicalTotal', 'PhysicalAvailable',
@@ -185,6 +195,14 @@ def main(argv=None):
     monitor = threading.Thread(target=sample_resources, args=(args.server_pid, stop, args.output / 'resources.jsonl'))
     client = uuid.uuid4().hex
     connection = websocket.create_connection(f'ws://127.0.0.1:{args.port}/ws?clientId={client}', suppress_origin=True, timeout=1)
+    counts = {}
+    original_recv = connection.recv
+    def counted_recv(*positional, **keywords):
+        message = original_recv(*positional, **keywords)
+        kind = message_kind(message)
+        counts[kind] = counts.get(kind, 0) + 1
+        return message
+    connection.recv = counted_recv
     events, errors = [], []
     receiver = threading.Thread(target=base.receive_node_events, args=(connection, stop, events, errors))
     started = time.perf_counter()
@@ -231,6 +249,7 @@ def main(argv=None):
         receiver.join(timeout=15)
         monitor.join(timeout=15)
         dump('events.json', {'events': events, 'errors': errors})
+        dump('socket-message-counts.json', counts)
         path = args.output / 'resources.jsonl'
         if path.exists():
             dump('resource-peaks.json', resource_peaks([json.loads(line) for line in path.read_text().splitlines()]))
