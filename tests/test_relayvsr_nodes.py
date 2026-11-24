@@ -22,33 +22,32 @@ def test_node_import_and_schema_do_not_require_native_relay_support(monkeypatch)
     assert schema["required"]["images"][0] == "IMAGE"
     assert schema["required"]["worker_count"][0] == [1, 2]
     assert schema["required"]["keep_workers"][1]["default"] is False
-    assert schema["optional"]["ray_actors"][0] == "RAY_ACTORS"
+    assert "ray_actors" not in schema.get("optional", {})
     assert node.RETURN_TYPES == ("IMAGE",)
 
 
-def test_node_returns_image_and_forwards_only_explicit_workers(monkeypatch):
+def test_node_returns_image_from_local_executor(monkeypatch):
     import comfy.model_management as mm
     import folder_paths
-    runtime = importlib.import_module("raylight.relayvsr.runtime")
+    runtime = importlib.import_module("raylight.relayvsr.local")
     module = node_module()
     images = torch.zeros(1, 64, 64, 3)
     result = torch.ones(1, 128, 128, 3)
     weights = torch.zeros(1, 48, 1, 8, 8)
-    worker = object()
     received = {}
     def run(path, samples, frames, detail, **kwargs):
         received.update(kwargs)
         assert str(path).endswith("flash.safetensors")
         assert samples is weights and frames is images
         return result
-    monkeypatch.setattr(runtime, "run_parallel_flash", run)
+    monkeypatch.setattr(runtime, "run_local_flash", run)
     monkeypatch.setattr(folder_paths, "get_full_path_or_raise", lambda *a: "flash.safetensors")
     monkeypatch.setattr(mm, "unload_all_models", lambda: None)
     monkeypatch.setattr(mm, "soft_empty_cache", lambda: None)
     output = module.RayRelayVSRDecode().decode({"samples": weights}, images,
-        "flash.safetensors", 1., 1, False, ray_actors={"workers": [worker]}, execution_mode="ray_actors")
+        "flash.safetensors", 1., 1, False)
     assert output[0] is result
-    assert received["borrowed_workers"] == [worker]
+    assert callable(received["prepare"])
     assert received["worker_count"] == 1
 
 

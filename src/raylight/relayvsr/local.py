@@ -21,8 +21,8 @@ _LOG = logging.getLogger("raylight.relayvsr")
 
 
 @torch.inference_mode()
-def decode_flash_model(model, latents, images, detail, device):
-    """Only official RelayFlash: its VAE process_output is identity."""
+def decode_flash_model(model, latents, images, detail, device, process_output=None):
+    """Official RelayFlash plus its wrapper's real output processing."""
     from comfy.ldm.wan.model_vsr import RelayFlash
     if not isinstance(model, RelayFlash):
         raise ValueError("Direct decode is restricted to native RelayFlash")
@@ -32,6 +32,8 @@ def decode_flash_model(model, latents, images, detail, device):
         output = torch.empty(shape, dtype=torch.float32, device="cpu")
         model.decode(latents.to(device=device, dtype=torch.float32), lq_images=images,
                      output_buffer=output, detail=detail)
+        if process_output is not None:
+            output = process_output(output)
         return output.movedim(1, -1).reshape(-1, *output.shape[-2:], 3)
 
 
@@ -46,7 +48,8 @@ class _GPUDecoder:
             started = time.perf_counter()
             vae = self.decoder.load()
             vae.first_stage_model.to(device=self.device, dtype=torch.float32)
-            pixels = decode_flash_model(vae.first_stage_model, samples, images, detail, self.device)
+            pixels = decode_flash_model(vae.first_stage_model, samples, images, detail, self.device,
+                                        process_output=vae.process_output)
             return {"pixels": pixels, "metadata": {"window": asdict(job),
                 "gpu_ids": [self.device.index], "seconds": time.perf_counter()-started,
                 "pid": os.getpid(), "thread": threading.get_ident()}}
@@ -63,11 +66,8 @@ class _GPUDecoder:
 
 class _LocalPool:
     def __init__(self, path, count):
-        import ray
         if torch.cuda.device_count() < count:
             raise RuntimeError(f"RelayVSR needs {count} visible CUDA devices")
-        if ray.is_initialized() and ray.available_resources().get("GPU", 0) < count:
-            raise RuntimeError("Ray GPUs occupied; use ray_actors mode with explicit borrowed workers")
         self.key = (str(Path(path).resolve()), count)
         self.decoders = [_GPUDecoder(path, i) for i in range(count)]
         self.executor = ThreadPoolExecutor(max_workers=count, thread_name_prefix="raylight-flash")
@@ -92,10 +92,10 @@ def release_local_pool():
 
 
 def run_local_flash(vae_path, samples, images, detail, worker_count=2,
-                    keep_workers=False, borrowed_workers=(), interrupt_check=None):
+                    keep_workers=False, borrowed_workers=None, interrupt_check=None, prepare=None):
     global _POOL
-    if borrowed_workers:
-        raise ValueError("local_threads cannot borrow ray_actors; select ray_actors execution mode")
+    if borrowed_workers is not None:
+        raise ValueError("This RelayVSR executor cannot borrow ray_actors")
     if worker_count not in (1, 2):
         raise ValueError("RelayVSR supports one or two GPU workers")
     scale = _checkpoint_scale(vae_path)
@@ -105,8 +105,18 @@ def run_local_flash(vae_path, samples, images, detail, worker_count=2,
         raise RuntimeError("A local RelayVSR decode is already active")
     started = time.perf_counter()
     succeeded = False
+    admitted = False
     trace = []
     try:
+        import ray
+        # A cluster-wide free-GPU count does not identify local free devices,
+        # and no lease is acquired by local threads. Refuse all connected Ray
+        # sessions rather than risk foreign work, even on a kept pool's reuse.
+        if ray.is_initialized():
+            raise RuntimeError("RelayVSR local decode requires ending the existing Ray session first")
+        admitted = True
+        if prepare is not None:
+            prepare()
         key = (str(Path(vae_path).resolve()), count)
         if _POOL is not None and _POOL.key != key:
             release_local_pool()
@@ -131,17 +141,22 @@ def run_local_flash(vae_path, samples, images, detail, worker_count=2,
             return result["pixels"]
 
         dispatch_window_jobs(jobs, count, submit, poll, receive, output, interrupt_check)
+        if keep_workers:
+            for decoder in pool.decoders:
+                decoder.trim()
+        else:
+            release_local_pool()
         succeeded = True
         return output
+    except BaseException:
+        if admitted:
+            try:
+                release_local_pool()
+            except Exception:
+                _LOG.exception("RelayVSR cleanup also failed; preserving the original error")
+        raise
     finally:
         try:
-            if not succeeded or not keep_workers:
-                release_local_pool()
-            elif _POOL is not None:
-                # Keep only useful weights, not scratch that could OOM the next sampler.
-                for decoder in _POOL.decoders:
-                    decoder.trim()
-        finally:
             elapsed = time.perf_counter()-started
             _LOG.info("[Raylight] RelayVSR local Flash %s windows=%d workers=%d seconds=%.3f",
                       "completed" if succeeded else "failed", len(trace), count, elapsed)
@@ -156,5 +171,5 @@ def run_local_flash(vae_path, samples, images, detail, worker_count=2,
                     (path/f"{record['operation']}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
             except OSError:
                 _LOG.exception("RelayVSR diagnostic trace could not be saved")
-            finally:
-                _LOCK.release()
+        finally:
+            _LOCK.release()

@@ -88,3 +88,11 @@ Write real reduced Flash equivalence and node-routing RED tests first; repeat ra
 full240-frame cold/warm tests. A retained pool must drop unused CUDA allocator workspace after
 decoding so the next native sampler does not OOM. Retain all failed data; thresholds unchanged.
 
+Final review scope ruling: ship only the measured shared-process local decoder. The Ray actor
+prototype missed the cold gate and has shared-cluster ownership/locality boundaries beyond this
+iteration. Retain its commits and measurements, remove the public actor/borrowing route and
+never create or shut down a Ray cluster in the delivered decoder. Reject an already-connected
+Ray session on every call, including warm reuse. Use one operation guard before model unload;
+detach/cleanup owned model cycles, release completed Futures immediately, invalidate failed warm
+pools and honor the actual VAE output-processing callback. Verify all with RED->GREEN regressions.
+

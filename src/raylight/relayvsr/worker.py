@@ -1,7 +1,5 @@
-"""Official RelayFlash calls, isolated actor bootstrap and per-worker VAE ownership."""
+"""Official RelayFlash loading and explicitly owned VAE lifecycle."""
 import math
-import os
-import time
 from pathlib import Path
 
 import torch
@@ -70,57 +68,13 @@ class RelayFlashDecoder:
             if loaded.model is patcher:
                 loaded.model_unload()
                 mm.current_loaded_models.remove(loaded)
+        # The direct local path is not in current_loaded_models. Native patchers
+        # can create model -> current_patcher -> model cycles; detach offloads
+        # owned GPU weights, cleanup breaks the back-reference deterministically.
+        patcher.detach()
+        patcher.cleanup()
         self.vae = None
         mm.soft_empty_cache()
 
 
-def decode_cached_window(owner, vae_path, latents, images, detail, job):
-    import ray
-    identity = str(Path(vae_path).resolve())
-    decoder = getattr(owner, "_relayvsr_flash_decoder", None)
-    if decoder is None or decoder.vae_path != identity:
-        if decoder is not None:
-            decoder.close()
-        decoder = RelayFlashDecoder(identity)
-        owner._relayvsr_flash_decoder = decoder
-    started = time.perf_counter()
-    pixels = decoder.decode_window(latents, images, detail)
-    return {"pixels": pixels, "metadata": {
-        "window": job, "gpu_ids": ray.get_gpu_ids(),
-        "visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
-        "seconds": time.perf_counter()-started, "pid": os.getpid(),
-    }}
-
-
-def release_cached_decoder(owner):
-    decoder = getattr(owner, "_relayvsr_flash_decoder", None)
-    if decoder is not None:
-        decoder.close()
-        owner._relayvsr_flash_decoder = None
-
-
-class RelayVSRFlashWorker:
-    """No process group, model sharding or global attention monkey-patches."""
-    def __init__(self):
-        from comfy.cli_args import args
-        args.disable_dynamic_vram = True
-        args.disable_cuda_malloc = True
-        args.disable_pinned_memory = True
-        args.fp32_vae = True
-        torch.set_num_threads(1)
-        torch.cuda.set_device(0)
-        self._relayvsr_flash_decoder = None
-
-    def ready(self):
-        import ray
-        return {"gpu_ids": ray.get_gpu_ids(), "pid": os.getpid()}
-
-    def ray_relayvsr_decode_window(self, vae_path, latents, images, detail, job):
-        return decode_cached_window(self, vae_path, latents, images, detail, job)
-
-    def free_relayvsr_vae(self):
-        release_cached_decoder(self)
-
-    def release_workspace(self):
-        torch.cuda.empty_cache()
 

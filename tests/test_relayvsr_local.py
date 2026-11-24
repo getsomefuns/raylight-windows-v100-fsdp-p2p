@@ -1,6 +1,5 @@
 """Official Flash direct math and explicit local-GPU ownership, without core edits."""
 import importlib
-from types import SimpleNamespace
 
 import pytest
 import torch
@@ -45,26 +44,23 @@ def test_local_mode_rejects_borrowing_ray_actors_before_loading():
                                borrowed_workers=[object()])
 
 
-def test_idle_trim_keeps_model_and_releases_only_unused_allocator(monkeypatch):
-    from raylight.relayvsr.worker import RelayVSRFlashWorker
-    worker=RelayVSRFlashWorker.__new__(RelayVSRFlashWorker)
-    decoder=object()
-    worker._relayvsr_flash_decoder=decoder
-    calls=[]
-    monkeypatch.setattr(torch.cuda,"empty_cache",lambda: calls.append("trim"))
-    release=getattr(worker,"release_workspace",None)
-    assert release is not None,"Retained actors keep idle CUDA workspace across native sampling"
-    release()
-    assert worker._relayvsr_flash_decoder is decoder
-    assert calls==["trim"]
-
-
-def test_node_exposes_explicit_local_vs_ray_route(monkeypatch):
+def test_node_does_not_expose_unshipped_ray_prototype(monkeypatch):
     from raylight.relayvsr.nodes import RayRelayVSRDecode
     schema=RayRelayVSRDecode.INPUT_TYPES()
     required=schema["required"]
-    assert "execution_mode" in required,"Decoder execution backend is not explicit"
-    assert required["execution_mode"][0]==["local_threads","ray_actors"]
+    assert "execution_mode" not in required
+    assert "ray_actors" not in schema.get("optional",{})
+
+
+@pytest.mark.parametrize("payload",[{}, {"workers": []}])
+def test_connected_ray_payload_rejected_before_model_unload(monkeypatch,payload):
+    import comfy.model_management as mm
+    from raylight.relayvsr.nodes import RayRelayVSRDecode
+    def fail():
+        pytest.fail("Invalid Ray payload changed Comfy state")
+    monkeypatch.setattr(mm,"unload_all_models",fail)
+    with pytest.raises(ValueError,match="unshipped|ray_actors"):
+        RayRelayVSRDecode().decode({},torch.zeros(1,64,64,3),"unused",1.,2,False,ray_actors=payload)
 
 
 def test_node_local_route_uses_direct_flash_executor(monkeypatch):
