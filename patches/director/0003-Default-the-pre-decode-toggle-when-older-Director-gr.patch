@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Raylight compatibility <compatibility@localhost>
+Date: Thu, 26 Nov 2026 16:51:27 +0800
+Subject: [PATCH] Default the pre-decode toggle when older Director graphs load
+
+---
+ web/js/minimax_timeline.js | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/web/js/minimax_timeline.js b/web/js/minimax_timeline.js
+index c682418..7f20359 100644
+--- a/web/js/minimax_timeline.js
++++ b/web/js/minimax_timeline.js
+@@ -666,6 +666,10 @@ function applyDirectorConfigureRestore(node, data) {
+     finalizeDirectorWidgetOrder(node);
+     const ok = restoreDirectorWidgetsFromSaved(node, data);
+     sanitizeDirectorCacheName(node);
++    // Old graphs have the Director DOM placeholder at this positional index.
++    // ComfyUI's toggle widget does not always expose options.default.
++    const cleanup = findDirectorWidget(node, "clear_vram_before_decode");
++    if (cleanup && typeof cleanup.value !== "boolean") cleanup.value = false;
+     return ok;
+ }
+ 

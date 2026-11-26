@@ -2,7 +2,9 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-1.19.0 (2026-11-24): the pinned official-core migration,Raylight compatibility and real production Director/dual-V100 RelayVSR workflows pass acceptance. Existing FSDP/P2P,TP2,safeFP16 and Director functions remain,without hand-edited core/Director source. Verified rollback copies are retained. See the [upgrade notes](docs/releases/2026-11-24-relayvsr-production-migration.en.md) and [measured report](docs/reports/2026-11-24-relayvsr-production-migration.en.md).
+1.19.1 (2026-11-26): supports MiniMax H3 Director at official revision `3cbc048` while retaining local cache-status, export-tail, and face-tracking fixes. Includes the spatially tiled SelfLift continuation fix and new per-segment export numbering. The dual-GPU runtime and launcher are unchanged. See the [release notes](docs/releases/2026-11-26-director-3cbc048.en.md) and [Director patch instructions](patches/director/README.md).
+
+For 1.19.0's official ComfyUI core and dual-V100 RelayVSR Flash migration, see the [upgrade notes](docs/releases/2026-11-24-relayvsr-production-migration.en.md) and [measured report](docs/reports/2026-11-24-relayvsr-production-migration.en.md).
 
 Version 1.18.5 fixes BF16/FP16 curve-table interpolation with FP32 coefficients. Only the small time table is temporarily cast to FP32; model-wide precision and workflow wiring are unchanged. See the [release note](docs/releases/2026-10-31-h3-adaln-curve-dtype.en.md) for the auxiliary-tensor audit and regression scope.
 
@@ -59,7 +61,7 @@ This repository is derived from [Raylight](https://github.com/komikndr/raylight)
 
 - Upstream repository: <https://github.com/komikndr/raylight>
 - Upstream baseline: Raylight 1.9.0, commit `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- Current branch version: 1.19.0; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
+- Current branch version: 1.19.1; pre-adapter rollback tag: `v1.9.0-pre-mmh3director`
 - License: Apache License 2.0
 - Current FSDP changes: [WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)
 - Previous P2P/Ulysses changes: [WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)

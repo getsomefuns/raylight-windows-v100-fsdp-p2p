@@ -1,8 +1,8 @@
 {
   "schema_version": 4,
-  "raylight_version": "1.19.0",
-  "tested_date": "2026-11-24",
-  "profile_updated_date": "2026-11-24",
+  "raylight_version": "1.19.1",
+  "tested_date": "2026-11-26",
+  "profile_updated_date": "2026-11-26",
   "scope": "native Windows, one machine, exactly two V100 ranks; H3 FSDP/P2P and optional TP2; scoped Director dual-GPU RelayVSR Flash",
   "migration_status": "official core and companions activated; original Director and integrated dual-V100 VSR workflows accepted",
   "hardware": {
@@ -47,8 +47,8 @@
   },
   "repositories": {
     "comfyui": "2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884",
-    "comfyui_director_official_base": "aff2579",
-    "comfyui_director_preserved_overlay": "13eba63",
+    "comfyui_director_official_base": "3cbc048b3ed5fbf993f4d7819557782f4a5ebb0c",
+    "comfyui_director_preserved_overlay": "2a5ddfbf36e1ba162278b5b02105061c6dc9d58d",
     "raylight_upstream_base": "9a7c33d52b3d35e29f75ecff3c227de987f0d4cf",
     "raylight_release_branch": "windows-v100-fsdp-p2p",
     "comfyui_easy_use": "595e0738a9e3f8d0d9c4d875461b2d2c9e7559c7",

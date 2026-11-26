@@ -2,7 +2,9 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-1.19.0（2026-11-24）：已完成固定官方核心升级、Raylight兼容修复及Director双卡RelayVSR正式工作流验收，保留既有FSDP/P2P、TP2、安全FP16及Director功能。不手改ComfyUI／Director源码，旧环境可校验回滚副本保留。见[中文升级说明](docs/releases/2026-11-24-relayvsr-production-migration.zh-CN.md)和[实测报告](docs/reports/2026-11-24-relayvsr-production-migration.zh-CN.md)。
+1.19.1（2026-11-26）：适配 MiniMax H3 Director 官方基线 `3cbc048`，保留本地缓存检查、导出保尾和人脸跟踪补丁。支持新版 SelfLift 接续分块修复与分段导出编号；原有双卡和启动方式不变。见[中文升级说明](docs/releases/2026-11-26-director-3cbc048.zh-CN.md)和[Director 补丁重放说明](patches/director/README.md)。
+
+上一版 1.19.0 的官方 ComfyUI 核心及双卡 RelayVSR Flash 迁移见[升级说明](docs/releases/2026-11-24-relayvsr-production-migration.zh-CN.md)和[实测报告](docs/reports/2026-11-24-relayvsr-production-migration.zh-CN.md)。
 
 1.18.5 修复压缩时间曲线模型的 BF16/FP16 时间表与 FP32 插值系数冲突。只将小型时间表临时转为 FP32，不改变模型主体精度或现有工作流。辅助张量核查、回归范围及使用说明见 [中文发布说明](docs/releases/2026-10-31-h3-adaln-curve-dtype.zh-CN.md)。
 
@@ -69,7 +71,7 @@ ComfyUI 多 GPU worker，并结合 xDiT/xFuser、yunchang 和 FSDP 实现并行�
 - 上游仓库：<https://github.com/komikndr/raylight>
 - 本分支的上游基线：Raylight 1.9.0，提交
   `9a7c33d52b3d35e29f75ecff3c227de987f0d4cf`
-- 当前分支版本：1.19.0；适配器前回退标签：`v1.9.0-pre-mmh3director`
+- 当前分支版本：1.19.1；适配器前回退标签：`v1.9.0-pre-mmh3director`
 - 许可证：Apache License 2.0
 - 上一阶段 P2P/Ulysses 修改说明：[WINDOWS_P2P_CHANGES.md](WINDOWS_P2P_CHANGES.md)
 - FSDP 修改说明：[WINDOWS_FSDP_CHANGES.md](WINDOWS_FSDP_CHANGES.md)

@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Raylight compatibility <compatibility@localhost>
+Date: Thu, 26 Nov 2026 17:00:42 +0800
+Subject: [PATCH] Restore tile conditions before falling back to full-frame
+ sampling
+
+---
+ director/spatial_tiled_sampling.py | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/director/spatial_tiled_sampling.py b/director/spatial_tiled_sampling.py
+index c27a678..c206983 100644
+--- a/director/spatial_tiled_sampling.py
++++ b/director/spatial_tiled_sampling.py
+@@ -285,8 +285,8 @@ def _rebuild_layout(payload: dict, latent_t: int, tile_h: int, tile_w: int, audi
+         return PackedLayout(*args, **kwargs)
+ 
+ 
+-def _install_tile_payloads(cfg_guider, *, axis: str, start: int, end: int, tile_shapes, full_h: int, full_w: int):
+-    restorations: list[tuple[Any, str, Any]] = []
++def _install_tile_payloads(cfg_guider, restorations: list[tuple[Any, str, Any]], *,
++                           axis: str, start: int, end: int, tile_shapes, full_h: int, full_w: int):
+     vs = tile_shapes[0]
+     tile_h = (int(vs[3]) + 1) // 2 * 2
+     tile_w = (int(vs[4]) + 1) // 2 * 2
+@@ -336,11 +336,10 @@ def _install_tile_payloads(cfg_guider, *, axis: str, start: int, end: int, tile_
+             )
+         new_payload["layout"] = layout
+         payload_cond.cond = new_payload
+-    return restorations
+ 
+ 
+ def _restore_payloads(restorations: list[tuple[Any, str, Any]]) -> None:
+-    for obj, attr, value in restorations:
++    for obj, attr, value in reversed(restorations):
+         setattr(obj, attr, value)
+ 
+ 
+@@ -481,8 +480,11 @@ def _tiled_model_call(
+                 model_k.noise, _, _ = _crop_packed(saved_noise, full_shapes, axis, ax_start, ax_end)
+             restorations = []
+             try:
+-                restorations = _install_tile_payloads(
++                # Keep the undo log in the caller so partial installation can
++                # be unwound before the full-frame fallback.
++                _install_tile_payloads(
+                     cfg,
++                    restorations,
+                     axis=axis,
+                     start=ax_start,
+                     end=ax_end,
